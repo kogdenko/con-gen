@@ -1,0 +1,105 @@
+#!/bin/sh
+
+CC=${CC:-cc}
+CFLAGS="$CFLAGS -g -Wall -Werror -pipe -finline-functions -pthread -fPIC"
+CFLAGS="$CFLAGS -fdiagnostics-color=never"
+LDFLAGS="$LDFLAGS -rdynamic -L."
+
+OBJS="\
+bsd44/uipc_socket.o \
+bsd44/in_pcb.o \
+bsd44/ip_input.o \
+bsd44/ip_output.o \
+bsd44/ip_icmp.o \
+bsd44/udp_usrreq.o \
+bsd44/tcp_debug.o \
+bsd44/tcp_subr.o \
+bsd44/tcp_usrreq.o \
+bsd44/tcp_input.o \
+bsd44/tcp_output.o \
+bsd44/tcp_timer.o \
+bsd44/if_ether.o \
+gbtcp/subr.o \
+gbtcp/list.o \
+gbtcp/htable.o \
+gbtcp/timer.o \
+netstat.o \
+con-gen.o \
+"
+
+if [ "$(uname)" = "Linux" ]; then
+	LDFLAGS="$LDFLAGS -ldl"
+elif [ "$(uname)" = "FreeBSD" ]; then
+	LDFLAGS="$LDFLAGS  -lexecinfo -lutil"
+else
+	echo "Unsupported platform"
+	exit 1
+fi
+
+
+if `$CC -v 2>&1 | grep 'gcc version' >/dev/null 2>&1`; then
+	CFLAGS="$CFLAGS -falign-functions=16"
+elif `$CC -v 2>&1 | grep 'clang version' >/dev/null 2>&1`; then
+	CFLAGS="$CFLAGS"
+else
+	echo "Unsupported compiler"
+	exit 2
+fi
+
+
+NETMAP_DIR=""
+WITH_DEBUG=false
+
+usage() 
+{
+	echo "  -h       print this message"
+	echo "  -n=PATH  set netmap pathname"
+	echo "  -d       enable debugging"
+	exit 0
+}
+
+while getopts ":hn:d" opt; do
+	case $opt in
+	h)
+		usage
+		;;
+	n)
+		NETMAP_DIR=$OPTARG
+		;;
+	d)
+		WITH_DEBUG=true
+		;;
+	esac
+done
+
+if ! [ -z "$NETMAP_DIR" ]
+then
+	echo "  netmap library: $NETMAP_DIR"
+	CFLAGS="$CFLAGS -I$NETMAP_DIR -DHAVE_NETMAP"
+fi
+
+if [ "$WITH_DEBUG" = true ]
+then
+	echo "  debugging enabled"
+	CFLAGS="$CFLAGS -O0"
+else
+	CFLAGS="$CFLAGS -DNDEBUG -O2"
+fi
+
+cat > Makefile <<EOF
+
+CFLAGS = $CFLAGS
+LDFLAGS = $LDFLAGS
+OBJS = $OBJS
+
+%.o: %.c 
+	\$(CC) -c \$(CFLAGS) -o \$@ \$<
+
+
+con-gen: \$(OBJS) 
+	\$(CC) -o con-gen \$(CFLAGS) \$(LDFLAGS) \$(OBJS)
+
+clean:
+	find . -name '*.o' | xargs -r rm
+	rm -f con-gen
+EOF

@@ -1,0 +1,10 @@
+Makefile
+tags
+fwd
+*.o
+*.d
+*.so
+*.core
+gmon.out
+perf.data
+vgcore.*
