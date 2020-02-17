@@ -1,7 +1,7 @@
 /* GPL2 license */
 #include "htable.h"
 
-static int htable_print = 1;
+static int htable_print = 0;
 
 static struct htable_static *htable_dynamic_new(
 	struct htable_dynamic *t);

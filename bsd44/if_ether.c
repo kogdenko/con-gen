@@ -66,6 +66,7 @@ void
 arp_input(struct arphdr *ar, int len)
 {
 	uint32_t ia;
+	be32_t ian;
 	struct ether_arp *ea;
 	struct ether_header *eh;
 	struct in_addr isaddr, itaddr, myaddr;
@@ -92,8 +93,9 @@ in:
 	memcpy(&isaddr, ea->arp_spa, sizeof(isaddr));
 	memcpy(&itaddr, ea->arp_tpa, sizeof(itaddr));
 	for (ia = ip_laddr_min; ia <= ip_laddr_max; ++ia) {
-		if ((itaddr.s_addr == ia) || (isaddr.s_addr == ia)) {
-			myaddr.s_addr = ia;
+		ian = htonl(ia);
+		if ((itaddr.s_addr == ian) || (isaddr.s_addr == ian)) {
+			myaddr.s_addr = ian;
 			break;
 		}
 	}

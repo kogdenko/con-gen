@@ -24,6 +24,7 @@ static be16_t port;
 static struct nm_desc *nmd;
 static struct timer report_timer;
 static uint64_t report_time;
+static int report_bytes_flag;
 int tx_full;
 int if_mtu = 552;
 uint64_t tsc_hz;
@@ -545,11 +546,19 @@ report(struct timer *timer)
 	static uint64_t old_opackets, old_obytes;
 	static uint64_t old_closed, old_sndrexmitpack;
 	double dt, ipps, ibps, opps, obps, cps, rxmtps;
-	char b1[40], b2[40], b3[40], b4[40], b5[40], b6[40];
+	char cps_b[40], ipps_b[40], ibps_b[40], opps_b[40], obps_b[40];
+	char rxmtps_b[40];
 
 	if (n == 0) {
-		printf("%-10s%-10s%-10s%-10s%-10s%s\n",
-		       "ipps", "ibps", "opps", "obps", "cps",  "rxmtps");
+		printf("%-10s%-10s", "cps", "ipps");
+		if (report_bytes_flag) {
+			printf("%-10s", "ibps");
+		}
+		printf("%-10s", "opps");
+		if (report_bytes_flag) {
+			printf("%-10s","obps");
+		}
+		printf("%s\n", "rxmtps");
 	}
 	n++;
 	if (n == 20) {
@@ -569,14 +578,21 @@ report(struct timer *timer)
 	old_closed = tcpstat.tcps_closed;
 	rxmtps = (tcpstat.tcps_sndrexmitpack - old_sndrexmitpack) / dt;
 	old_sndrexmitpack = tcpstat.tcps_sndrexmitpack;
-	norm(b1, ipps, Nflag);
-	norm(b2, ibps, Nflag);
-	norm(b3, opps, Nflag);
-	norm(b4, obps, Nflag);
-	norm(b5, cps, Nflag);
-	norm(b6, rxmtps, Nflag);
-	printf("%-10s%-10s%-10s%-10s%-10s%s\n",
-	       b1, b2, b3, b4, b5, b6);
+	norm(cps_b, cps, Nflag);
+	norm(ipps_b, ipps, Nflag);
+	norm(ibps_b, ibps, Nflag);
+	norm(opps_b, opps, Nflag);
+	norm(obps_b, obps, Nflag);
+	norm(rxmtps_b, rxmtps, Nflag);
+	printf("%-10s%-10s", cps_b, ipps_b);
+	if (report_bytes_flag) {
+		printf("%-10s", ibps_b);
+	}
+	printf("%-10s", opps_b);
+	if (report_bytes_flag) {
+		printf("%-10s", obps_b);
+	}
+	printf("%s\n", rxmtps_b);
 	timer_set(timer, TM_1SEC, report);
 }
 
@@ -602,10 +618,11 @@ usage()
 	"\t-L: Operate in server mode\n"
 	"\t--so-debug: Enable SO_DEBUG option\n"
 	"\t--udp: Use UDP instead of TCP\n"
-	"\t--tcp-wscale: Use wscale TCP option\n"
-	"\t--tcp-timestamps: Use timestamp TCP option\n"
+	"\t--tcp-wscale: On/Off wscale TCP option\n"
+	"\t--tcp-timestamps: On/Off timestamp TCP option\n"
 	"\t--tcp-fin-timeout {seconds}: Specify FIN timeout\n"
 	"\t--tcp-timewait-timeout {seconds}: Specify TIME_WAIT timeout\n"
+	"\t--report-bytes: On/Off byte statistic in report\n"
 	);
 }
 
@@ -618,6 +635,7 @@ static struct option long_options[] = {
 	{ "tcp-timestamps", optional_argument, 0, 0 },
 	{ "tcp-fin-timeout", required_argument, 0, 0 },
 	{ "tcp-timewait-timeout", required_argument, 0, 0 },
+	{ "report-bytes", optional_argument, 0, 0 },
 	{ 0, 0, 0, 0 }
 };
 
@@ -670,6 +688,8 @@ main(int argc, char **argv)
 			} else if (!strcmp(optname, "tcp-timewait-timeout")) {
 				tcp_twtimo = optval * TM_1SEC;
 				break;
+			} else if (!strcmp(optname, "report-bytes")) {
+				report_bytes_flag = 1;
 			}
 			break;
 		case 'h':
