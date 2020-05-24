@@ -46,7 +46,7 @@ struct sockbuf {
 	u_int sb_cc; /* actual chars in buffer */
 	u_int sb_hiwat;	/* max actual char count */
 	u_int sb_lowat;	/* low water mark */
-	struct dllist sb_head;
+	struct dlist sb_head;
 };
 
 #define	SB_MAX (256*1024) /* default for max chars in sockbuf */
@@ -66,10 +66,10 @@ struct socket {
 	short	so_state;		/* internal state flags SS_*, below */
 
 	struct	socket *so_head;	/* back pointer to accept socket */
-	struct	dllist so_q[2];		/* queue of partial/incoming connections */
+	struct	dlist so_q[2];		/* queue of partial/incoming connections */
 #define so_ql so_q[0]
 
-	struct dllist inp_list;
+	struct dlist inp_list;
 	union {
 		struct {
 			be32_t inp_laddr;
@@ -84,14 +84,14 @@ struct socket {
 	int so_rcv_hiwat;
 	void (*so_userfn)(struct socket *, short, struct sockaddr_in *, void *, int);
 	uint64_t so_user;
-	struct dllist so_txlist;
+	struct dlist so_txlist;
 	struct tcpcb inp_ppcb;
 };
 
 #define	sototcpcb(so) (&((so)->inp_ppcb))
 #define tcpcbtoso(tp) container_of(tp, struct socket, inp_ppcb)
 
-extern struct dllist so_txq;
+extern struct dlist so_txq;
 
 #ifdef __linux__
 #define SO_OPTION(optname) (1 << (optname))
@@ -157,6 +157,7 @@ void soisdisconnecting(struct socket *so);
 void soisdisconnected(struct socket *so);
 void soqinsque(struct socket *head, struct socket *so, int q);
 void sowakeup(struct socket *, short, struct sockaddr_in *, void *, int);
+#define sowakeup2(so, events) sowakeup(so, events, NULL, NULL, 0)
 void sbinit(struct sockbuf *sb, u_long);
 void sbreserve(struct sockbuf *sb, u_long);
 void sbdrop(struct sockbuf *sb, int len);
@@ -169,13 +170,13 @@ int sbappendaddr(struct sockbuf *, struct sockaddr *, const void *, int);
 void soisconnected(struct socket *so);
 void somodopt(struct socket *, int, int);
 
-int usr_socket(int, struct socket **);
-int usr_connect(struct socket *, const struct sockaddr_in *);
-int usr_sendto(struct socket *, const void *, int, int,
-               const struct sockaddr_in *);
-int usr_bind(struct socket *so, be16_t port);
-int usr_listen(struct socket *so);
-int usr_accept(struct socket *, struct socket **);
-int usr_close(struct socket *);
+int bsd_socket(int, struct socket **);
+int bsd_connect(struct socket *, const struct sockaddr_in *);
+int bsd_sendto(struct socket *, const void *, int, int,
+	const struct sockaddr_in *);
+int bsd_bind(struct socket *so, be16_t port);
+int bsd_listen(struct socket *so);
+int bsd_accept(struct socket *, struct socket **);
+int bsd_close(struct socket *);
 
 #endif /* BSD44_SOCKET_H_ */

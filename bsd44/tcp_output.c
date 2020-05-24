@@ -77,7 +77,7 @@ tcp_output(struct tcpcb *tp)
 	do {
 		if (/*1 ||*/  not_empty_txr(NULL) == NULL) {
 			so->so_state |= SS_ISTXPENDING;
-			DLLIST_INSERT_TAIL(&so_txq, so, so_txlist);
+			DLIST_INSERT_TAIL(&so_txq, so, so_txlist);
 			break;
 		}
 	} while (tcp_output_real(tp) > 0);

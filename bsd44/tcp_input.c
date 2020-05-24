@@ -40,8 +40,8 @@
 #include "tcp_var.h"
 
 int tcprexmtthresh = 3;
-uint64_t tcp_twtimo = 60 * TM_1SEC; /* max seg lifetime (hah!) */
-uint64_t tcp_fintimo = 60 * TM_1SEC;
+uint64_t tcp_twtimo = 60 * NANOSECONDS_SECOND; /* max seg lifetime (hah!) */
+uint64_t tcp_fintimo = 60 * NANOSECONDS_SECOND;
 
 
 #define TCP_PAWS_IDLE	(24 * 24 * 60 * 60 * PR_SLOWHZ)
@@ -723,7 +723,7 @@ close:
 			tp->snd_wnd -= acked;
 			ourfinisacked = 0;
 		}
-		sowakeup(so, POLLOUT, NULL, NULL, 0);
+		sowakeup2(so, POLLOUT);
 		tp->snd_una = th->th_ack;
 		if (SEQ_LT(tp->snd_nxt, tp->snd_una)) {
 			tp->snd_nxt = tp->snd_una;
@@ -832,7 +832,7 @@ step6:
 			tcpstat.tcps_rcvbyte += ip->ip_len;
 			if (ip->ip_len) {
 				datlen = ip->ip_len;
-				sowakeup(so, POLLIN, NULL, NULL, 0);
+				sowakeup2(so, POLLIN);
 			}
 		} else {
 			tcpstat.tcps_rcvoopack++;

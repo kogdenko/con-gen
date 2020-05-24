@@ -39,13 +39,17 @@
 #include "../gbtcp/htable.h"
 
 #define EPHEMERAL_MIN 5000
+#define EPHEMERAL_MAX 65535
+#define NEPHEMERAL (EPHEMERAL_MAX - EPHEMERAL_MIN + 1)
 
-static struct socket *binded[EPHEMERAL_MIN];
+static struct socket *in_binded[EPHEMERAL_MIN];
 static htable_t in_htable;
 static uint32_t in_secret;
 static be32_t in_ephip;
 static int in_ephipcnt;
 static uint16_t in_ephipport;
+static int in_nephipport;
+static int in_nephipport_max;
 
 void
 in_initephport()
@@ -57,7 +61,7 @@ in_initephport()
 }
 
 uint32_t
-in_pcbhash(struct dllist *l)
+in_pcbhash(struct dlist *l)
 {
 	uint32_t h;
 	struct socket *so;
@@ -75,7 +79,8 @@ in_init()
 	in_secret = rand();
 	in_ephip = htonl(ip_laddr_min);
 	in_initephport();
-	rc = htable_create(&in_htable, 1024, in_pcbhash);
+	in_nephipport_max = (ip_laddr_max - ip_laddr_min + 1) * NEPHEMERAL;
+	rc = htable_init(&in_htable, 1024, in_pcbhash);
 	return rc;
 }
 
@@ -91,13 +96,13 @@ in_pcbbind(struct socket *so, be16_t lport)
 		return EINVAL;
 	}
 	i = ntohs(lport);
-	if (i >= ARRAY_SIZE(binded)) {
+	if (i >= ARRAY_SIZE(in_binded)) {
 		return EADDRINUSE;
 	}
-	if (binded[i] != NULL) {
+	if (in_binded[i] != NULL) {
 		return EADDRINUSE;
 	}
-	binded[i] = so;
+	in_binded[i] = so;
 	so->inp_laddr = htonl(ip_laddr_min);
 	so->inp_lport = lport;
 	return 0;
@@ -107,15 +112,15 @@ int
 in_pcbattach(struct socket *so, uint32_t *ph)
 {
 	uint32_t h;
-	struct dllist *bucket;
+	struct dlist *bucket;
 	struct socket *it;
 
 	if (so->so_state & SS_ISATTACHED) {
 		return -EALREADY;
 	}
 	h = in_pcbhash(&so->inp_list);
-	bucket = htable_bucket(&in_htable, h);
-	DLLIST_FOREACH(it, bucket, inp_list) {
+	bucket = htable_bucket_get(&in_htable, h);
+	DLIST_FOREACH(it, bucket, inp_list) {
 		if (it->so_proto == so->so_proto &&
 		    it->inp_laddr == so->inp_laddr &&
 		    it->inp_lport == so->inp_lport &&
@@ -131,9 +136,7 @@ in_pcbattach(struct socket *so, uint32_t *ph)
 }
 
 int
-in_pcbconnect(struct socket *so,
-              const struct sockaddr_in *sin,
-              uint32_t *ph)
+in_pcbconnect(struct socket *so, const struct sockaddr_in *sin, uint32_t *ph)
 {
 	if (sin->sin_family != AF_INET) {
 		return -EAFNOSUPPORT;
@@ -156,8 +159,11 @@ in_pcbconnect(struct socket *so,
 	if (so->inp_laddr != INADDR_ANY) {
 		return 0;
 	}
+	if (in_nephipport == in_nephipport_max) {
+		return -EADDRNOTAVAIL;
+	}
 	do {
-		if (in_ephipcnt == UINT16_MAX - EPHEMERAL_MIN + 1) {
+		if (in_ephipcnt == NEPHEMERAL) {
 			in_ephipcnt = 0;
 			in_initephport();
 			HTONL(in_ephip);
@@ -175,23 +181,28 @@ in_pcbconnect(struct socket *so,
 		in_ephipcnt++;
 		in_ephipport++;
 	} while (in_pcbattach(so, ph) != 0);
+	in_nephipport++;
 	return 0;
 }
 
 int
 in_pcbdetach(struct socket *so)
 {
-	int i;
+	int lport;
 
-	i = ntohs(so->inp_lport);
-	if (i < EPHEMERAL_MIN) {
-		if (binded[i] == so) {
-			binded[i] = NULL;
+	lport = ntohs(so->inp_lport);
+	if (lport < EPHEMERAL_MIN) {
+		if (in_binded[lport] == so) {
+			in_binded[lport] = NULL;
 		}
 	}
 	if (so->so_state & SS_ISATTACHED) {
 		so->so_state &= ~SS_ISATTACHED;
 		htable_del(&in_htable, &so->inp_list);
+		if (lport >= EPHEMERAL_MIN) {
+			assert(in_nephipport);
+			in_nephipport--;
+		}
 	}
 	sofree(so);
 	return 0;
@@ -225,26 +236,21 @@ void
 in_pcbforeach(void (*fn)(struct socket *))
 {
 	int i;
-//	struct socket *so;
 
-	for (i = 0; i < ARRAY_SIZE(binded); ++i) {
-		if (binded[i]) {
-			(*fn)(binded[i]);
+	for (i = 0; i < ARRAY_SIZE(in_binded); ++i) {
+		if (in_binded[i]) {
+			(*fn)(in_binded[i]);
 		}
 	}
-	// TODO: htable_foreach
+	htable_foreach(&in_htable, (htable_foreach_f)fn);
 }
 
 struct socket *
-in_pcblookup(int proto,
-             be32_t laddr,
-             be16_t lport,
-             be32_t faddr,
-             be16_t fport)
+in_pcblookup(int proto, be32_t laddr, be16_t lport, be32_t faddr, be16_t fport)
 {
 	int i;
 	uint32_t h;
-	struct dllist *bucket;
+	struct dlist *bucket;
 	struct socket *so, tmp;
 
 	tmp.inp_laddr = laddr;
@@ -252,8 +258,8 @@ in_pcblookup(int proto,
 	tmp.inp_faddr = faddr;
 	tmp.inp_fport = fport;
 	h = in_pcbhash(&tmp.inp_list);
-	bucket = htable_bucket(&in_htable, h);
-	DLLIST_FOREACH(so, bucket, inp_list) {	
+	bucket = htable_bucket_get(&in_htable, h);
+	DLIST_FOREACH(so, bucket, inp_list) {	
 		if (so->so_proto == proto &&
 		    so->inp_laddr == laddr &&
 		    so->inp_lport == lport &&
@@ -264,7 +270,7 @@ in_pcblookup(int proto,
 	}
 	i = ntohs(lport);
 	if (i < EPHEMERAL_MIN) {
-		return binded[i];
+		return in_binded[i];
 	} else {
 		return NULL;
 	}

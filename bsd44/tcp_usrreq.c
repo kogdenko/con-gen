@@ -211,12 +211,8 @@ tcp_abort(struct socket *so)
 }
 
 int
-tcp_ctloutput(int op,
-              struct socket *so,
-              int level,
-              int optname,
-              void *optval,
-              int *optlen)
+tcp_ctloutput(int op, struct socket *so, int level, int optname,
+	void *optval, int *optlen)
 {
 	struct tcpcb *tp;
 	int i;
@@ -337,7 +333,7 @@ tcp_setslowtimer(struct tcpcb *tp, int timer, u_short timo)
 {
 	uint64_t expire;
 
-	expire = timo * TM_1SEC / PR_SLOWHZ;
+	expire = timo * NANOSECONDS_SECOND / PR_SLOWHZ;
 	tcp_settimer(tp, timer, expire);
 }
 

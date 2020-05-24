@@ -8,57 +8,69 @@ static struct htable_static *htable_dynamic_new(
 static void htable_dynamic_resize(struct htable_dynamic *t);
 
 int
-htable_static_create(struct htable_static *t,
-                     int size, htable_hash_f hash_fn)
+htable_static_init(struct htable_static *t, int size, htable_f hash_fn)
 {
 	int i;
 
 	t->hts_size = size;
 	t->hts_mask = size - 1;
 	t->hts_hash_fn = hash_fn;
-	t->hts_array = malloc(size * sizeof(struct dllist));
+	t->hts_array = malloc(size * sizeof(struct dlist));
 	if (t->hts_array == NULL) {
 		return -ENOMEM;
 	}
 	t->hts_size = size;
 	t->hts_mask = size - 1;
 	for (i = 0; i < size; ++i) {
-		dllist_init(t->hts_array + i);
+		dlist_init(t->hts_array + i);
 	}
 	return 0;
 }
 
 void
-htable_static_free(struct htable_static *t)
+htable_static_deinit(struct htable_static *t)
 {
 	free(t->hts_array);
 	t->hts_array = NULL;
 }
 
-struct dllist *
-htable_static_bucket(struct htable_static *t, uint32_t h) 
+struct dlist *
+htable_static_bucket_get(struct htable_static *t, uint32_t h) 
 {
 	return t->hts_array + ((h) & (t)->hts_mask);
 }
 
 void
-htable_static_add(struct htable_static *t, struct dllist *elem, uint32_t h)
+htable_static_add(struct htable_static *t, struct dlist *elem, uint32_t h)
 {
-	struct dllist *bucket;
+	struct dlist *bucket;
 
-	bucket = htable_static_bucket(t, h);
-	dllist_insert_tail(bucket, elem);
+	bucket = htable_static_bucket_get(t, h);
+	dlist_insert_tail(bucket, elem);
 }
 
 void
-htable_static_del(struct htable_static *t, struct dllist *elem)
+htable_static_del(struct htable_static *t, struct dlist *elem)
 {
-	dllist_remove(elem);
+	dlist_remove(elem);
+}
+
+void
+htable_static_foreach(struct htable_static *t, htable_foreach_f fn)
+{
+	int i;
+	struct dlist *b, *e;
+
+	for (i = 0; i < t->hts_size; ++i) {
+		b = t->hts_array + i;
+		dlist_foreach(e, b) {
+			(*fn)(e);
+		}
+	}
 }
 
 int
-htable_dynamic_create(struct htable_dynamic *t,
-                      int size, htable_hash_f hash_fn)
+htable_dynamic_init(struct htable_dynamic *t, int size, htable_f hash_fn)
 {
 	int rc;
 
@@ -68,25 +80,25 @@ htable_dynamic_create(struct htable_dynamic *t,
 	t->htd_old = NULL;
 	t->htd_new = t->htd_tables + 0;
 	t->htd_tables[1].hts_array = NULL;
-	rc = htable_static_create(t->htd_new, size, hash_fn);
+	rc = htable_static_init(t->htd_new, size, hash_fn);
 	return rc;
 }
 
 void
-htable_dynamic_free(struct htable_dynamic *t)
+htable_dynamic_deinit(struct htable_dynamic *t)
 {
 	int i;
 
 	for (i = 0; i < 2; ++i) {
-		htable_static_free(t->htd_tables + i);
+		htable_static_deinit(t->htd_tables + i);
 	}
 }
 
-struct dllist *
-htable_dynamic_bucket(struct htable_dynamic *t, uint32_t h) 
+struct dlist *
+htable_dynamic_bucket_get(struct htable_dynamic *t, uint32_t h) 
 {
 	int i;
-	struct dllist *bucket;
+	struct dlist *bucket;
 	struct htable_static *ts;
 
 	if (t->htd_old == NULL) {
@@ -99,26 +111,43 @@ htable_dynamic_bucket(struct htable_dynamic *t, uint32_t h)
 			ts = t->htd_old;
 		}
 	}
-	bucket = htable_static_bucket(ts, h);
+	bucket = htable_static_bucket_get(ts, h);
 	return bucket;
 }
 
 void
-htable_dynamic_add(struct htable_dynamic *t, struct dllist *elem, uint32_t h)
+htable_dynamic_foreach(struct htable_dynamic *t, htable_foreach_f fn)
 {
-	struct dllist *bucket;
+	int i;
+	struct dlist *b, *e;
 
-	bucket = htable_dynamic_bucket(t, h);
-	dllist_insert_tail(bucket, elem);
+	htable_static_foreach(t->htd_new, fn);
+	if (t->htd_old != NULL) {
+		for (i = t->htd_resize_progress; i < t->htd_old->hts_size; ++i) {
+			b = t->htd_old->hts_array + i;
+			dlist_foreach(e, b) {
+				(*fn)(e);
+			}
+		}
+	}
+}
+
+void
+htable_dynamic_add(struct htable_dynamic *t, struct dlist *elem, uint32_t h)
+{
+	struct dlist *bucket;
+
+	bucket = htable_dynamic_bucket_get(t, h);
+	dlist_insert_tail(bucket, elem);
 	t->htd_nr_elems++;
 	htable_dynamic_resize(t);
 }
 
 void
-htable_dynamic_del(struct htable_dynamic *t, struct dllist *elem)
+htable_dynamic_del(struct htable_dynamic *t, struct dlist *elem)
 {
 	assert(t->htd_nr_elems > 0);
-	dllist_remove(elem);
+	dlist_remove(elem);
 	t->htd_nr_elems--;
 	htable_dynamic_resize(t);
 }
@@ -142,7 +171,7 @@ htable_dynamic_resize(struct htable_dynamic *t)
 {
 	uint32_t h;
 	int rc, size, new_size;
-	struct dllist *elem, *bucket;
+	struct dlist *elem, *bucket;
 	struct htable_static *tmp;
 
 	if (t->htd_old == NULL) {
@@ -164,8 +193,8 @@ htable_dynamic_resize(struct htable_dynamic *t)
 			return;
 		}
 		tmp = htable_dynamic_new(t);
-		rc = htable_static_create(tmp, new_size,
-		                          t->htd_new->hts_hash_fn);
+		rc = htable_static_init(tmp, new_size,
+		                         t->htd_new->hts_hash_fn);
 		if (rc) {
 			t->htd_resize_discard = new_size;
 			return;
@@ -180,15 +209,15 @@ htable_dynamic_resize(struct htable_dynamic *t)
 	} else {
 		assert(t->htd_old->hts_size > t->htd_resize_progress);
 		bucket = t->htd_old->hts_array + t->htd_resize_progress;
-		while (!dllist_empty(bucket)) {
-			elem = dllist_first(bucket);
-			dllist_remove(elem);
+		while (!dlist_is_empty(bucket)) {
+			elem = dlist_first(bucket);
+			dlist_remove(elem);
 			h = (*t->htd_new->hts_hash_fn)(elem);
 			htable_static_add(t->htd_new, elem, h);
 		}
 		t->htd_resize_progress++;
 		if (t->htd_old->hts_size == t->htd_resize_progress) {
-			htable_static_free(t->htd_old);
+			htable_static_deinit(t->htd_old);
 			t->htd_old = NULL;
 			if (htable_print) {
 				printf("htable resize done; elements=%d\n",

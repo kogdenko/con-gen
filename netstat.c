@@ -435,6 +435,7 @@ print_conn(struct socket *so)
 {
 	struct in_addr tmp;
 	struct tcpcb *tp;
+	const char *state;
 	char bl[64], bf[64];
 
 	tp = sototcpcb(so);
@@ -444,9 +445,12 @@ print_conn(struct socket *so)
 	tmp.s_addr = so->inp_faddr;
 	snprintf(bf, sizeof(bf), "%s:%hu",
 	         inet_ntoa(tmp), ntohs(so->inp_fport));
-	assert(tp->t_state < ARRAY_SIZE(tcpstates));
-	printf("%-5.5s %-22.22s %-22.22s %-11.11s\n",
-	       "TCP", bl, bf, tcpstates[tp->t_state]);
+	if (tp->t_state < ARRAY_SIZE(tcpstates)) {
+		state = tcpstates[tp->t_state];
+	} else {
+		state = "???";
+	}
+	printf("%-5.5s %-22.22s %-22.22s %-11.11s\n", "TCP", bl, bf, state);
 }
 
 void

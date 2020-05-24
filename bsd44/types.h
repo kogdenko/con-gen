@@ -97,9 +97,9 @@ uint32_t murmur(const void * key, u_int len, uint32_t initval);
 #define container_of(ptr, type, field) \
 	((type *)((intptr_t)(ptr) - field_off(type, field)))
 
-#define TM_1SEC  1000000000llu
-#define TM_1MSEC 1000000llu
-#define TM_1USEC 1000llu
+#define NANOSECONDS_SECOND  1000000000llu
+#define NANOSECONDS_MILLISECOND 1000000llu
+#define NANOSECONDS_MICROSECOND 1000llu
 
 uint16_t in_cksum(void *data, int len);
 #define ip_cksum(ip) in_cksum(ip, (ip)->ip_hl << 2)

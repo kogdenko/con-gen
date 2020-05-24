@@ -37,24 +37,24 @@
 #include "../gbtcp/list.h"
 
 
-static DLLIST_HEAD(somhead);
+static DLIST_HEAD(somhead);
 
 static struct socket *
 somalloc()
 {
 	struct socket *so;
-	if (dllist_empty(&somhead)) {
+	if (dlist_is_empty(&somhead)) {
 		so = malloc(sizeof(*so));
 		if (so == NULL) {
 			return NULL;
 		}
 	} else {
-		so = DLLIST_FIRST(&somhead, struct socket, inp_list);
-		DLLIST_REMOVE(so, inp_list);
+		so = DLIST_FIRST(&somhead, struct socket, inp_list);
+		DLIST_REMOVE(so, inp_list);
 	}
 	so->so_head = 0;
-	dllist_init(so->so_q + 0);
-	dllist_init(so->so_q + 1);
+	dlist_init(so->so_q + 0);
+	dlist_init(so->so_q + 1);
 	so->so_events = 0;
 	so->so_error = 0;
 	so->inp_laddr = 0;
@@ -70,7 +70,7 @@ somalloc()
 static void
 somfree(struct socket *so)
 {
-	DLLIST_INSERT_HEAD(&somhead, so, inp_list);
+	DLIST_INSERT_HEAD(&somhead, so, inp_list);
 }
 
 /*
@@ -81,7 +81,7 @@ somfree(struct socket *so)
  * switching out to the protocol specific routines.
  */
 int
-usr_socket(int proto, struct socket **aso)
+bsd_socket(int proto, struct socket **aso)
 {
 	struct socket *so;
 
@@ -101,7 +101,7 @@ usr_socket(int proto, struct socket **aso)
 }
 
 int
-usr_bind(struct socket *so, be16_t port)
+bsd_bind(struct socket *so, be16_t port)
 {
 	int error;
 
@@ -110,7 +110,7 @@ usr_bind(struct socket *so, be16_t port)
 }
 
 int
-usr_listen(struct socket *so)
+bsd_listen(struct socket *so)
 {
 	int error;
 
@@ -163,6 +163,7 @@ sofree_(struct socket *so, const char *f)
 	}
 	sbrelease(&so->so_snd);
 	sorflush(so);
+	sowakeup2(so, POLLNVAL);
 	somfree(so);
 }
 
@@ -172,22 +173,22 @@ sofree_(struct socket *so, const char *f)
  * Free socket when disconnect complete.
  */
 int
-usr_close(struct socket *so)
+bsd_close(struct socket *so)
 {
 	int i, error;
-	struct dllist *head;
+	struct dlist *head;
 	struct socket *aso;
 
 	if (so->so_state & SS_NOFDREF) {
 		return -EINVAL;
 	}
-	so->so_userfn = NULL;
+	so->so_state |= SS_NOFDREF;
 	error = 0;
 	if (so->so_options & SO_OPTION(SO_ACCEPTCONN)) {
 		for (i = 0; i < ARRAY_SIZE(so->so_q); ++i) {
 			head = so->so_q + i;
-			while (!dllist_empty(head)) {
-				aso = DLLIST_FIRST(head, struct socket, so_ql);
+			while (!dlist_is_empty(head)) {
+				aso = DLIST_FIRST(head, struct socket, so_ql);
 				soabort(aso);
 			}
 		}
@@ -197,7 +198,6 @@ usr_close(struct socket *so)
 	} else {
 		error = udp_disconnect(so);
 	}
-	so->so_state |= SS_NOFDREF;
 	sofree(so);
 	return -error;
 }
@@ -224,8 +224,7 @@ soaccept(struct socket *so)
 }
 
 int
-usr_connect(struct socket *so,
-            const struct sockaddr_in* nam)
+bsd_connect(struct socket *so, const struct sockaddr_in* nam)
 {
 	int rc;
 
@@ -270,11 +269,8 @@ usr_connect(struct socket *so,
  * Data and control buffers are freed on return.
  */
 int
-sosend(struct socket *so,
-       const void *dat,
-       int datlen,
-       const struct sockaddr_in *addr,
-       int flags)
+sosend(struct socket *so, const void *dat, int datlen,
+	const struct sockaddr_in *addr, int flags)
 {
 	int rc, atomic, space;
 
@@ -309,7 +305,7 @@ sosend(struct socket *so,
 }
 
 int
-usr_shutdown(struct socket *so, int how)
+bsd_shutdown(struct socket *so, int how)
 {
 	if (how & SHUT_RD) {
 		sorflush(so);
@@ -331,11 +327,8 @@ sorflush(struct socket *so)
 }
 
 int
-usr_setsockopt(struct socket *so,
-              int level,
-              int optname,
-              void *optval,
-              int optlen)
+bsd_setsockopt(struct socket *so, int level, int optname,
+	void *optval, int optlen)
 {
 	int rc;
 	struct linger *linger;
@@ -390,11 +383,8 @@ usr_setsockopt(struct socket *so,
 }
 
 int
-usr_getsockopt(struct socket *so,
-               int level,
-               int optname,
-               void *optval,
-               int *optlen)
+bsd_getsockopt(struct socket *so, int level, int optname,
+	void *optval, int *optlen)
 {
 	int rc;
 	struct linger *linger;
@@ -509,16 +499,16 @@ soisconnected(struct socket *so)
 	if (head != NULL) {
 		soqremque(so);
 		soqinsque(head, so, 1);
-		sowakeup(head, POLLIN, NULL, NULL, 0);
+		sowakeup2(head, POLLIN);
 	} else {
-		sowakeup(so, POLLOUT, NULL, NULL, 0);
+		sowakeup2(so, POLLOUT);
 	}
 }
 
 void
 soisdisconnecting(struct socket *so)
 {
-	sowakeup(so, POLLIN|POLLOUT, NULL, NULL, 0);
+	sowakeup2(so, POLLIN|POLLOUT);
 	so->so_state &= ~SS_ISCONNECTING;
 	so->so_state |= (SS_ISDISCONNECTING|SS_CANTRCVMORE|SS_CANTSENDMORE);
 }
@@ -526,7 +516,7 @@ soisdisconnecting(struct socket *so)
 void
 soisdisconnected(struct socket *so)
 {
-	sowakeup(so, POLLIN|POLLOUT, NULL, NULL, 0);
+	sowakeup2(so, POLLIN|POLLOUT);
 	so->so_state &= ~(SS_ISCONNECTING|SS_ISCONNECTED|SS_ISDISCONNECTING);
 	so->so_state |= (SS_CANTRCVMORE|SS_CANTSENDMORE);
 }
@@ -535,7 +525,7 @@ int
 soreadable(struct socket *so)
 {
 	return (so->so_state & SS_CANTRCVMORE) ||
-	       !dllist_empty(so->so_q + 1);
+	       !dlist_is_empty(so->so_q + 1);
 }
 
 int
@@ -566,7 +556,8 @@ soevents(struct socket *so)
 }
 
 void
-sowakeup(struct socket *so,  short events,  struct sockaddr_in *addr,  void *dat, int len)
+sowakeup(struct socket *so,  short events,  struct sockaddr_in *addr,
+	void *dat, int len)
 {
 	if (so->so_state & SS_CANTRCVMORE) {
 		events &= ~POLLIN;
@@ -620,14 +611,14 @@ soqinsque(struct socket *head, struct socket *so, int q)
 {
 	assert(so->so_head == NULL);
 	so->so_head = head;
-	DLLIST_INSERT_HEAD(head->so_q + q, so, so_ql);
+	DLIST_INSERT_HEAD(head->so_q + q, so, so_ql);
 }
 
 void
 soqremque(struct socket *so)
 {
 	assert(so->so_head != NULL);
-	DLLIST_REMOVE(so, so_ql);
+	DLIST_REMOVE(so, so_ql);
 	so->so_head = NULL;
 }
 
@@ -644,14 +635,14 @@ soqremque(struct socket *so)
 void
 socantsendmore(struct socket *so)
 {
-	sowakeup(so, POLLOUT, NULL, NULL, 0);
+	sowakeup2(so, POLLOUT);
 	so->so_state |= SS_CANTSENDMORE;
 }
 
 void
 socantrcvmore(struct socket *so)
 {
-	sowakeup(so, POLLIN, NULL, NULL, 0);
+	sowakeup2(so, POLLIN);
 	so->so_state |= SS_CANTRCVMORE;
 }
 
@@ -662,7 +653,7 @@ socantrcvmore(struct socket *so)
 #define SBCHUNK_DATASIZE (SBCHUNK_SIZE - sizeof(struct sockbuf_chunk))
 
 struct sockbuf_chunk {
-	struct dllist sbc_list;
+	struct dlist sbc_list;
 	int sbc_len;
 	int sbc_off;
 };
@@ -671,12 +662,12 @@ struct sockbuf_chunk {
 #define sbchspace(ch) \
 	(SBCHUNK_DATASIZE - ((ch)->sbc_len + (ch)->sbc_off))
 
-static DLLIST_HEAD(sbchhead);
+static DLIST_HEAD(sbchhead);
 
 static void
 sbchfree(struct sockbuf_chunk *ch)
 {
-	DLLIST_INSERT_HEAD(&sbchhead, ch, sbc_list);
+	DLIST_INSERT_HEAD(&sbchhead, ch, sbc_list);
 }
 
 static struct sockbuf_chunk *
@@ -684,18 +675,18 @@ sbchalloc(struct sockbuf *sb)
 {
 	struct sockbuf_chunk *ch;
 
-	if (dllist_empty(&sbchhead)) {
+	if (dlist_is_empty(&sbchhead)) {
 		ch = malloc(SBCHUNK_SIZE);
 		if (ch == NULL) {
 			return NULL;
 		}
 	} else {
-		ch = DLLIST_FIRST(&sbchhead, struct sockbuf_chunk, sbc_list);
-		DLLIST_REMOVE(ch, sbc_list);
+		ch = DLIST_FIRST(&sbchhead, struct sockbuf_chunk, sbc_list);
+		DLIST_REMOVE(ch, sbc_list);
 	}
 	ch->sbc_len = 0;
 	ch->sbc_off = 0;
-	DLLIST_INSERT_TAIL(&sb->sb_head, ch, sbc_list);
+	DLIST_INSERT_TAIL(&sb->sb_head, ch, sbc_list);
 	return ch;
 }
 
@@ -705,7 +696,7 @@ sbinit(struct sockbuf *sb, u_long cc)
 	sb->sb_cc = 0;
 	sb->sb_hiwat = cc;
 	sb->sb_lowat  = 0;
-	dllist_init(&sb->sb_head);
+	dlist_init(&sb->sb_head);
 }
 
 void
@@ -724,9 +715,9 @@ sbfree_n(struct sockbuf *sb, int n)
 	struct sockbuf_chunk *ch;
 
 	for (i = 0; i < n; ++i) {
-		assert(!dllist_empty(&sb->sb_head));
-		ch = DLLIST_LAST(&sb->sb_head, struct sockbuf_chunk, sbc_list);
-		DLLIST_REMOVE(ch, sbc_list);
+		assert(!dlist_is_empty(&sb->sb_head));
+		ch = DLIST_LAST(&sb->sb_head, struct sockbuf_chunk, sbc_list);
+		DLIST_REMOVE(ch, sbc_list);
 		sbchfree(ch);
 	}
 }
@@ -736,9 +727,9 @@ sbrelease(struct sockbuf *sb)
 {
 	struct sockbuf_chunk *ch;
 
-	while (!dllist_empty(&sb->sb_head)) {
-		ch = DLLIST_FIRST(&sb->sb_head, struct sockbuf_chunk, sbc_list);
-		DLLIST_REMOVE(ch, sbc_list);
+	while (!dlist_is_empty(&sb->sb_head)) {
+		ch = DLIST_FIRST(&sb->sb_head, struct sockbuf_chunk, sbc_list);
+		DLIST_REMOVE(ch, sbc_list);
 		sbchfree(ch);		
 	}
 	sb->sb_cc = 0;
@@ -754,7 +745,7 @@ sbwrite(struct sockbuf *sb, struct sockbuf_chunk *pos,
 
 	ptr = src;
 	rem = cnt;
-	DLLIST_FOREACH_CONTINUE(pos, &sb->sb_head, sbc_list) {
+	DLIST_FOREACH_CONTINUE(pos, &sb->sb_head, sbc_list) {
 		assert(rem > 0);
 		space = sbchspace(pos);
 		n = MIN(rem, space);
@@ -781,14 +772,14 @@ sbappend(struct sockbuf *sb, const u_char *buf, int len)
 		return 0;
 	}
 	n = 0;
-	if (dllist_empty(&sb->sb_head)) {
+	if (dlist_is_empty(&sb->sb_head)) {
 		ch = sbchalloc(sb);
 		if (ch == NULL) {
 			return -ENOMEM;
 		}
 		n++;
 	} else {
-		ch = DLLIST_LAST(&sb->sb_head, struct sockbuf_chunk, sbc_list);
+		ch = DLIST_LAST(&sb->sb_head, struct sockbuf_chunk, sbc_list);
 	}
 	pos = ch;
 	rem = appended;
@@ -820,7 +811,7 @@ sbdrop(struct sockbuf *sb, int len)
 	struct sockbuf_chunk *pos, *tmp;
 
 	off = 0;
-	DLLIST_FOREACH_SAFE(pos, &sb->sb_head, sbc_list, tmp) {
+	DLIST_FOREACH_SAFE(pos, &sb->sb_head, sbc_list, tmp) {
 		assert(pos->sbc_len);
 		assert(sb->sb_cc >= pos->sbc_len);
 		n = pos->sbc_len;
@@ -831,7 +822,7 @@ sbdrop(struct sockbuf *sb, int len)
 		pos->sbc_off += n;
 		pos->sbc_len -= n;
 		if (pos->sbc_len == 0) {
-			DLLIST_REMOVE(pos, sbc_list);
+			DLIST_REMOVE(pos, sbc_list);
 			sbchfree(pos);
 		}
 		off += n;
@@ -850,14 +841,14 @@ sbcopy(struct sockbuf *sb, int off, int len, u_char *dst)
 	struct sockbuf_chunk *ch;
 
 	assert(sb->sb_cc >= off + len);
-	DLLIST_FOREACH(ch, &sb->sb_head, sbc_list) {
+	DLIST_FOREACH(ch, &sb->sb_head, sbc_list) {
 		assert(ch->sbc_len);
 		if (off < ch->sbc_len) {
 			break;
 		}
 		off -= ch->sbc_len;
 	}
-	for (; len != 0; ch = DLLIST_NEXT(ch, sbc_list)) {
+	for (; len != 0; ch = DLIST_NEXT(ch, sbc_list)) {
 		assert(&ch->sbc_list != &sb->sb_head);
 		assert(off < ch->sbc_len);
 		n = MIN(len, ch->sbc_len - off);
@@ -870,7 +861,7 @@ sbcopy(struct sockbuf *sb, int off, int len, u_char *dst)
 }
 
 int
-usr_accept(struct socket *so, struct socket **paso)
+bsd_accept(struct socket *so, struct socket **paso)
 {
 	int error;
 	struct socket *aso;
@@ -878,7 +869,7 @@ usr_accept(struct socket *so, struct socket **paso)
 	if ((so->so_options & SO_OPTION(SO_ACCEPTCONN)) == 0) {
 		return -EINVAL;
 	}
-	if (dllist_empty(so->so_q + 1)) {
+	if (dlist_is_empty(so->so_q + 1)) {
 		return -EWOULDBLOCK;
 	}
 	if (so->so_error) {
@@ -886,18 +877,15 @@ usr_accept(struct socket *so, struct socket **paso)
 		so->so_error = 0;
 		return -error;
 	}
-	aso = DLLIST_FIRST(so->so_q + 1, struct socket, so_ql);
+	aso = DLIST_FIRST(so->so_q + 1, struct socket, so_ql);
 	soaccept(aso);
 	*paso = aso;
 	return 0;
 }
 
 int
-usr_sendto(struct socket *so,
-           const void *buf,
-           int len,
-           int flags,
-           const struct sockaddr_in *nam)
+bsd_sendto(struct socket *so, const void *buf, int len, int flags,
+	const struct sockaddr_in *nam)
 {
 	int rc;
 

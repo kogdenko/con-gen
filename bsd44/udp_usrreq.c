@@ -142,7 +142,7 @@ static void
 udp_notify(struct socket *so, int e)
 {
 	so->so_error = e;
-	sowakeup(so, POLLERR, NULL, NULL, 0);
+	sowakeup2(so, POLLERR);
 }
 
 void

@@ -41,15 +41,38 @@ uint64_t if_obytes;
 uint64_t if_opackets;
 uint64_t if_imcasts;
 
-struct dllist so_txq;
+struct dlist so_txq;
 struct	tcpstat tcpstat;
 struct  udpstat udpstat;
 uint32_t tcp_now;		/* for RFC 1323 timestamps */
 static uint64_t tcp_nowage;
 struct	icmpstat icmpstat;
 
+static void die(int, const char *, ...)
+	__attribute__((format(printf, 2, 3)));
+
+static void cli_process(struct socket *, short, struct sockaddr_in *,
+	void *, int);
+
+static void srv_process(struct socket *, short, struct sockaddr_in *,
+	void *, int);
+
 int print_stat(int);
 void print_conns();
+
+static void
+die(int errnum, const char *fmt, ...)
+{
+	va_list ap;
+
+	print_conns();
+	print_stat(verbose);
+	va_start(ap, fmt);
+	vfprintf(stderr, fmt, ap);
+	va_end(ap);
+	fprintf(stderr, "\n");
+	abort();
+}
 
 static const char *
 norm2(char *buf, double val, char *fmt, int normalize)
@@ -103,23 +126,16 @@ sighandler(int signum)
 	done = 1;
 }
 
-union cli {
+union conn {
 	struct {
-		int cli_connected;
-		int cli_rnrn;
+		int cn_sent;
+		int cn_http;
 	};
-	uint64_t cli_u64;
-};
-
-union srv {
-	struct {
-		int srv_rnrn;
-	};
-	uint64_t srv_u64;	
+	uint64_t cn_u64;
 };
 
 static int
-search_rnrn(const char *s, int len, int *ctx)
+parse_http(const char *s, int len, int *ctx)
 {
 	int i;
 
@@ -139,21 +155,16 @@ search_rnrn(const char *s, int len, int *ctx)
 	return 0;
 }
 
-static void cli_process(struct socket *, short,
-                        struct sockaddr_in *, void *, int);
-static void srv_process(struct socket *, short,
-                        struct sockaddr_in *, void *, int);
-
-static int
-cli_connect()
+static void
+conn_connect()
 {
 	int rc;
 	struct sockaddr_in addr;
 	struct socket *so;
 
-	rc = usr_socket(IPPROTO_TCP, &so);
+	rc = bsd_socket(IPPROTO_TCP, &so);
 	if (rc < 0) {
-		return rc;
+		die(-rc, "bsd_socket() failed");
 	}
 	so->so_userfn = cli_process;
 	so->so_user = 0;
@@ -163,20 +174,18 @@ cli_connect()
 	addr.sin_family = AF_INET;
 	addr.sin_addr.s_addr = htonl(ip_faddr_min);
 	addr.sin_port = port;
-	rc = usr_connect(so, &addr);
-	if (rc == 0) {
-		nclients++;
-	} else {
-		usr_close(so);
+	rc = bsd_connect(so, &addr);
+	if (rc < 0) {
+		die(-rc, "bsd_connect() failed");
 	}
-	return rc;
+	nclients++;
 }
 
 static void
-udp_echo(struct socket *so, short events,
-         struct sockaddr_in *addr, void *dat, int len)
+udp_echo(struct socket *so, short events, struct sockaddr_in *addr,
+	void *dat, int len)
 {
-	usr_sendto(so, dat, len, MSG_NOSIGNAL, addr);
+	bsd_sendto(so, dat, len, MSG_NOSIGNAL, addr);
 }
 
 
@@ -188,7 +197,7 @@ srv_accept(struct socket *so, short events,
 	struct socket *aso;
 
 	do {
-		rc = usr_accept(so, &aso);
+		rc = bsd_accept(so, &aso);
 		if (rc == 0) {
 			aso->so_user = 0;
 			aso->so_userfn = srv_process;
@@ -202,73 +211,84 @@ srv_listen(int proto)
 	int rc;
 	struct socket *so;
 
-	rc = usr_socket(proto, &so);
+	rc = bsd_socket(proto, &so);
 	if (rc < 0) {
-		return rc;
+		die(-rc, "bsd_socket() failed");
 	}
 	if (so_debug_flag) {
 		sosetopt(so, SO_DEBUG);
 	}
 	so->so_userfn = proto == IPPROTO_TCP ? srv_accept : udp_echo;
 	so->so_user = 0;
-	rc = usr_bind(so, port);
+	rc = bsd_bind(so, port);
 	if (rc) {
-		goto err;
+		die(-rc, "bsd_bind(%u) failed", ntohs(port));
 	}
 	if (proto == IPPROTO_TCP) {
-		rc = usr_listen(so);
+		rc = bsd_listen(so);
 		if (rc) {
-			goto err;
+			die(-rc, "bsd_listen() failed");
 		}
 	}
 	return 0;
-err:
-	usr_close(so);
-	return rc;
 }
 
 static void
-con_close(struct socket *so, int isclient)
+con_close(int is_client)
 {
-	usr_close(so);
 	connections++;
 	if (nflag) {
 		if (connections == nflag) {
 			done = 1;
 		}
 	}
-	if (isclient) {
+	if (is_client) {
 		nclients--;
 		while (nclients < concurrency) {
-			cli_connect();
+			conn_connect();
 		}
 	}
 }
 
 static void
-cli_process(struct socket *so, short events,
-            struct sockaddr_in *addr, void *dat, int len)
+conn_sendto(struct socket *so)
 {
 	int rc;
-	union cli *cli;
 
-	cli = (union cli *)&so->so_user;
-	if (cli->cli_connected == 0) {
+	rc = bsd_sendto(so, http, http_len, MSG_NOSIGNAL, NULL);
+	if (rc < 0) {
+		die(-rc, "bsd_sendto() failed");
+	} else if (rc != http_len) {
+		die(0, "bsd_sendto() stalled");
+	}
+
+}
+
+static void
+cli_process(struct socket *so, short events, struct sockaddr_in *addr,
+	void *dat, int len)
+{
+	int rc;
+	union conn *cp;
+
+	cp = (union conn *)&so->so_user;
+	if (events & POLLNVAL) {
+		con_close(1);
+		return;
+	}
+	if (cp->cn_sent == 0) {
 		if (events|POLLOUT) {
-			cli->cli_connected = 1;
-			rc = usr_sendto(so, http, http_len, MSG_NOSIGNAL, NULL);
-			assert(rc == http_len);
+			cp->cn_sent = 1;
+			conn_sendto(so);
 		}
 	}
 	if (len) {
-		rc = search_rnrn(dat, len, &cli->cli_rnrn);
+		rc = parse_http(dat, len, &cp->cn_http);
 		if (rc) {
-			goto close;
+			bsd_close(so);
 		}
-	}
-	if ((events & POLLERR) || ((events & POLLIN) && len == 0)) {
-close:
-		con_close(so, 1);
+	} else if (events & (POLLERR|POLLIN)) {
+		bsd_close(so);
 	}
 }
 
@@ -277,26 +297,23 @@ srv_process(struct socket *so, short events,
             struct sockaddr_in *addr, void *dat, int len)
 {
 	int rc;
-	union srv *srv;
+	union conn *cp;
 
-	srv = (union srv *)&so->so_user;
-	if (len) {
-		rc = search_rnrn(dat, len, &srv->srv_rnrn);
-		if (rc) {
-			rc = usr_sendto(so, http, http_len, MSG_NOSIGNAL, NULL);
-			assert(rc == http_len);
-			goto close;
-
-		}
+	cp = (union conn *)&so->so_user;
+	if (events & POLLNVAL) {
+		con_close(0);
+		return;
 	}
-	if ((events & POLLERR) || ((events & POLLIN) && len == 0)) {
-close:
-		con_close(so, 0);
+	if (len) {
+		rc = parse_http(dat, len, &cp->cn_http);
+		if (rc) {
+			conn_sendto(so);
+			bsd_close(so);
+		}
+	} else if (events & (POLLERR|POLLIN)) {
+		bsd_close(so);
 	}
 }
-
-
-//void domaininit();
 
 void ether_input(struct ether_header *eh, int len);
 
@@ -370,9 +387,9 @@ process_events()
 	if (t > tsc) {
 		tsc = t;
 		nanosec = 1000 * tsc / tsc_mhz;
-		while (nanosec >= tcp_nowage + TM_1SEC/PR_SLOWHZ) {
+		while (nanosec >= tcp_nowage + NANOSECONDS_SECOND/PR_SLOWHZ) {
 			tcp_now++;
-			tcp_nowage += TM_1SEC/PR_SLOWHZ;
+			tcp_nowage += NANOSECONDS_SECOND/PR_SLOWHZ;
 		}
 	}
 	timer_checktimo();
@@ -382,14 +399,14 @@ process_events()
 	if (pfds[0].revents & POLLOUT) {
 		tx_full = 0;
 	}
-	while (!dllist_empty(&so_txq)) {
-		so = DLLIST_FIRST(&so_txq, struct socket, so_txlist);
+	while (!dlist_is_empty(&so_txq)) {
+		so = DLIST_FIRST(&so_txq, struct socket, so_txlist);
 		if (not_empty_txr(NULL) == NULL) {
 			break;
 		}
 		rc = tcp_output_real(sototcpcb(so));
 		if (rc <= 0) {
-			DLLIST_REMOVE(so, so_txlist);
+			DLIST_REMOVE(so, so_txlist);
 			so->so_state &= ~SS_ISTXPENDING;
 			sofree(so);
 		}
@@ -505,7 +522,7 @@ init(const char *ifname)
 	srand(getpid() ^ time(NULL));
 
 
-	dllist_init(&so_txq);
+	dlist_init(&so_txq);
 
 	len = strlen(ifname);
 	if (len >= IFNAMSIZ) {
@@ -564,7 +581,7 @@ report(struct timer *timer)
 	if (n == 20) {
 		n = 0;
 	}
-	dt = (double)(nanosec - report_time) / TM_1SEC;
+	dt = (double)(nanosec - report_time) / NANOSECONDS_SECOND;
 	report_time = nanosec;
 	ipps = (if_ipackets - old_ipackets) / dt;
 	old_ipackets = if_ipackets;
@@ -593,7 +610,7 @@ report(struct timer *timer)
 		printf("%-10s", obps_b);
 	}
 	printf("%s\n", rxmtps_b);
-	timer_set(timer, TM_1SEC, report);
+	timer_set(timer, NANOSECONDS_SECOND, report);
 }
 
 static void
@@ -681,12 +698,12 @@ main(int argc, char **argv)
 				}
 			} else if (!strcmp(optname, "tcp-fin-timeout")) {
 				if (optval < 30) {
-					goto invalidarg;
+					goto err;
 				}
-				tcp_fintimo = optval * TM_1SEC;
+				tcp_fintimo = optval * NANOSECONDS_SECOND;
 				break;
 			} else if (!strcmp(optname, "tcp-timewait-timeout")) {
-				tcp_twtimo = optval * TM_1SEC;
+				tcp_twtimo = optval * NANOSECONDS_SECOND;
 				break;
 			} else if (!strcmp(optname, "report-bytes")) {
 				report_bytes_flag = 1;
@@ -704,31 +721,31 @@ main(int argc, char **argv)
 		case 's':
 			rc = iprange_scanf(&ip_laddr_min, &ip_laddr_max, optarg);
 			if (rc) {
-				goto invalidarg;
+				goto err;
 			}
 			break;
 		case 'd':
 			rc = iprange_scanf(&ip_faddr_min, &ip_faddr_max, optarg);
 			if (rc) {
-				goto invalidarg;
+				goto err;
 			}
 			break;
 		case 'S':
 			rc = ether_scanf(eth_laddr, optarg);
 			if (rc) {
-				goto invalidarg;
+				goto err;
 			}
 			break;
 		case 'D':
 			rc = ether_scanf(eth_faddr, optarg);
 			if (rc) {
-				goto invalidarg;
+				goto err;
 			}
 			break;
 		case 'a':
 			rc = set_affinity(optval);
 			if (rc) {
-				goto invalidarg;
+				goto err;
 			}
 			break;
 		case 'n':
@@ -737,13 +754,13 @@ main(int argc, char **argv)
 		case 'b':
 			burst_size = strtoul(optarg, NULL, 10);
 			if (!burst_size) {
-				goto invalidarg;
+				goto err;
 			}
 			break;
 		case 'c':
 			concurrency = strtoul(optarg, NULL, 10);
 			if (!concurrency) {
-				goto invalidarg;
+				goto err;
 			}
 			break;
 		case 'p':
@@ -756,7 +773,7 @@ main(int argc, char **argv)
 			Lflag = 1;
 			break;
 		default:
-invalidarg:
+err:
 			fprintf(stderr, "invalid argument '-%c': %s\n",
 			        opt, optarg);
 			return 2;
@@ -794,11 +811,11 @@ invalidarg:
 			"User-Agent: con-gen\r\n"
 			"\r\n",
 			hostname);
-		cli_connect();
+		conn_connect();
 	}
 	report_time = nanosec;
 	timer_init(&report_timer);
-	timer_set(&report_timer, TM_1SEC, report);
+	timer_set(&report_timer, NANOSECONDS_SECOND, report);
 	while (!done) {
 		process_events();
 	}
