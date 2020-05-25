@@ -51,11 +51,8 @@ struct	icmpstat icmpstat;
 static void die(int, const char *, ...)
 	__attribute__((format(printf, 2, 3)));
 
-static void cli_process(struct socket *, short, struct sockaddr_in *,
-	void *, int);
-
-static void srv_process(struct socket *, short, struct sockaddr_in *,
-	void *, int);
+static void client(struct socket *, short, struct sockaddr_in *, void *, int);
+static void server(struct socket *, short, struct sockaddr_in *, void *, int);
 
 int print_stat(int);
 void print_conns();
@@ -166,7 +163,7 @@ conn_connect()
 	if (rc < 0) {
 		die(-rc, "bsd_socket() failed");
 	}
-	so->so_userfn = cli_process;
+	so->so_userfn = client;
 	so->so_user = 0;
 	if (so_debug_flag) {
 		sosetopt(so, SO_DEBUG);
@@ -200,7 +197,7 @@ srv_accept(struct socket *so, short events,
 		rc = bsd_accept(so, &aso);
 		if (rc == 0) {
 			aso->so_user = 0;
-			aso->so_userfn = srv_process;
+			aso->so_userfn = server;
 		}
 	} while (rc != -EWOULDBLOCK);
 }
@@ -265,7 +262,7 @@ conn_sendto(struct socket *so)
 }
 
 static void
-cli_process(struct socket *so, short events, struct sockaddr_in *addr,
+client(struct socket *so, short events, struct sockaddr_in *addr,
 	void *dat, int len)
 {
 	int rc;
@@ -277,6 +274,9 @@ cli_process(struct socket *so, short events, struct sockaddr_in *addr,
 		return;
 	}
 	if (cp->cn_sent == 0) {
+		if (events & POLLERR) {
+			die(so->so_error, "cant connect");
+		}
 		if (events|POLLOUT) {
 			cp->cn_sent = 1;
 			conn_sendto(so);
@@ -293,8 +293,8 @@ cli_process(struct socket *so, short events, struct sockaddr_in *addr,
 }
 
 static void
-srv_process(struct socket *so, short events,
-            struct sockaddr_in *addr, void *dat, int len)
+server(struct socket *so, short events, struct sockaddr_in *addr,
+	void *dat, int len)
 {
 	int rc;
 	union conn *cp;
