@@ -56,7 +56,7 @@ htable_static_del(struct htable_static *t, struct dlist *elem)
 }
 
 void
-htable_static_foreach(struct htable_static *t, htable_foreach_f fn)
+htable_static_foreach(struct htable_static *t, void *udata, htable_foreach_f fn)
 {
 	int i;
 	struct dlist *b, *e;
@@ -64,7 +64,7 @@ htable_static_foreach(struct htable_static *t, htable_foreach_f fn)
 	for (i = 0; i < t->hts_size; ++i) {
 		b = t->hts_array + i;
 		dlist_foreach(e, b) {
-			(*fn)(e);
+			(*fn)(udata, e);
 		}
 	}
 }
@@ -116,17 +116,17 @@ htable_dynamic_bucket_get(struct htable_dynamic *t, uint32_t h)
 }
 
 void
-htable_dynamic_foreach(struct htable_dynamic *t, htable_foreach_f fn)
+htable_dynamic_foreach(struct htable_dynamic *t, void *udata, htable_foreach_f fn)
 {
 	int i;
 	struct dlist *b, *e;
 
-	htable_static_foreach(t->htd_new, fn);
+	htable_static_foreach(t->htd_new, udata, fn);
 	if (t->htd_old != NULL) {
 		for (i = t->htd_resize_progress; i < t->htd_old->hts_size; ++i) {
 			b = t->htd_old->hts_array + i;
 			dlist_foreach(e, b) {
-				(*fn)(e);
+				(*fn)(udata, e);
 			}
 		}
 	}

@@ -232,6 +232,17 @@ in_pcbnotify(int proto,
 	}
 }
 
+static void
+in_pcbforeachfn(void *udata, void *e)
+{
+	void (*fn)(struct socket *);
+	struct socket *so;
+
+	fn = udata;
+	so = container_of(e, struct socket, inp_list);
+	(*fn)(so);
+}
+
 void
 in_pcbforeach(void (*fn)(struct socket *))
 {
@@ -242,7 +253,7 @@ in_pcbforeach(void (*fn)(struct socket *))
 			(*fn)(in_binded[i]);
 		}
 	}
-	htable_foreach(&in_htable, (htable_foreach_f)fn);
+	htable_foreach(&in_htable, fn, in_pcbforeachfn);
 }
 
 struct socket *
