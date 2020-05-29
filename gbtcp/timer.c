@@ -1,61 +1,39 @@
-/* GPL2 license */
+// gpl2 license
 #include "timer.h"
+#include "../common.h"
 
-#define TIMERRING_ID_MASK (((uintptr_t)1 << TIMERRING_ID_SHIFT) - 1)
-#define TIMERRING_MAX (1 << TIMERRING_ID_SHIFT)
+#define TIMER_RING_ID_MASK (((uintptr_t)1 << TIMER_RING_ID_SHIFT) - 1)
+#define TIMER_RING_MAX (1 << TIMER_RING_ID_SHIFT)
 
-struct timerring {
+struct timer_ring {
 	uint64_t r_seg_shift;
 	uint64_t r_pos;
 	int r_ntimers;
-	struct dlist r_segs[TIMERRING_SIZE];
+	struct dlist r_segs[TIMER_RING_SIZE];
 };
 
-static int ntimerrings;
-static uint64_t timer_lasttime;
-static struct timerring *timerrings[TIMERRING_MAX];
-
-static int timerring_getid(struct timer *);
-
-static int timer_allocrings();
-
-static void timer_freerings();
-
-static void timerring_init(struct timerring *, uint64_t);
-
-static void timer_callq(struct dlist *);
-
-static void timerring_checktimo(struct timerring *, struct dlist *);
+static int n_timer_rings;
+static struct timer_ring *timer_rings[TIMER_RING_MAX];
 
 static int
-timerring_getid(struct timer *timer)
-{
-	return timer->tm_data & TIMERRING_ID_MASK;
-}
-
-static int
-timer_allocrings()
+alloc_timer_rings()
 {
 	int i;
 
-	for (i = 0; i < ntimerrings; ++i) {
-		timerrings[i] = malloc(sizeof(struct timerring));
-		if (timerrings[i] == NULL) {
-			timer_freerings();
-			return -ENOMEM;
-		}
+	for (i = 0; i < n_timer_rings; ++i) {
+		timer_rings[i] = xmalloc(sizeof(struct timer_ring));
 	}
 	return 0;
 }
 
 static void
-timer_freerings()
+free_timer_rings()
 {
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(timerrings); ++i) {
-		free(timerrings[i]);
-		timerrings[i] = NULL;
+	for (i = 0; i < ARRAY_SIZE(timer_rings); ++i) {
+		free(timer_rings[i]);
+		timer_rings[i] = NULL;
 	}
 }
 
@@ -75,7 +53,7 @@ ffs64(uint64_t x)
 }
 
 static void
-timerring_init(struct timerring *ring, uint64_t seg_size)
+timer_ring_init(struct timer_ring *ring, uint64_t seg_size)
 {
 	int i;
 
@@ -85,47 +63,44 @@ timerring_init(struct timerring *ring, uint64_t seg_size)
 		ring->r_pos = nanosec >> ring->r_seg_shift;
 	}
 	ring->r_ntimers = 0;
-	for (i = 0; i < TIMERRING_SIZE; ++i) {
+	for (i = 0; i < TIMER_RING_SIZE; ++i) {
 		dlist_init(ring->r_segs + i);
 	}
 }
 
 int
-timer_modinit()
+timer_mod_init()
 {
-	int i, rc;
+	int i;
 	uint64_t seg_size;
-	uint64_t seg_sizes[TIMERRING_MAX];
-	struct timerring *ring;
+	uint64_t seg_sizes[TIMER_RING_MAX];
+	struct timer_ring *ring;
 
 	seg_size = 1llu << 25; // 33554432 ~ 33ms
-	ntimerrings = 0;
-	while (seg_size < TIMER_EXPIREMAX) {
-		seg_sizes[ntimerrings] = seg_size;
-		ntimerrings++;
-		if (seg_size * TIMERRING_SIZE > TIMER_EXPIREMAX) {
+	n_timer_rings = 0;
+	while (seg_size < TIMER_EXPIRE_MAX) {
+		seg_sizes[n_timer_rings] = seg_size;
+		n_timer_rings++;
+		if (seg_size * TIMER_RING_SIZE > TIMER_EXPIRE_MAX) {
 			break;
 		} else {
-			seg_size = ((seg_size * TIMERRING_SIZE) >> 2llu);
-			assert(ntimerrings < TIMERRING_MAX);
+			seg_size = ((seg_size * TIMER_RING_SIZE) >> 2llu);
+			assert(n_timer_rings < TIMER_RING_MAX);
 		}
 	}
-	assert(ntimerrings);
-	rc = timer_allocrings();
-	if (rc) {
-		return rc;
-	}
-	for (i = 0; i < ntimerrings; ++i) {
-		ring = timerrings[i];
-		timerring_init(ring, seg_sizes[i]);
+	assert(n_timer_rings);
+	alloc_timer_rings();
+	for (i = 0; i < n_timer_rings; ++i) {
+		ring = timer_rings[i];
+		timer_ring_init(ring, seg_sizes[i]);
 	}
 	return 0;
 }
 
 void
-timer_moddeinit()
+timer_mod_deinit()
 {
-	timer_freerings();
+	free_timer_rings();
 }
 
 void
@@ -135,7 +110,7 @@ timer_init(struct timer *timer)
 }
 
 int
-timer_isrunning(struct timer *timer)
+timer_is_running(struct timer *timer)
 {
 	return timer->tm_data != 0;
 }
@@ -147,31 +122,31 @@ timer_set(struct timer *timer, uint64_t expire, timer_f fn)
 	uintptr_t uint_fn;
 	uint64_t dist, pos;
 	struct dlist *seg;
-	struct timerring *ring;
+	struct timer_ring *ring;
 
 	uint_fn = (uintptr_t)fn;
 	assert(uint_fn != 0);
-	assert((uint_fn & TIMERRING_ID_MASK) == 0);
-	assert(expire <= TIMER_EXPIREMAX);
+	assert((uint_fn & TIMER_RING_ID_MASK) == 0);
+	assert(expire <= TIMER_EXPIRE_MAX);
 	timer_cancel(timer);
 	dist = 0;
-	for (ring_id = 0; ring_id < ntimerrings; ++ring_id) {
-		ring = timerrings[ring_id];
+	for (ring_id = 0; ring_id < n_timer_rings; ++ring_id) {
+		ring = timer_rings[ring_id];
 		dist = expire >> ring->r_seg_shift;
 		assert(dist >= 2);
-		if (dist < TIMERRING_SIZE) {
+		if (dist < TIMER_RING_SIZE) {
 			break;
 		}
 	}
-	if (ring_id == ntimerrings) {
-		ring_id = ntimerrings - 1;
-		ring = timerrings[ring_id];
-		dist = TIMERRING_SIZE - 1;
+	if (ring_id == n_timer_rings) {
+		ring_id = n_timer_rings - 1;
+		ring = timer_rings[ring_id];
+		dist = TIMER_RING_SIZE - 1;
 	}
-	assert((ring_id & ~TIMERRING_ID_MASK) == 0);
-	ring = timerrings[ring_id];
+	assert((ring_id & ~TIMER_RING_ID_MASK) == 0);
+	ring = timer_rings[ring_id];
 	pos = ring->r_pos + dist;
-	seg = ring->r_segs + (pos & TIMERRING_MASK);
+	seg = ring->r_segs + (pos & TIMER_RING_MASK);
 	ring->r_ntimers++;
 	timer->tm_data = uint_fn|ring_id;
 	DLIST_INSERT_HEAD(seg, timer, tm_list);
@@ -181,11 +156,11 @@ void
 timer_cancel(struct timer *timer)
 {
 	int ring_id;
-	struct timerring *ring;
+	struct timer_ring *ring;
 
-	if (timer_isrunning(timer)) {
-		ring_id = timerring_getid(timer);
-		ring = timerrings[ring_id];
+	if (timer_is_running(timer)) {
+		ring_id = timer->tm_data & TIMER_RING_ID_MASK;
+		ring = timer_rings[ring_id];
 		ring->r_ntimers--;
 		assert(ring->r_ntimers >= 0);
 		DLIST_REMOVE(timer, tm_list);
@@ -193,27 +168,23 @@ timer_cancel(struct timer *timer)
 	}
 }
 
-void
-timer_checktimo()
+static void
+call_timers(struct dlist *q)
 {
-	int i;
-	struct dlist q;
-	struct timerring *ring;
+	struct timer *timer;
+	timer_f fn;
 
-	if (nanosec - timer_lasttime < 30 * NANOSECONDS_MILLISECOND) {
-		return;
+	while (!dlist_is_empty(q)) {
+		timer = DLIST_FIRST(q, struct timer, tm_list);
+		DLIST_REMOVE(timer, tm_list);
+		fn = (timer_f)(timer->tm_data & ~TIMER_RING_ID_MASK);
+		timer->tm_data = 0;
+		(*fn)(timer);
 	}
-	timer_lasttime = nanosec;
-	dlist_init(&q);
-	for (i = 0; i < ntimerrings; ++i) {
-		ring = timerrings[i];
-		timerring_checktimo(ring, &q);
-	}
-	timer_callq(&q);
 }
 
 static void
-timerring_checktimo(struct timerring *ring, struct dlist *q)
+check_timer_ring(struct timer_ring *ring, struct dlist *q)
 {
 	int i;
 	uint64_t pos;
@@ -226,8 +197,8 @@ timerring_checktimo(struct timerring *ring, struct dlist *q)
 	if (ring->r_ntimers == 0) {
 		return;
 	}
-	for (i = 0; pos <= ring->r_pos && i < TIMERRING_SIZE; ++pos, ++i) {
-		seg = ring->r_segs + (pos & TIMERRING_MASK);
+	for (i = 0; pos <= ring->r_pos && i < TIMER_RING_SIZE; ++pos, ++i) {
+		seg = ring->r_segs + (pos & TIMER_RING_MASK);
 		while (!dlist_is_empty(seg)) {
 			ring->r_ntimers--;
 			assert(ring->r_ntimers >= 0);
@@ -241,17 +212,22 @@ timerring_checktimo(struct timerring *ring, struct dlist *q)
 	}
 }
 
-static void
-timer_callq(struct dlist *q)
+void
+check_timers()
 {
-	struct timer *timer;
-	timer_f fn;
+	int i;
+	static uint64_t last_check_time;
+	struct dlist q;
+	struct timer_ring *ring;
 
-	while (!dlist_is_empty(q)) {
-		timer = DLIST_FIRST(q, struct timer, tm_list);
-		DLIST_REMOVE(timer, tm_list);
-		fn = (timer_f)(timer->tm_data & ~TIMERRING_ID_MASK);
-		timer->tm_data = 0;
-		(*fn)(timer);
+	if (nanosec - last_check_time < 30 * NANOSECONDS_MILLISECOND) {
+		return;
 	}
+	last_check_time = nanosec;
+	dlist_init(&q);
+	for (i = 0; i < n_timer_rings; ++i) {
+		ring = timer_rings[i];
+		check_timer_ring(ring, &q);
+	}
+	call_timers(&q);
 }

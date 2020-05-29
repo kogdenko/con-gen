@@ -36,7 +36,6 @@
 #include "udp_var.h"
 #include "../gbtcp/list.h"
 
-
 static DLIST_HEAD(somhead);
 
 static struct socket *

@@ -36,35 +36,7 @@
 
 #include "types.h"
 
-struct	ipstat {
-	uint64_t ips_total;             /* total packets received */
-	uint64_t ips_badsum;            /* checksum bad */
-	uint64_t ips_tooshort;          /* packet too short */
-	uint64_t ips_toosmall;          /* not enough data */
-	uint64_t ips_badhlen;           /* ip header length < data size */
-	uint64_t ips_badlen;            /* ip length < ip header length */
-	uint64_t ips_fragments;         /* fragments received */
-	uint64_t ips_fragdropped;       /* frags dropped (dups, out of space) */
-	uint64_t ips_fragtimeout;       /* fragments timed out */
-	uint64_t ips_forward;           /* packets forwarded */
-	uint64_t ips_cantforward;       /* packets rcvd for unreachable dest */
-	uint64_t ips_redirectsent;      /* packets forwarded on same net */
-	uint64_t ips_noproto;           /* unknown or unsupported protocol */
-	uint64_t ips_delivered;         /* datagrams delivered to upper level*/
-	uint64_t ips_localout;          /* total ip packets generated here */
-	uint64_t ips_odropped;          /* lost packets due to nobufs, etc. */
-	uint64_t ips_reassembled;       /* total packets reassembled ok */
-	uint64_t ips_fragmented;        /* datagrams sucessfully fragmented */
-	uint64_t ips_ofragments;        /* output fragments created */
-	uint64_t ips_cantfrag;          /* don't fragment flag was set, etc. */
-	uint64_t ips_badoptions;        /* error in option processing */
-	uint64_t ips_noroute;           /* packets discarded due to no route */
-	uint64_t ips_badvers;           /* ip version != 4 */
-	uint64_t ips_rawout;            /* total raw ip packets generated */
-};
-
 struct ip;
-struct	ipstat	ipstat;
 u_short	ip_id;				/* ip packet ctr, for ids */
 
 void	 ip_drain(void);

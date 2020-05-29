@@ -268,8 +268,8 @@ tcp_output_real(struct tcpcb *tp)
 	 * otherwise force out a byte.
 	 */
 	if (so->so_snd.sb_cc &&
-	    !timer_isrunning(tp->t_timer + TCPT_REXMT) &&
-	    !timer_isrunning(tp->t_timer + TCPT_PERSIST)) {
+	    !timer_is_running(tp->t_timer + TCPT_REXMT) &&
+	    !timer_is_running(tp->t_timer + TCPT_PERSIST)) {
 		tp->t_rxtshift = 0;
 		tcp_setpersist(tp);
 	}
@@ -423,7 +423,7 @@ send:
 	 * (retransmit and persist are mutually exclusive...)
 	 */
 	if (len || (flags & (TH_SYN|TH_FIN)) ||
-	    timer_isrunning(tp->t_timer + TCPT_PERSIST)) {
+	    timer_is_running(tp->t_timer + TCPT_PERSIST)) {
 		th->th_seq = htonl(tp->snd_nxt);
 	} else {
 		th->th_seq = htonl(tp->snd_max);
@@ -454,13 +454,15 @@ send:
 	 * so that it doesn't drift into the send window on sequence
 	 * number wraparound.
 	 */
-	th->th_sum = tcp_cksum(ip, sizeof(*th) + optlen + len);
+	if (tcp_do_outcksum) {
+		th->th_sum = tcp_cksum(ip, sizeof(*th) + optlen + len);
+	}
 	/*
 	 * In transmit state, time the transmission and arrange for
 	 * the retransmit.  In persist state, just set snd_max.
 	 */
 	if (t_force == 0 ||
-	    !timer_isrunning(tp->t_timer + TCPT_PERSIST)) {
+	    !timer_is_running(tp->t_timer + TCPT_PERSIST)) {
 		tcp_seq startseq = tp->snd_nxt;
 		/*
 		 * Advance snd_nxt over sequence space of this segment.
@@ -495,10 +497,10 @@ send:
 		 * Initialize shift counter which is used for backoff
 		 * of retransmit time.
 		 */
-		if (!timer_isrunning(tp->t_timer + TCPT_REXMT) &&
+		if (!timer_is_running(tp->t_timer + TCPT_REXMT) &&
 		    tp->snd_nxt != tp->snd_una) {
 			tcp_setslowtimer(tp, TCPT_REXMT, tp->t_rxtcur);
-			if (timer_isrunning(tp->t_timer + TCPT_PERSIST)) {
+			if (timer_is_running(tp->t_timer + TCPT_PERSIST)) {
 				timer_cancel(tp->t_timer + TCPT_PERSIST);
 				tp->t_rxtshift = 0;
 			}
@@ -551,8 +553,8 @@ tcp_setpersist(struct tcpcb *tp)
 
 	t = ((tp->t_srtt >> 2) + tp->t_rttvar) >> 1;
 
-	if (timer_isrunning(tp->t_timer + TCPT_REXMT)) {
-		panic("tcp_output REXMT");
+	if (timer_is_running(tp->t_timer + TCPT_REXMT)) {
+		panic(0, "tcp_output REXMT");
 	}
 	/*
 	 * Start/restart persistance timer.

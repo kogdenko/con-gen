@@ -35,30 +35,11 @@
 #define BSD44_ICMP_VAR_H
 
 /*
- * Variables related to this implementation
- * of the internet control message protocol.
- */
-struct	icmpstat {
-/* statistics related to icmp packets generated */
-	uint64_t icps_error;            /* # of calls to icmp_error */
-	uint64_t icps_oldicmp;          /* no error 'cuz old was icmp */
-	uint64_t icps_outhist[ICMP_MAXTYPE + 1];
-/* statistics related to input messages processed */
- 	uint64_t icps_badcode;          /* icmp_code out of range */
-	uint64_t icps_tooshort;         /* packet < ICMP_MINLEN */
-	uint64_t icps_checksum;         /* bad checksum */
-	uint64_t icps_badlen;           /* calculated bound mismatch */
-	uint64_t icps_reflect;          /* number of responses */
-	uint64_t icps_inhist[ICMP_MAXTYPE + 1];
-};
-
-/*
  * Names for ICMP sysctl objects
  */
 #define	ICMPCTL_MASKREPL	1	/* allow replies to netmask requests */
 #define ICMPCTL_MAXID		2
 
-extern struct	icmpstat icmpstat;
 
 #endif /* BSD44_ICMP_VAR_H */
 

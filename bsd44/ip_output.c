@@ -37,6 +37,7 @@
 #include "ip_var.h"
 #include "if_ether.h"
 
+
 void
 ip_output(struct netmap_ring *txr, struct netmap_slot *m, struct ip *ip)
 {
@@ -53,12 +54,13 @@ ip_output(struct netmap_ring *txr, struct netmap_slot *m, struct ip *ip)
 	ip->ip_tos = 0;
 	ip->ip_hl = sizeof(*ip) >> 2;
 	ipstat.ips_localout++;
-
 	assert((u_short)ip->ip_len <= if_mtu);
 	ip->ip_len = htons((u_short)ip->ip_len);
 	ip->ip_off = htons((u_short)ip->ip_off);
 	ip->ip_sum = 0;
-	ip->ip_sum = ip_cksum(ip);
+	if (ip_do_outcksum) {
+		ip->ip_sum = ip_cksum(ip);
+	}
 	eh = ((struct ether_header *)ip) - 1;
 	eh->ether_type = htons(ETHERTYPE_IP);
  	memcpy(eh->ether_shost, eth_laddr, sizeof(eh->ether_shost));

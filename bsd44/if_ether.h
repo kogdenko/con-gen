@@ -88,7 +88,7 @@ struct ether_header {
  * to resolving internet addresses.  Field names used correspond to 
  * RFC 826.
  */
-struct	ether_arp {
+struct ether_arp {
 	struct	arphdr ea_hdr;	/* fixed-size header */
 	u_char	arp_sha[6];	/* sender hardware address */
 	u_char	arp_spa[4];	/* sender protocol address */
@@ -104,7 +104,6 @@ struct	ether_arp {
 void arp_input(struct arphdr *, int);
 char *ether_sprintf(u_char *ap);
 int ether_scanf(u_char *ap, const char *s);
-void ether_output(struct netmap_ring *txr, struct netmap_slot *m);
 
-#endif /* BSD44_IF_ETHER_H */
+#endif // BSD44_IF_ETHER_H
 

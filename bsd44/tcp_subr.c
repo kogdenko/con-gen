@@ -46,7 +46,6 @@
 int tcp_rttdflt = TCPTV_SRTTDFLT / PR_SLOWHZ;
 int tcp_do_wscale = 1;
 int tcp_do_timestamps = 1;
-
 /*
  * Tcp initialization
  */

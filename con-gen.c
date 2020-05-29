@@ -1,25 +1,25 @@
 #include "./bsd44/socket.h"
-#include "./bsd44/tcp_var.h"
-#include "./bsd44/udp_var.h"
-#include "./bsd44/icmp_var.h"
+//#include "./bsd44/tcp_var.h"
+//#include "./bsd44/udp_var.h"
+//#include "./bsd44/icmp_var.h"
 #include "./bsd44/if_ether.h"
+#include "./bsd44/ip.h"
 #include "./gbtcp/timer.h"
+#include "netstat.h"
 #include <getopt.h>
 #include <pthread.h>
 #ifndef __linux__
 #include <pthread_np.h>
 #endif
 
+int nflag = 0;
+int concurrency = 1;
+
 static int connections = 0;
 static int nclients;
-static int concurrency = 1;
-static int nflag = 0;
 static int Nflag;
 static int burst_size = 256;
 static int so_debug_flag;
-static int verbose;
-static char http[1500];
-static int http_len;
 static be16_t port;
 static struct nm_desc *nmd;
 static struct timer report_timer;
@@ -48,33 +48,16 @@ uint32_t tcp_now;		/* for RFC 1323 timestamps */
 static uint64_t tcp_nowage;
 struct	icmpstat icmpstat;
 
-static void die(int, const char *, ...)
-	__attribute__((format(printf, 2, 3)));
-
 static void client(struct socket *, short, struct sockaddr_in *, void *, int);
 static void server(struct socket *, short, struct sockaddr_in *, void *, int);
 
 int print_stat(int);
 void print_conns();
 
-static void
-die(int errnum, const char *fmt, ...)
-{
-	va_list ap;
-
-	print_conns();
-	print_stat(verbose);
-	va_start(ap, fmt);
-	vfprintf(stderr, fmt, ap);
-	va_end(ap);
-	fprintf(stderr, "\n");
-	abort();
-}
-
 static const char *
 norm2(char *buf, double val, char *fmt, int normalize)
 {
-	char *units[] = { "", "K", "M", "G", "T" };
+	char *units[] = { "", "k", "m", "g", "t" };
 	u_int i;
 	if (normalize)
 		for (i = 0; val >=1000 && i < sizeof(units)/sizeof(char *) - 1; i++)
@@ -89,9 +72,9 @@ static const char *
 norm(char *buf, double val, int normalize)
 {
 	if (normalize) {
-		return norm2(buf, val, "%.3f %s", normalize);
+		return norm2(buf, val, "%.3f%s", normalize);
 	} else {
-		return norm2(buf, val, "%.0f %s", normalize);
+		return norm2(buf, val, "%.0f%s", normalize);
 	}
 }
 
@@ -113,9 +96,6 @@ rdtsc()
 		"=d" (tsc.hi_32));
 	return tsc.u_64;
 }
-
-
-static int done;
 
 static void
 sighandler(int signum)
@@ -161,7 +141,7 @@ conn_connect()
 
 	rc = bsd_socket(IPPROTO_TCP, &so);
 	if (rc < 0) {
-		die(-rc, "bsd_socket() failed");
+		panic(-rc, "bsd_socket() failed");
 	}
 	so->so_userfn = client;
 	so->so_user = 0;
@@ -173,7 +153,7 @@ conn_connect()
 	addr.sin_port = port;
 	rc = bsd_connect(so, &addr);
 	if (rc < 0) {
-		die(-rc, "bsd_connect() failed");
+		panic(-rc, "bsd_connect() failed");
 	}
 	nclients++;
 }
@@ -210,7 +190,7 @@ srv_listen(int proto)
 
 	rc = bsd_socket(proto, &so);
 	if (rc < 0) {
-		die(-rc, "bsd_socket() failed");
+		panic(-rc, "bsd_socket() failed");
 	}
 	if (so_debug_flag) {
 		sosetopt(so, SO_DEBUG);
@@ -219,12 +199,12 @@ srv_listen(int proto)
 	so->so_user = 0;
 	rc = bsd_bind(so, port);
 	if (rc) {
-		die(-rc, "bsd_bind(%u) failed", ntohs(port));
+		panic(-rc, "bsd_bind(%u) failed", ntohs(port));
 	}
 	if (proto == IPPROTO_TCP) {
 		rc = bsd_listen(so);
 		if (rc) {
-			die(-rc, "bsd_listen() failed");
+			panic(-rc, "bsd_listen() failed");
 		}
 	}
 	return 0;
@@ -254,9 +234,9 @@ conn_sendto(struct socket *so)
 
 	rc = bsd_sendto(so, http, http_len, MSG_NOSIGNAL, NULL);
 	if (rc < 0) {
-		die(-rc, "bsd_sendto() failed");
+		panic(-rc, "bsd_sendto() failed");
 	} else if (rc != http_len) {
-		die(0, "bsd_sendto() stalled");
+		panic(0, "bsd_sendto() stalled");
 	}
 
 }
@@ -275,7 +255,7 @@ client(struct socket *so, short events, struct sockaddr_in *addr,
 	}
 	if (cp->cn_sent == 0) {
 		if (events & POLLERR) {
-			die(so->so_error, "cant connect");
+			panic(so->so_error, "cant connect");
 		}
 		if (events|POLLOUT) {
 			cp->cn_sent = 1;
@@ -392,7 +372,7 @@ process_events()
 			tcp_nowage += NANOSECONDS_SECOND/PR_SLOWHZ;
 		}
 	}
-	timer_checktimo();
+	check_timers();
 	if (pfds[0].revents & POLLIN) {
 		rx();
 	}
@@ -416,42 +396,14 @@ process_events()
 		if (rc > 1) {
 			switch (buf[0]) {
 			case 's':
-				print_stat(verbose);
+				pr_stats(verbose);
 				break;
 			case 'c':
-				print_conns();
+				pr_sockets();
 				break;
 			}
 		}
 	}
-}
-
-void
-panic3(const char *file, int line, const char *format, ...)
-{
-	va_list ap;
-
-	fprintf(stderr, "%s:%d: ", file, line);
-	va_start(ap, format);
-	vfprintf(stderr, format, ap);
-	va_end(ap);
-	fprintf(stderr, "\n");
-	abort();
-}
-
-void *
-xmalloc(unsigned long size)
-{
-	void *ptr;
-
-	ptr = malloc(size);
-	return ptr;
-}
-
-void
-xfree(void *addr, int type)
-{
-	free(addr);
 }
 
 static int
@@ -520,10 +472,7 @@ init(const char *ifname)
 	char nbuf[IFNAMSIZ + 16];
 
 	srand(getpid() ^ time(NULL));
-
-
 	dlist_init(&so_txq);
-
 	len = strlen(ifname);
 	if (len >= IFNAMSIZ) {
 		return EINVAL;
@@ -536,7 +485,6 @@ init(const char *ifname)
 		        nbuf, strerror(rc));
 		return rc;
 	}
-
 	t = rdtsc();
 	usleep(10000);
 	tsc = rdtsc();
@@ -546,12 +494,11 @@ init(const char *ifname)
 	nanosec = 1000 * tsc / tsc_mhz;
 	tcp_now = 1;
 	tcp_nowage = nanosec;
-	timer_modinit();
+	timer_mod_init();
 	rc = in_init();
 	if (rc) {
 		exit(10);
 	}
-
 	return 0;
 }
 
@@ -635,6 +582,9 @@ usage()
 	"\t-L: Operate in server mode\n"
 	"\t--so-debug: Enable SO_DEBUG option\n"
 	"\t--udp: Use UDP instead of TCP\n"
+	"\t--ip-in-cksum: On/Off IP input checksum calculation\n"
+	"\t--ip-out-cksum: On/Off IP output checksum calculation\n"
+	"\t--tcp-in-cksum: On/Off TCP input checksum calculation\n"
 	"\t--tcp-wscale: On/Off wscale TCP option\n"
 	"\t--tcp-timestamps: On/Off timestamp TCP option\n"
 	"\t--tcp-fin-timeout {seconds}: Specify FIN timeout\n"
@@ -648,6 +598,10 @@ static struct option long_options[] = {
 	{ "verbose", no_argument, 0, 'v' },
 	{ "udp", no_argument, 0, 0 },
 	{ "so-debug", no_argument, 0, 0 },
+	{ "ip-in-cksum", optional_argument, 0, 0 },
+	{ "ip-out-cksum", optional_argument, 0, 0 },
+	{ "tcp-in-cksum", optional_argument, 0, 0 },
+	{ "tcp-out-cksum", optional_argument, 0, 0 },
 	{ "tcp-wscale", optional_argument, 0, 0 },
 	{ "tcp-timestamps", optional_argument, 0, 0 },
 	{ "tcp-fin-timeout", required_argument, 0, 0 },
@@ -659,7 +613,7 @@ static struct option long_options[] = {
 int
 main(int argc, char **argv)
 {
-	int rc, opt, Lflag, option_index, udp_flag;
+	int rc, opt, option_index, udp_flag;
 	long long optval;
 	const char *ifname;
 	char hostname[64];
@@ -684,6 +638,30 @@ main(int argc, char **argv)
 				udp_flag = 1;
 			} else if (!strcmp(optname, "so-debug")) {
 				so_debug_flag = 1;
+			} else if (!strcmp(optname, "ip-in-cksum")) {
+				if (optarg == NULL) {
+					ip_do_incksum = 1;
+				} else {
+					ip_do_incksum = optval;
+				}
+			} else if (!strcmp(optname, "ip-out-cksum")) {
+				if (optarg == NULL) {
+					ip_do_outcksum = 1;
+				} else {
+					ip_do_outcksum = optval;
+				}
+			} else if (!strcmp(optname, "tcp-in-cksum")) {
+				if (optarg == NULL) {
+					tcp_do_incksum = 1;
+				} else {
+					tcp_do_incksum = optval;
+				}
+			} else if (!strcmp(optname, "tcp-out-cksum")) {
+				if (optarg == NULL) {
+					tcp_do_outcksum = 1;
+				} else {
+					tcp_do_outcksum = optval;
+				}
 			} else if (!strcmp(optname, "tcp-wscale")) {
 				if (optarg == NULL) {
 					tcp_do_wscale = 1;
@@ -785,7 +763,6 @@ err:
 	}
 	init(ifname);
 	signal(SIGINT, sighandler);
-
 	rc = gethostname(hostname, sizeof(hostname));
 	if (rc == -1) {
 		fprintf(stderr, "gethostname() failed (%s)\n",
@@ -819,6 +796,6 @@ err:
 	while (!done) {
 		process_events();
 	}
-	print_stat(verbose);
+	pr_stats(verbose);
 	return 0;
 }

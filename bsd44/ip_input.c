@@ -80,10 +80,12 @@ ip_input(struct ip *ip, int len, int eth_flags)
 	}
 	ip_sum = ip->ip_sum;
 	ip->ip_sum = 0;
-	ip->ip_sum = ip_cksum(ip);
-	if (ip->ip_sum != ip_sum) {
-		ipstat.ips_badsum++;
-		return;
+	if (ip_do_incksum) {
+		ip->ip_sum = ip_cksum(ip);
+		if (ip->ip_sum != ip_sum) {
+			ipstat.ips_badsum++;
+			return;
+		}
 	}
 
 	/*

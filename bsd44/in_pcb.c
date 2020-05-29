@@ -38,12 +38,7 @@
 #include "udp_var.h"
 #include "../gbtcp/htable.h"
 
-#define EPHEMERAL_MIN 5000
-#define EPHEMERAL_MAX 65535
-#define NEPHEMERAL (EPHEMERAL_MAX - EPHEMERAL_MIN + 1)
 
-static struct socket *in_binded[EPHEMERAL_MIN];
-static htable_t in_htable;
 static uint32_t in_secret;
 static be32_t in_ephip;
 static int in_ephipcnt;

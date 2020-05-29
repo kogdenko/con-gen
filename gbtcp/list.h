@@ -1,8 +1,8 @@
-/* GPL2 license */
-#ifndef GBTCP_LIST_H
-#define GBTCP_LIST_H
+// gpl2 license
+#ifndef CON_GEN__GBTCP__LIST_H
+#define CON_GEN__GBTCP__LIST_H
 
-#include "./sys/types.h"
+#include "../subr.h"
 
 /* Double linked list */
 struct dlist {
@@ -67,4 +67,4 @@ void dlist_remove(struct dlist *);
 		((tvar = DLIST_NEXT(var, field)), 1); \
 		var = tvar)
 
-#endif /* GBTCP_LIST_H */
+#endif // CON_GEN__GBTCP__LIST_H

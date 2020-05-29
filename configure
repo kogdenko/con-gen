@@ -23,6 +23,8 @@ gbtcp/subr.o \
 gbtcp/list.o \
 gbtcp/htable.o \
 gbtcp/timer.o \
+gbtcp/tcp.o \
+common.o \
 netstat.o \
 con-gen.o \
 "

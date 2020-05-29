@@ -110,10 +110,12 @@ tcp_input(struct ip *ip,
 	 */
 	th_sum = th->th_sum;
 	th->th_sum = 0;
-	th->th_sum = tcp_cksum(ip, ip->ip_len);
-	if (th_sum != th->th_sum) {
-		tcpstat.tcps_rcvbadsum++;
-		goto drop;
+	if (tcp_do_incksum) {
+		th->th_sum = tcp_cksum(ip, ip->ip_len);
+		if (th_sum != th->th_sum) {
+			tcpstat.tcps_rcvbadsum++;
+			goto drop;
+		}
 	}
 
 	/*
@@ -627,7 +629,7 @@ close:
 				 * to keep a constant cwnd packets in the
 				 * network.
 				 */
-				if (!timer_isrunning(tp->t_timer + TCPT_REXMT) ||
+				if (!timer_is_running(tp->t_timer + TCPT_REXMT) ||
 				    th->th_ack != tp->snd_una) {
 					tp->t_dupacks = 0;
 				} else if (++tp->t_dupacks == tcprexmtthresh) {
@@ -694,7 +696,7 @@ close:
 		if (th->th_ack == tp->snd_max) {
 			timer_cancel(tp->t_timer + TCPT_REXMT);
 			needoutput = 1;
-		} else if (!timer_isrunning(tp->t_timer + TCPT_PERSIST))
+		} else if (!timer_is_running(tp->t_timer + TCPT_PERSIST))
 			tcp_setslowtimer(tp, TCPT_REXMT, tp->t_rxtcur);
 		/*
 		 * When new data is acked, open the congestion window.

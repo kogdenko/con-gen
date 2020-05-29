@@ -150,68 +150,6 @@ struct tcpcb {
 #define	TCP_REXMTVAL(tp) \
 	(((tp)->t_srtt >> TCP_RTT_SHIFT) + (tp)->t_rttvar)
 
-/*
- * TCP statistics.
- * Many of these should be kept per connection,
- * but that's inconvenient at the moment.
- */
-struct tcpstat {
-	uint64_t tcps_connattempt;      /* connections initiated */
-	uint64_t tcps_accepts;          /* connections accepted */
-	uint64_t tcps_connects;         /* connections established */
-	uint64_t tcps_drops;            /* connections dropped */
-	uint64_t tcps_conndrops;        /* embryonic connections dropped */
-	uint64_t tcps_listendrop;
-	uint64_t tcps_badsyn;
-	uint64_t tcps_closed;           /* conn. closed (includes drops) */
-	uint64_t tcps_segstimed;        /* segs where we tried to get rtt */
-	uint64_t tcps_rttupdated;       /* times we succeeded */
-	uint64_t tcps_delack;           /* delayed acks sent */
-	uint64_t tcps_timeoutdrop;      /* conn. dropped in rxmt timeout */
-	uint64_t tcps_rexmttimeo;       /* retransmit timeouts */
-	uint64_t tcps_persisttimeo;     /* persist timeouts */
-	uint64_t tcps_keeptimeo;        /* keepalive timeouts */
-	uint64_t tcps_keepprobe;        /* keepalive probes sent */
-	uint64_t tcps_keepdrops;        /* connections dropped in keepalive */
-
-	uint64_t tcps_sndtotal;	        /* total packets sent */
-	uint64_t tcps_sndpack;          /* data packets sent */
-	uint64_t tcps_sndbyte;          /* data bytes sent */
-	uint64_t tcps_sndrexmitpack;    /* data packets retransmitted */
-	uint64_t tcps_sndrexmitbyte;    /* data bytes retransmitted */
-	uint64_t tcps_sndacks;          /* ack-only packets sent */
-	uint64_t tcps_sndprobe;         /* window probes sent */
-	uint64_t tcps_sndurg;           /* packets sent with URG only */
-	uint64_t tcps_sndwinup;         /* window update-only packets sent */
-	uint64_t tcps_sndctrl;          /* control (SYN|FIN|RST) packets sent */
-
-	uint64_t tcps_rcvtotal;         /* total packets received */
-	uint64_t tcps_rcvpack;          /* packets received in sequence */
-	uint64_t tcps_rcvbyte;          /* bytes received in sequence */
-	uint64_t tcps_rcvbadsum;        /* packets received with ccksum errs */
-	uint64_t tcps_rcvbadoff;        /* packets received with bad offset */
-	uint64_t tcps_rcvshort;         /* packets received too short */
-	uint64_t tcps_rcvduppack;       /* duplicate-only packets received */
-	uint64_t tcps_rcvdupbyte;       /* duplicate-only bytes received */
-	uint64_t tcps_rcvpartduppack;   /* packets with some duplicate data */
-	uint64_t tcps_rcvpartdupbyte;   /* dup. bytes in part-dup. packets */
-	uint64_t tcps_rcvoopack;        /* out-of-order packets received */
-	uint64_t tcps_rcvoobyte;        /* out-of-order bytes received */
-	uint64_t tcps_rcvpackafterwin;  /* packets with data after window */
-	uint64_t tcps_rcvbyteafterwin;  /* bytes rcvd after window */
-	uint64_t tcps_rcvafterclose;    /* packets rcvd after "close" */
-	uint64_t tcps_rcvwinprobe;      /* rcvd window probe packets */
-	uint64_t tcps_rcvdupack;        /* rcvd duplicate acks */
-	uint64_t tcps_rcvacktoomuch;    /* rcvd acks for unsent data */
-	uint64_t tcps_rcvackpack;       /* rcvd ack packets */
-	uint64_t tcps_rcvackbyte;       /* bytes acked by rcvd acks */
-	uint64_t tcps_rcvwinupd;        /* rcvd window update packets */
-	uint64_t tcps_pawsdrop;         /* segments dropped due to PAWS */
-	uint64_t tcps_predack;          /* times hdr predict ok for acks */
-	uint64_t tcps_preddat;          /* times hdr predict ok for data pkts */
-};
-
-extern struct	tcpstat tcpstat;	/* tcp statistics */
 extern uint32_t tcp_now;		/* for RFC 1323 timestamps */
 
 void	 tcp_attach(struct socket *);

@@ -47,19 +47,6 @@ struct udp_hdr {
 	uint16_t uh_sum;    /* udp checksum */
 } __attribute__((packed));
 
-struct udpstat {
-	uint64_t udps_ipackets;         /* total input packets */
-	uint64_t udps_hdrops;           /* packet shorter than header */
-	uint64_t udps_badsum;           /* checksum error */
-	uint64_t udps_badlen;           /* data length larger than packet */
-	uint64_t udps_noport;           /* no socket on port */
-	uint64_t udps_noportbcast;      /* of above, arrived as broadcast */
-	uint64_t udps_fullsock;         /* not delivered, input socket full */
-	uint64_t udpps_pcbcachemiss;    /* input packets missing pcb cache */
-	uint64_t udps_opackets;	        /* total output packets */
-};
-
-extern struct udpstat udpstat;
 
 void udp_ctlinput(int, be32_t, struct ip *);
 void udp_init(void);

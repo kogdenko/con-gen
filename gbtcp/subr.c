@@ -112,7 +112,7 @@ do { \
 } while (0)
 
 uint32_t
-murmur(const void * key, u_int len, uint32_t initval)
+murmur(const void * key, int len, uint32_t initval)
 {
 	int r;
 	unsigned int k, l, m, h, t;

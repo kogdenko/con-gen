@@ -1,8 +1,8 @@
 /* GPL2 license */
-#ifndef GBTCP_HTABLE_H
-#define GBTCP_HTABLE_H
+#ifndef CON_GEN__GBTCP__HTABLE_H
+#define CON_GEN__GBTCP__HTABLE_H
 
-#include "../bsd44/types.h"
+//#include "../bsd44/types.h"
 #include "list.h"
 
 typedef uint32_t (*htable_f)(struct dlist *);
@@ -59,4 +59,4 @@ void htable_dynamic_add(struct htable_dynamic *, struct dlist *, uint32_t);
 void htable_dynamic_del(struct htable_dynamic *, struct dlist *);
 void htable_dynamic_foreach(struct htable_dynamic *, void *, htable_foreach_f);
 
-#endif /* GBTCP_HTABLE_H */
+#endif // CON_GEN__GBTCP__HTABLE_H

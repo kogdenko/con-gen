@@ -36,75 +36,14 @@
  * SUCH DAMAGE.
  */
 
-#ifndef BSD44_TYPES_H
-#define	BSD44_TYPES_H
+#ifndef CON_GEN__BSD44__TYPES_H
+#define	CON_GEN__BSD44__TYPES_H
 
-#define _GNU_SOURCE
-#include <errno.h>
-#include <stddef.h>
-#include <stdio.h>
-#include <string.h>
-#include <strings.h>
-#include <stdlib.h>
-#include <stdarg.h>
-#include <assert.h>
-#include <limits.h>
-#include <stdint.h>
-#include <inttypes.h>
-#include <signal.h>
-#include <unistd.h>
-#include <poll.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <net/if_arp.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <netinet/ip.h>
-#include <netinet/ip_icmp.h>
-#include <sys/types.h>
-#include <sys/fcntl.h>
-//#include <sys/ioctl.h>
-//#include <sys/stat.h>
-//#include <net/if.h>*/
-
-
-#define NETMAP_WITH_LIBS
-#include <net/netmap_user.h>
-
-
-typedef uint16_t be16_t;
-typedef uint32_t be32_t;
-
-#define STRSZ(s) (s), (sizeof(s) - 1)
-
-
-#define UNUSED(x) ((void)x)
-
-#ifndef ARRAY_SIZE
-#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
-#endif
+#include "../common.h"
+#include "../netstat.h"
 
 #define	M_BCAST		0x0100	/* send/received as link-level broadcast */
 #define	M_MCAST		0x0200	/* send/received as link-level multicast */
-
-struct netmap_ring *not_empty_txr(struct netmap_slot **pslot);
-
-uint32_t murmur(const void * key, u_int len, uint32_t initval);
-
-#define field_off(type, field) ((intptr_t)&((type *)0)->field)
-#define container_of(ptr, type, field) \
-	((type *)((intptr_t)(ptr) - field_off(type, field)))
-
-#define NANOSECONDS_SECOND  1000000000llu
-#define NANOSECONDS_MILLISECOND 1000000llu
-#define NANOSECONDS_MICROSECOND 1000llu
-
-uint16_t in_cksum(void *data, int len);
-#define ip_cksum(ip) in_cksum(ip, (ip)->ip_hl << 2)
-uint16_t udp_cksum(struct ip *ip, int);
-#define tcp_cksum udp_cksum
 
 #define	PRU_DETACH		1	/* detach protocol from up */
 #define	PRU_BIND		2	/* bind socket to address */
@@ -140,44 +79,6 @@ uint16_t udp_cksum(struct ip *ip, int);
 #define PR_WANTRCVD     0x08            /* want PRU_RCVD calls */
 #define PR_RIGHTS       0x10            /* passes capabilities */
 
-
-#define panic(...) panic3(__FILE__, __LINE__, __VA_ARGS__)
-#define dbg0 printf("D %-30s %-4d %-20s ", __FILE__, __LINE__, __func__)
-#define dbg(format, ...) \
-do { \
-	dbg0; \
-	printf(format, ##__VA_ARGS__); \
-	printf("\n"); \
-} while (0)
-
-void panic3(const char *, int,  const char *format, ...)
-	__attribute__((format(printf, 3, 4)));
-
-
-#define	roundup(x, y)	((((x)+((y)-1))/(y))*(y))
-#define powerof2(x)	((((x)-1)&(x))==0)
-
-/* Macros for min/max. */
-#define	MIN(a,b) (((a)<(b))?(a):(b))
-#define	MAX(a,b) (((a)>(b))?(a):(b))
-#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
-
-#define HTONS(x) ((x) = htons((short)(x)))
-#define NTOHS(x) ((x) = ntohs((short)(x)))
-#define NTOHL(x) ((x) = ntohl((long)(x)))
-#define HTONL(x) ((x) = htonl((long)(x)))
-
-extern u_char eth_laddr[6];
-extern u_char eth_faddr[6]; 
-extern uint32_t ip_laddr_min;
-extern uint32_t ip_laddr_max;
-extern int if_mtu;
-extern uint64_t if_ibytes;
-extern uint64_t if_ipackets;
-extern uint64_t if_obytes;
-extern uint64_t if_opackets;
-extern uint64_t if_imcasts;
 extern u_char etherbroadcastaddr[6];
-extern uint64_t nanosec;
 
-#endif /* BSD44_TYPES_H */
+#endif // CON_GEN__BSD44__TYPES_H

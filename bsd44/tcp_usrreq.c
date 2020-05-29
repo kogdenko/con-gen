@@ -357,7 +357,7 @@ tcp_settimer(struct tcpcb *tp, int timer, uint64_t timo)
 		fn = tcp_2MSL_timo;
 		break;
 	default:
-		panic("unknown timer %d", timer);
+		panic(0, "unknown timer %d", timer);
 		break;
 	}
 	timer_set(tp->t_timer + timer, timo, fn);

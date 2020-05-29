@@ -124,7 +124,7 @@ icmp_error(struct ip *oip, int type, int code, be32_t dest)
 	icmplen = oiplen + MIN(8, oip->ip_len);
 	icp = (struct icmp *)(nip + 1);
 	if ((u_int)type > ICMP_MAXTYPE)
-		panic("icmp_error");
+		panic(0, "icmp_error");
 	icmpstat.icps_outhist[type]++;
 	icp->icmp_type = type;
 	if (type == ICMP_REDIRECT) {
