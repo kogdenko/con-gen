@@ -30,13 +30,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-#include "common.h"
-//#include "./bsd44/types.h"
-//#include "./bsd44/socket.h"
-//#include "./bsd44/tcp_var.h"
-//#include "./bsd44/udp_var.h"
-//#include "./bsd44/icmp_var.h"
-//#include "./gbtcp/timer.h"
+#include "global.h"
 
 static const char *icmpnames[ICMP_MAXTYPE + 1] = {
 	[ICMP_ECHOREPLY] = "echo reply",
@@ -463,40 +457,44 @@ pr_stats(int verbose)
 	print_icmpstat(verbose);
 }
 
-#if 0
-static void
-print_conn(struct socket *so)
-{
-	struct in_addr tmp;
-	struct tcpcb *tp;
-	const char *state;
-	char bl[64], bf[64];
-
-	tp = sototcpcb(so);
-	tmp.s_addr = so->inp_laddr;
-	snprintf(bl, sizeof(bl), "%s:%hu",
-	         inet_ntoa(tmp), ntohs(so->inp_lport));
-	tmp.s_addr = so->inp_faddr;
-	snprintf(bf, sizeof(bf), "%s:%hu",
-	         inet_ntoa(tmp), ntohs(so->inp_fport));
-	if (tp->t_state < ARRAY_SIZE(tcpstates)) {
-		state = tcpstates[tp->t_state];
-	} else {
-		state = "???";
-	}
-	printf("%-5.5s %-22.22s %-22.22s %-11.11s\n", "TCP", bl, bf, state);
-}
+void bsd_get_so_info(void *, struct socket_info *);
+void toy_get_so_info(void *, struct socket_info *);
 
 void
-print_conns()
+pr_socketfn(void *udata, void *e)
 {
-	printf("%-5.5s %-22.22s %-22.22s %-11.11s\n",
-	       "Proto", "Local Address", "Foreign Address", "State ");
-	in_pcbforeach(print_conn);
+	struct in_addr tmp;
+	const char *state, *proto;
+	char bl[64], bf[64];
+	struct socket_info x;
+
+	if (use_toy) {
+		toy_get_so_info(e, &x);
+	} else {
+		bsd_get_so_info(e, &x);
+	}
+	tmp.s_addr = x.soi_laddr;
+	snprintf(bl, sizeof(bl), "%s:%hu", inet_ntoa(tmp), ntohs(x.soi_lport));
+	tmp.s_addr = x.soi_faddr;
+	snprintf(bf, sizeof(bf), "%s:%hu", inet_ntoa(tmp), ntohs(x.soi_fport));
+	if (x.soi_ipproto == IPPROTO_TCP) {
+		proto = "TCP";
+		if (x.soi_state < ARRAY_SIZE(tcpstates)) {
+			state = tcpstates[x.soi_state];
+		} else {
+			state = "???";
+		}
+	} else {
+		proto = "UDP";
+		state = "";
+	}
+	printf("%-5.5s %-22.22s %-22.22s %-11.11s\n", proto, bl, bf, state);
 }
-#endif
 
 void
 pr_sockets()
 {
+	printf("%-5.5s %-22.22s %-22.22s %-11.11s\n",
+	       "Proto", "Local Address", "Foreign Address", "State ");
+	htable_foreach(&in_htable, NULL, pr_socketfn);
 }

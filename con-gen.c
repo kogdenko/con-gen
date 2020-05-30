@@ -15,44 +15,42 @@
 int nflag = 0;
 int concurrency = 1;
 
-static int connections = 0;
-static int nclients;
 static int Nflag;
 static int burst_size = 256;
-static int so_debug_flag;
-static be16_t port;
-static struct nm_desc *nmd;
 static struct timer report_timer;
 static uint64_t report_time;
 static int report_bytes_flag;
-int tx_full;
 int if_mtu = 552;
 uint64_t tsc_hz;
 uint64_t tsc_mhz;
 uint64_t nanosec;
 uint64_t tsc;
-u_char eth_laddr[6];
-u_char eth_faddr[6];
-uint32_t ip_laddr_min, ip_laddr_max;
-uint32_t ip_faddr_min, ip_faddr_max;
 uint64_t if_ibytes;
 uint64_t if_ipackets;
 uint64_t if_obytes;
 uint64_t if_opackets;
 uint64_t if_imcasts;
 
-struct dlist so_txq;
-struct	tcpstat tcpstat;
-struct  udpstat udpstat;
 uint32_t tcp_now;		/* for RFC 1323 timestamps */
 static uint64_t tcp_nowage;
-struct	icmpstat icmpstat;
 
-static void client(struct socket *, short, struct sockaddr_in *, void *, int);
-static void server(struct socket *, short, struct sockaddr_in *, void *, int);
+void bsd_eth_in(void *, int);
+void bsd_flush();
+void bsd_server_listen(int);
+void bsd_client_connect();
+uint32_t bsd_socket_hash(struct dlist *);
 
-int print_stat(int);
-void print_conns();
+void toy_eth_in(void *, int);
+void toy_flush();
+void toy_server_listen(int);
+void toy_client_connect();
+uint32_t toy_socket_hash(struct dlist *);
+
+void toy_eth_in(void *, int);
+void toy_flush();
+void toy_server_listen(int);
+void toy_client_connect();
+uint32_t toy_socket_hash(struct dlist *);
 
 static const char *
 norm2(char *buf, double val, char *fmt, int normalize)
@@ -103,230 +101,14 @@ sighandler(int signum)
 	done = 1;
 }
 
-union conn {
-	struct {
-		int cn_sent;
-		int cn_http;
-	};
-	uint64_t cn_u64;
-};
-
-static int
-parse_http(const char *s, int len, int *ctx)
-{
-	int i;
-
-	for (i = 0; i < len; ++i) {
-		assert(*ctx < 4);
-		if (s[i] == ("\r\n\r\n")[*ctx]) {
-			(*ctx)++;
-			if (*ctx == 4) {
-				return 1;
-			}
-		} else if (s[i] == '\r') {
-			*ctx = 1;
-		} else {
-			*ctx = 0;
-		}
-	}
-	return 0;
-}
-
-static void
-conn_connect()
-{
-	int rc;
-	struct sockaddr_in addr;
-	struct socket *so;
-
-	rc = bsd_socket(IPPROTO_TCP, &so);
-	if (rc < 0) {
-		panic(-rc, "bsd_socket() failed");
-	}
-	so->so_userfn = client;
-	so->so_user = 0;
-	if (so_debug_flag) {
-		sosetopt(so, SO_DEBUG);
-	}
-	addr.sin_family = AF_INET;
-	addr.sin_addr.s_addr = htonl(ip_faddr_min);
-	addr.sin_port = port;
-	rc = bsd_connect(so, &addr);
-	if (rc < 0) {
-		panic(-rc, "bsd_connect() failed");
-	}
-	nclients++;
-}
-
-static void
-udp_echo(struct socket *so, short events, struct sockaddr_in *addr,
-	void *dat, int len)
-{
-	bsd_sendto(so, dat, len, MSG_NOSIGNAL, addr);
-}
-
-
-static void
-srv_accept(struct socket *so, short events,
-           struct sockaddr_in *addr, void *dat, int len)
-{
-	int rc;
-	struct socket *aso;
-
-	do {
-		rc = bsd_accept(so, &aso);
-		if (rc == 0) {
-			aso->so_user = 0;
-			aso->so_userfn = server;
-		}
-	} while (rc != -EWOULDBLOCK);
-}
-
-static int
-srv_listen(int proto)
-{
-	int rc;
-	struct socket *so;
-
-	rc = bsd_socket(proto, &so);
-	if (rc < 0) {
-		panic(-rc, "bsd_socket() failed");
-	}
-	if (so_debug_flag) {
-		sosetopt(so, SO_DEBUG);
-	}
-	so->so_userfn = proto == IPPROTO_TCP ? srv_accept : udp_echo;
-	so->so_user = 0;
-	rc = bsd_bind(so, port);
-	if (rc) {
-		panic(-rc, "bsd_bind(%u) failed", ntohs(port));
-	}
-	if (proto == IPPROTO_TCP) {
-		rc = bsd_listen(so);
-		if (rc) {
-			panic(-rc, "bsd_listen() failed");
-		}
-	}
-	return 0;
-}
-
-static void
-con_close(int is_client)
-{
-	connections++;
-	if (nflag) {
-		if (connections == nflag) {
-			done = 1;
-		}
-	}
-	if (is_client) {
-		nclients--;
-		while (nclients < concurrency) {
-			conn_connect();
-		}
-	}
-}
-
-static void
-conn_sendto(struct socket *so)
-{
-	int rc;
-
-	rc = bsd_sendto(so, http, http_len, MSG_NOSIGNAL, NULL);
-	if (rc < 0) {
-		panic(-rc, "bsd_sendto() failed");
-	} else if (rc != http_len) {
-		panic(0, "bsd_sendto() stalled");
-	}
-
-}
-
-static void
-client(struct socket *so, short events, struct sockaddr_in *addr,
-	void *dat, int len)
-{
-	int rc;
-	union conn *cp;
-
-	cp = (union conn *)&so->so_user;
-	if (events & POLLNVAL) {
-		con_close(1);
-		return;
-	}
-	if (cp->cn_sent == 0) {
-		if (events & POLLERR) {
-			panic(so->so_error, "cant connect");
-		}
-		if (events|POLLOUT) {
-			cp->cn_sent = 1;
-			conn_sendto(so);
-		}
-	}
-	if (len) {
-		rc = parse_http(dat, len, &cp->cn_http);
-		if (rc) {
-			bsd_close(so);
-		}
-	} else if (events & (POLLERR|POLLIN)) {
-		bsd_close(so);
-	}
-}
-
-static void
-server(struct socket *so, short events, struct sockaddr_in *addr,
-	void *dat, int len)
-{
-	int rc;
-	union conn *cp;
-
-	cp = (union conn *)&so->so_user;
-	if (events & POLLNVAL) {
-		con_close(0);
-		return;
-	}
-	if (len) {
-		rc = parse_http(dat, len, &cp->cn_http);
-		if (rc) {
-			conn_sendto(so);
-			bsd_close(so);
-		}
-	} else if (events & (POLLERR|POLLIN)) {
-		bsd_close(so);
-	}
-}
-
-void ether_input(struct ether_header *eh, int len);
-
-struct netmap_ring *
-not_empty_txr(struct netmap_slot **pslot)
-{
-	int i;
-	struct netmap_ring *txr;
-
-	if (tx_full) {
-		return NULL;
-	}
-	for (i = nmd->first_tx_ring; i <= nmd->last_tx_ring; ++i) {
-		txr = NETMAP_TXRING(nmd->nifp, i);
-		if (!nm_ring_empty(txr)) {
-			if (pslot != NULL) {
-				*pslot = txr->slot + txr->cur;
-				(*pslot)->len = 0;
-			}
-			return txr;	
-		}
-	}
-	tx_full = 1;
-	return NULL;
-}
 
 static void
 rx()
 {
-	int i, j, n, len;
+	int i, j, n;
+	void *buf;
 	struct netmap_slot *slot;
 	struct netmap_ring *rxr;
-	struct ether_header *et;
 
 	for (i = nmd->first_rx_ring; i <= nmd->last_rx_ring; ++i) {
 		rxr = NETMAP_RXRING(nmd->nifp, i);
@@ -335,12 +117,16 @@ rx()
 			n = burst_size;
 		}
 		for (j = 0; j < n; ++j) {
+			DEV_PREFETCH(rxr);
 			slot = rxr->slot + rxr->cur;
-			et = (struct ether_header *)NETMAP_BUF(rxr, slot->buf_idx);
-			et->ether_type = ntohs(et->ether_type);
-			len = slot->len - sizeof(*et);
-			assert(len >= 0);
-			ether_input(et, len);
+			buf = NETMAP_BUF(rxr, slot->buf_idx);
+			if (slot->len >= 14) {
+				if (use_toy) {
+					toy_eth_in(buf, slot->len);
+				} else {
+					bsd_eth_in(buf, slot->len);
+				}
+			}
 			rxr->head = rxr->cur = nm_ring_next(rxr, rxr->cur);
 		}
 	}
@@ -353,7 +139,6 @@ process_events()
 	uint64_t t;
 	char buf[32];
 	struct pollfd pfds[2];
-	struct socket *so;
 
 	pfds[0].fd = nmd->fd;
 	pfds[0].events = POLLIN;
@@ -379,17 +164,10 @@ process_events()
 	if (pfds[0].revents & POLLOUT) {
 		tx_full = 0;
 	}
-	while (!dlist_is_empty(&so_txq)) {
-		so = DLIST_FIRST(&so_txq, struct socket, so_txlist);
-		if (not_empty_txr(NULL) == NULL) {
-			break;
-		}
-		rc = tcp_output_real(sototcpcb(so));
-		if (rc <= 0) {
-			DLIST_REMOVE(so, so_txlist);
-			so->so_state &= ~SS_ISTXPENDING;
-			sofree(so);
-		}
+	if (use_toy) {
+		toy_flush();
+	} else {
+		bsd_flush();
 	}
 	if (pfds[1].revents & POLLIN) {
 		rc = read(STDOUT_FILENO, buf, sizeof(buf));
@@ -462,12 +240,10 @@ set_affinity(int cpu_id)
 	return 0;
 }
 
-int in_init();
-
 int
 init(const char *ifname)
 {
-	int len, rc;
+	int i, rc, len;
 	uint64_t t;
 	char nbuf[IFNAMSIZ + 16];
 
@@ -495,10 +271,17 @@ init(const char *ifname)
 	tcp_now = 1;
 	tcp_nowage = nanosec;
 	timer_mod_init();
-	rc = in_init();
-	if (rc) {
-		exit(10);
+	n_if_addrs = ip_laddr_max - ip_laddr_min + 1;
+	assert(n_if_addrs > 0);
+	if (n_if_addrs > 100) {
+		n_if_addrs = 100;
 	}
+	if_addrs = xmalloc(n_if_addrs * sizeof(struct if_addr));
+	for (i = 0; i < n_if_addrs; ++i) {
+		ifaddr_init(if_addrs + i);
+	}
+	htable_init(&in_htable, 1024,
+	            use_toy ? toy_socket_hash : bsd_socket_hash);
 	return 0;
 }
 
@@ -571,8 +354,8 @@ usage()
 	"\t-v,--verbose: Be verbose\n"
 	"\t-i {interface}:  To operate on\n"
 	"\t-p {port}:  Server port (default: 80)\n"
-	"\t-s {ip[:port[-ip:port]]}: Source ip-port range\n"
-	"\t-d {ip[:port[-ip:port]]): Destination ip-port range\n"
+	"\t-s {ip[-ip]]}: Source ip range\n"
+	"\t-d {ip[:port[-ip:port]]): Destination ip range\n"
 	"\t-S {hwaddr}: Source ethernet address\n"
 	"\t-D {hwaddr}: Destination ethernet address\n"
 	"\t-c {num}: Number of parallel connections\n"
@@ -582,6 +365,7 @@ usage()
 	"\t-L: Operate in server mode\n"
 	"\t--so-debug: Enable SO_DEBUG option\n"
 	"\t--udp: Use UDP instead of TCP\n"
+	"\t--toy: Use top tcp/ip stack instead of bsd4.4 (it is a bit faster)\n"
 	"\t--ip-in-cksum: On/Off IP input checksum calculation\n"
 	"\t--ip-out-cksum: On/Off IP output checksum calculation\n"
 	"\t--tcp-in-cksum: On/Off TCP input checksum calculation\n"
@@ -597,6 +381,7 @@ static struct option long_options[] = {
 	{ "help", no_argument, 0, 'h' },
 	{ "verbose", no_argument, 0, 'v' },
 	{ "udp", no_argument, 0, 0 },
+	{ "toy", no_argument, 0, 0 },
 	{ "so-debug", no_argument, 0, 0 },
 	{ "ip-in-cksum", optional_argument, 0, 0 },
 	{ "ip-out-cksum", optional_argument, 0, 0 },
@@ -613,14 +398,13 @@ static struct option long_options[] = {
 int
 main(int argc, char **argv)
 {
-	int rc, opt, option_index, udp_flag;
+	int rc, opt, ipproto, option_index, udp_flag;
 	long long optval;
 	const char *ifname;
 	char hostname[64];
 	const char *optname;
 
-	port = htons(80);
-	Lflag = 0;
+	pflag_port = htons(80);
 	udp_flag = 0;
 	ifname = NULL;
 	iprange_scanf(&ip_laddr_min, &ip_laddr_max, "10.0.0.1");
@@ -636,6 +420,8 @@ main(int argc, char **argv)
 			optname = long_options[option_index].name;
 			if (!strcmp(optname, "udp")) {
 				udp_flag = 1;
+			} else if (!strcmp(optname, "toy")) {
+				use_toy = 1;
 			} else if (!strcmp(optname, "so-debug")) {
 				so_debug_flag = 1;
 			} else if (!strcmp(optname, "ip-in-cksum")) {
@@ -742,7 +528,7 @@ main(int argc, char **argv)
 			}
 			break;
 		case 'p':
-			port = htons(strtoul(optarg, NULL, 10));
+			pflag_port = htons(strtoul(optarg, NULL, 10));
 			break;
 		case 'N':
 			Nflag = 1;
@@ -771,16 +557,13 @@ err:
 	} else {
 		hostname[sizeof(hostname) - 1] = '\0';
 	}
-	if (udp_flag) {
-		srv_listen(IPPROTO_UDP);
-	} else if (Lflag) {
+	if (Lflag) {
 		http_len = snprintf(http, sizeof(http), 
 			"HTTP/1.0 200 OK\r\n"
 			"Server: con-gen\r\n"
 			"Content-Type: text/html\r\n"
 			"Connection: close\r\n"
 			"Hi\r\n\r\n");
-		srv_listen(IPPROTO_TCP);
 	} else {
 		http_len = snprintf(http, sizeof(http),
 			"GET / HTTP/1.0\r\n"
@@ -788,7 +571,20 @@ err:
 			"User-Agent: con-gen\r\n"
 			"\r\n",
 			hostname);
-		conn_connect();
+	}
+	if (Lflag || udp_flag) {
+		ipproto = udp_flag ? IPPROTO_UDP: IPPROTO_TCP;
+		if (use_toy) {
+			toy_server_listen(ipproto);
+		} else {
+			bsd_server_listen(ipproto);
+		}
+	} else {
+		if (use_toy) {
+			toy_client_connect();
+		} else {
+			bsd_client_connect();
+		}
 	}
 	report_time = nanosec;
 	timer_init(&report_timer);

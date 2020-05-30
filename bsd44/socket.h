@@ -70,15 +70,10 @@ struct socket {
 #define so_ql so_q[0]
 
 	struct dlist inp_list;
-	union {
-		struct {
-			be32_t inp_laddr;
-			be32_t inp_faddr;
-			be16_t inp_lport;
-			be16_t inp_fport;
-		};
-		uint32_t inp_hkey[3];
-	};
+	be32_t inp_laddr;
+	be32_t inp_faddr;
+	be16_t inp_lport;
+	be16_t inp_fport;
 
 	struct sockbuf so_snd;
 	int so_rcv_hiwat;

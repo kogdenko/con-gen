@@ -39,7 +39,7 @@
 #ifndef CON_GEN__BSD44__TYPES_H
 #define	CON_GEN__BSD44__TYPES_H
 
-#include "../common.h"
+#include "../global.h"
 #include "../netstat.h"
 
 #define	M_BCAST		0x0100	/* send/received as link-level broadcast */

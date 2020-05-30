@@ -40,7 +40,7 @@
 #include "tcp_var.h"
 
 int tcprexmtthresh = 3;
-uint64_t tcp_twtimo = 60 * NANOSECONDS_SECOND; /* max seg lifetime (hah!) */
+uint64_t tcp_twtimo = 0; //60 * NANOSECONDS_SECOND; /* max seg lifetime (hah!) */
 uint64_t tcp_fintimo = 60 * NANOSECONDS_SECOND;
 
 

@@ -38,45 +38,17 @@
 #include "udp_var.h"
 #include "../gbtcp/htable.h"
 
-
-static uint32_t in_secret;
-static be32_t in_ephip;
-static int in_ephipcnt;
-static uint16_t in_ephipport;
-static int in_nephipport;
-static int in_nephipport_max;
-
-void
-in_initephport()
-{
-	in_ephipport = nanosec;
-	if (in_ephipport < EPHEMERAL_MIN) {
-		in_ephipport += EPHEMERAL_MIN;
-	}
-}
+static void *in_binded[EPHEMERAL_MIN];
 
 uint32_t
-in_pcbhash(struct dlist *l)
+bsd_socket_hash(struct dlist *l)
 {
 	uint32_t h;
 	struct socket *so;
 
 	so = container_of(l, struct socket, inp_list);
-	h = murmur(so->inp_hkey, sizeof(so->inp_hkey), in_secret);
+	h = SO_HASH(so->inp_faddr, so->inp_lport, so->inp_fport);
 	return h;
-}
-
-int
-in_init()
-{
-	int rc;
-
-	in_secret = rand();
-	in_ephip = htonl(ip_laddr_min);
-	in_initephport();
-	in_nephipport_max = (ip_laddr_max - ip_laddr_min + 1) * NEPHEMERAL;
-	rc = htable_init(&in_htable, 1024, in_pcbhash);
-	return rc;
 }
 
 int
@@ -113,7 +85,7 @@ in_pcbattach(struct socket *so, uint32_t *ph)
 	if (so->so_state & SS_ISATTACHED) {
 		return -EALREADY;
 	}
-	h = in_pcbhash(&so->inp_list);
+	h = bsd_socket_hash(&so->inp_list);
 	bucket = htable_bucket_get(&in_htable, h);
 	DLIST_FOREACH(it, bucket, inp_list) {
 		if (it->so_proto == so->so_proto &&
@@ -133,6 +105,10 @@ in_pcbattach(struct socket *so, uint32_t *ph)
 int
 in_pcbconnect(struct socket *so, const struct sockaddr_in *sin, uint32_t *ph)
 {
+	int rc;
+	uint16_t lport;
+	uint32_t laddr;
+
 	if (sin->sin_family != AF_INET) {
 		return -EAFNOSUPPORT;
 	}
@@ -154,36 +130,21 @@ in_pcbconnect(struct socket *so, const struct sockaddr_in *sin, uint32_t *ph)
 	if (so->inp_laddr != INADDR_ANY) {
 		return 0;
 	}
-	if (in_nephipport == in_nephipport_max) {
+	rc = alloc_ephemeral_port(&laddr, &lport);
+	if (rc) {
 		return -EADDRNOTAVAIL;
 	}
-	do {
-		if (in_ephipcnt == NEPHEMERAL) {
-			in_ephipcnt = 0;
-			in_initephport();
-			HTONL(in_ephip);
-			in_ephip++;
-			if (in_ephip > ip_laddr_max) {
-				in_ephip = ip_laddr_min;
-			}
-			HTONL(in_ephip);
-		}
-		if (in_ephipport < EPHEMERAL_MIN) {
-			in_ephipport = EPHEMERAL_MIN;
-		}
-		so->inp_laddr = in_ephip;
-		so->inp_lport = htons(in_ephipport);
-		in_ephipcnt++;
-		in_ephipport++;
-	} while (in_pcbattach(so, ph) != 0);
-	in_nephipport++;
+	so->inp_laddr = htonl(laddr);
+	so->inp_lport = htons(lport);
+	rc = in_pcbattach(so, ph);
+	assert(rc == 0);
 	return 0;
 }
 
 int
 in_pcbdetach(struct socket *so)
 {
-	int lport;
+	int lport, laddr;
 
 	lport = ntohs(so->inp_lport);
 	if (lport < EPHEMERAL_MIN) {
@@ -195,8 +156,8 @@ in_pcbdetach(struct socket *so)
 		so->so_state &= ~SS_ISATTACHED;
 		htable_del(&in_htable, &so->inp_list);
 		if (lport >= EPHEMERAL_MIN) {
-			assert(in_nephipport);
-			in_nephipport--;
+			laddr = ntohl(so->inp_laddr);
+			free_ephemeral_port(laddr, lport);
 		}
 	}
 	sofree(so);
@@ -227,28 +188,22 @@ in_pcbnotify(int proto,
 	}
 }
 
-static void
-in_pcbforeachfn(void *udata, void *e)
-{
-	void (*fn)(struct socket *);
-	struct socket *so;
-
-	fn = udata;
-	so = container_of(e, struct socket, inp_list);
-	(*fn)(so);
-}
-
 void
-in_pcbforeach(void (*fn)(struct socket *))
+bsd_get_so_info(void *e, struct socket_info *info)
 {
-	int i;
+	struct socket *so;
+	struct tcpcb *tp;
 
-	for (i = 0; i < ARRAY_SIZE(in_binded); ++i) {
-		if (in_binded[i]) {
-			(*fn)(in_binded[i]);
-		}
+	so = container_of(e, struct socket, inp_list);
+	info->soi_laddr = so->inp_laddr;
+	info->soi_lport = so->inp_lport;
+	info->soi_faddr = so->inp_faddr;
+	info->soi_fport = so->inp_fport;
+	info->soi_ipproto = so->so_proto;
+	if (so->so_proto == IPPROTO_TCP) {
+		tp = &so->inp_ppcb;
+		info->soi_state = tp->t_state;
 	}
-	htable_foreach(&in_htable, fn, in_pcbforeachfn);
 }
 
 struct socket *
@@ -263,7 +218,7 @@ in_pcblookup(int proto, be32_t laddr, be16_t lport, be32_t faddr, be16_t fport)
 	tmp.inp_lport = lport;
 	tmp.inp_faddr = faddr;
 	tmp.inp_fport = fport;
-	h = in_pcbhash(&tmp.inp_list);
+	h = bsd_socket_hash(&tmp.inp_list);
 	bucket = htable_bucket_get(&in_htable, h);
 	DLIST_FOREACH(so, bucket, inp_list) {	
 		if (so->so_proto == proto &&

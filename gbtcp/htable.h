@@ -2,8 +2,7 @@
 #ifndef CON_GEN__GBTCP__HTABLE_H
 #define CON_GEN__GBTCP__HTABLE_H
 
-//#include "../bsd44/types.h"
-#include "list.h"
+#include "../subr.h"
 
 typedef uint32_t (*htable_f)(struct dlist *);
 typedef void (*htable_foreach_f)(void *, void *);
@@ -20,7 +19,6 @@ struct htable_dynamic {
 	struct htable_static *htd_old;
 	int htd_size_min;
 	int htd_nr_elems;
-	int htd_resize_discard;
 	int htd_resize_progress;
 	struct htable_static htd_tables[2];
 };
@@ -45,14 +43,14 @@ typedef struct htable_dynamic htable_t;
 #define htable_foreach htable_dynamic_foreach
 #endif
 
-int htable_static_init(struct htable_static *, int, htable_f);
+void htable_static_init(struct htable_static *, int, htable_f);
 void htable_static_deinit(struct htable_static *);
 struct dlist *htable_static_bucket_get(struct htable_static *, uint32_t);
 void htable_static_add(struct htable_static *, struct dlist *, uint32_t);
 void htable_static_del(struct htable_static *, struct dlist *);
 void htable_static_foreach(struct htable_static *, void *, htable_foreach_f);
 
-int htable_dynamic_init(struct htable_dynamic *, int, htable_f);
+void htable_dynamic_init(struct htable_dynamic *, int, htable_f);
 void htable_dynamic_deinit(struct htable_dynamic *);
 struct dlist * htable_dynamic_bucket_get(struct htable_dynamic *, uint32_t);
 void htable_dynamic_add(struct htable_dynamic *, struct dlist *, uint32_t);

@@ -160,13 +160,16 @@ ether_output(struct netmap_ring *txr, struct netmap_slot *m)
 
 /* Process a received Ethernet packet; */
 void
-ether_input(struct ether_header *eh, int len)
+bsd_eth_in(void *data, int len)
 {
 	int eth_flags;
+	struct ether_header *eh;
 
+	eh = data;
 	eth_flags = 0;
 	if_ibytes += sizeof(*eh) + len;
 	if_ipackets++;
+	len -= sizeof(*eh);
 	if (memcmp(etherbroadcastaddr, eh->ether_dhost,
 	           sizeof(etherbroadcastaddr)) == 0) {
 		eth_flags |= M_BCAST;
@@ -176,6 +179,7 @@ ether_input(struct ether_header *eh, int len)
 	if (eth_flags & (M_BCAST|M_MCAST)) {
 		if_imcasts++;
 	}
+	NTOHS(eh->ether_type);
 	switch (eh->ether_type) {
 	case ETHERTYPE_IP:
 		ip_input((struct ip *)(eh + 1), len, eth_flags);

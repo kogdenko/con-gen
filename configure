@@ -19,12 +19,13 @@ bsd44/tcp_input.o \
 bsd44/tcp_output.o \
 bsd44/tcp_timer.o \
 bsd44/if_ether.o \
-gbtcp/subr.o \
+bsd44/glue.o \
 gbtcp/list.o \
 gbtcp/htable.o \
 gbtcp/timer.o \
+gbtcp/inet.o \
 gbtcp/tcp.o \
-common.o \
+subr.o \
 netstat.o \
 con-gen.o \
 "

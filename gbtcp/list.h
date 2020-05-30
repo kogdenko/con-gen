@@ -2,13 +2,15 @@
 #ifndef CON_GEN__GBTCP__LIST_H
 #define CON_GEN__GBTCP__LIST_H
 
-#include "../subr.h"
-
 /* Double linked list */
 struct dlist {
 	struct dlist *dls_next;
 	struct dlist *dls_prev;
 };
+
+#define field_off(type, field) ((intptr_t)&((type *)0)->field)
+#define container_of(ptr, type, field) \
+	((type *)((intptr_t)(ptr) - field_off(type, field)))
 
 void dlist_init(struct  dlist *);
 int dlist_size(struct dlist *);

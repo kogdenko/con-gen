@@ -7,7 +7,7 @@ static struct htable_static *htable_dynamic_new(
 	struct htable_dynamic *t);
 static void htable_dynamic_resize(struct htable_dynamic *t);
 
-int
+void
 htable_static_init(struct htable_static *t, int size, htable_f hash_fn)
 {
 	int i;
@@ -15,16 +15,12 @@ htable_static_init(struct htable_static *t, int size, htable_f hash_fn)
 	t->hts_size = size;
 	t->hts_mask = size - 1;
 	t->hts_hash_fn = hash_fn;
-	t->hts_array = malloc(size * sizeof(struct dlist));
-	if (t->hts_array == NULL) {
-		return -ENOMEM;
-	}
+	t->hts_array = xmalloc(size * sizeof(struct dlist));
 	t->hts_size = size;
 	t->hts_mask = size - 1;
 	for (i = 0; i < size; ++i) {
 		dlist_init(t->hts_array + i);
 	}
-	return 0;
 }
 
 void
@@ -69,19 +65,15 @@ htable_static_foreach(struct htable_static *t, void *udata, htable_foreach_f fn)
 	}
 }
 
-int
+void
 htable_dynamic_init(struct htable_dynamic *t, int size, htable_f hash_fn)
 {
-	int rc;
-
 	t->htd_size_min = size;
 	t->htd_nr_elems = 0;
-	t->htd_resize_discard = 0;
 	t->htd_old = NULL;
 	t->htd_new = t->htd_tables + 0;
 	t->htd_tables[1].hts_array = NULL;
-	rc = htable_static_init(t->htd_new, size, hash_fn);
-	return rc;
+	htable_static_init(t->htd_new, size, hash_fn);
 }
 
 void
@@ -170,7 +162,7 @@ static void
 htable_dynamic_resize(struct htable_dynamic *t)
 {
 	uint32_t h;
-	int rc, size, new_size;
+	int size, new_size;
 	struct dlist *elem, *bucket;
 	struct htable_static *tmp;
 
@@ -188,17 +180,9 @@ htable_dynamic_resize(struct htable_dynamic *t)
 		if (new_size < t->htd_size_min) {
 			return;
 		}
-		if (t->htd_resize_discard) {
-			t->htd_resize_discard--;
-			return;
-		}
 		tmp = htable_dynamic_new(t);
-		rc = htable_static_init(tmp, new_size,
-		                         t->htd_new->hts_hash_fn);
-		if (rc) {
-			t->htd_resize_discard = new_size;
-			return;
-		}
+		htable_static_init(tmp, new_size,
+		                   t->htd_new->hts_hash_fn);
 		t->htd_old = t->htd_new;
 		t->htd_new = tmp;
 		t->htd_resize_progress = 0;

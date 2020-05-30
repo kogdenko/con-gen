@@ -5,23 +5,43 @@
 - Use netmap.
 - Can operate with speed ~4mpps (~500kcps) on low end processor.
 
-## Compile 
+## Guide
+### Install [netmap](https://github.com/luigirizzo/netmap)
+```bash
+git clone https://github.com/luigirizzo/netmap.git
+cd netmap
+./configure --kernel-dir=/usr/src/linux-4.9.135 --drivers=ixgbe,veth --no-apps
+make
+make install 
+insmod netmap.ko
+rmmod ixgbe
+insmod  ./ixgbe-5.3.8/src/ixgbe.ko
+ifconfig eth2 up
+```
+## Compile con-gen
 ```bash
 ./configure
 make
 ```
 
-## Example
+## Run (example)
 ```bash
-./con-gen -L -S 00:30:4f:4e:e9:2b -D 60:e3:27:03:03:97 -s 2.2.2.2 -d 2.2.2.4 -i rl0
+./con-gen -S 00:1b:21:95:69:64 -D 00:1B:21:A6:E5:3C -s 1.1.1.3 -d 1.1.1.2  -a 1 -p 80 -c 1000 -i eth2
 ```
 
 ## Benchmark
-fx8350
+AMD fx8350
 ```bash
-./con-gen -L -a 1 -D 72:9c:29:36:5e:02 -S 72:9c:29:36:5e:01 -d 172.16.7.2 -s 172.16.7.1 -i veth_g  --tcp-timewait-timeout=0
+./con-gen -L -a 1 -D 72:9c:29:36:5e:02 -S 72:9c:29:36:5e:01 -d 172.16.7.2 -s 172.16.7.1 -i veth_g 
 ```
-~ 510kcps (4mpps)
+bsd: ~ 510kcps (4mpps)
 
-## Known bugs
-- Ephemeral port exhaustion. (without --tcp-timewait-timeout=0)
+## Run several instances
+```
+ethtool -L eth2 combined 2
+ethtool -K eth2 ntuple on
+ethtool -N eth2 flow-type tcp4 dst-ip 1.1.1.3  action 0
+ethtool -N eth2 flow-type tcp4 dst-ip 1.1.1.4  action 1
+./con-gen -S 00:1b:21:95:69:64 -D 00:1B:21:A6:E5:3C -s 1.1.1.3 -d 1.1.1.2  -a 1 -p 80 -c 1000 -i eth2-0
+./con-gen -S 00:1b:21:95:69:64 -D 00:1B:21:A6:E5:3C -s 1.1.1.4 -d 1.1.1.2  -a 1 -p 80 -c 1000 -i eth2-1
+```
