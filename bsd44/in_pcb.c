@@ -189,21 +189,22 @@ in_pcbnotify(int proto,
 }
 
 void
-bsd_get_so_info(void *e, struct socket_info *info)
+bsd_get_so_info(void *e, struct socket_info *x)
 {
 	struct socket *so;
 	struct tcpcb *tp;
 
 	so = container_of(e, struct socket, inp_list);
-	info->soi_laddr = so->inp_laddr;
-	info->soi_lport = so->inp_lport;
-	info->soi_faddr = so->inp_faddr;
-	info->soi_fport = so->inp_fport;
-	info->soi_ipproto = so->so_proto;
+	x->soi_laddr = so->inp_laddr;
+	x->soi_lport = so->inp_lport;
+	x->soi_faddr = so->inp_faddr;
+	x->soi_fport = so->inp_fport;
+	x->soi_ipproto = so->so_proto;
 	if (so->so_proto == IPPROTO_TCP) {
 		tp = &so->inp_ppcb;
-		info->soi_state = tp->t_state;
+		x->soi_state = tp->t_state;
 	}
+	snprintf(x->soi_debug, sizeof(x->soi_debug), "0x%x", so->so_state);
 }
 
 struct socket *

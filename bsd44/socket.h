@@ -140,8 +140,7 @@ int soconnect(struct socket *so, const struct sockaddr_in *);
 void soaccept(struct socket *so);
 
 int sodisconnect(struct socket *so);
-void sofree_(struct socket *, const char *);
-#define sofree(so) sofree_(so, __func__)
+void sofree(struct socket *);
 void soqremque(struct socket *so);
 void sbrelease(struct sockbuf *sb);
 void sorflush(struct socket *so);

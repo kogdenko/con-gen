@@ -342,6 +342,9 @@ tcp_settimer(struct tcpcb *tp, int timer, uint64_t timo)
 {
 	timer_f fn;
 
+	if (tp->t_state == TCPS_CLOSED) {
+		return;
+	}
 	fn = NULL;
 	switch (timer) {
 	case TCPT_REXMT:

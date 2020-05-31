@@ -468,6 +468,7 @@ pr_socketfn(void *udata, void *e)
 	char bl[64], bf[64];
 	struct socket_info x;
 
+	x.soi_debug[0] = 0;
 	if (use_toy) {
 		toy_get_so_info(e, &x);
 	} else {
@@ -488,13 +489,14 @@ pr_socketfn(void *udata, void *e)
 		proto = "UDP";
 		state = "";
 	}
-	printf("%-5.5s %-22.22s %-22.22s %-11.11s\n", proto, bl, bf, state);
+	printf("%-5.5s %-22.22s %-22.22s %-11.11s %s\n",
+	       proto, bl, bf, state, x.soi_debug);
 }
 
 void
 pr_sockets()
 {
-	printf("%-5.5s %-22.22s %-22.22s %-11.11s\n",
-	       "Proto", "Local Address", "Foreign Address", "State ");
+	printf("%-5.5s %-22.22s %-22.22s %-11.11s %s\n",
+	       "Proto", "Local Address", "Foreign Address", "State ", "Debug");
 	htable_foreach(&in_htable, NULL, pr_socketfn);
 }

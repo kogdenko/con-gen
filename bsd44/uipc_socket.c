@@ -132,7 +132,7 @@ bsd_listen(struct socket *so)
 	}
 
 void
-sofree_(struct socket *so, const char *f)
+sofree(struct socket *so)
 {
 /*	const char *cp = "ss=";
 
@@ -148,8 +148,11 @@ sofree_(struct socket *so, const char *f)
 	prss(SS_ISATTACHED);
 	printf("\n");*/
 
-	if ((so->so_state & SS_NOFDREF) == 0 ||
-	    (so->so_state & (SS_ISTXPENDING|
+	if ((so->so_state & SS_NOFDREF) == 0) {
+		// Don't free if referenced
+		return;
+	}
+	if ((so->so_state & (SS_ISTXPENDING|
 	                     SS_ISPROCESSING|
 	                     SS_ISCONNECTING|
 	                     SS_ISCONNECTED|
@@ -163,6 +166,8 @@ sofree_(struct socket *so, const char *f)
 	sbrelease(&so->so_snd);
 	sorflush(so);
 	sowakeup2(so, POLLNVAL);
+	so->so_userfn = NULL;
+	//tcp_canceltimers( &so->inp_ppcb  ); // ?????
 	somfree(so);
 }
 
@@ -558,12 +563,12 @@ void
 sowakeup(struct socket *so,  short events,  struct sockaddr_in *addr,
 	void *dat, int len)
 {
-	if (so->so_state & SS_CANTRCVMORE) {
-		events &= ~POLLIN;
-	}
-	if (so->so_state & SS_CANTSENDMORE) {
-		events &= ~POLLOUT;
-	}
+//	if (so->so_state & SS_CANTRCVMORE) {
+//		events &= ~POLLIN;
+//	}
+//	if (so->so_state & SS_CANTSENDMORE) {
+//		events &= ~POLLOUT;
+//	}
 	if (events && so->so_userfn != NULL) {
 		if (so->so_state & SS_ISPROCESSING) {
 			so->so_events |= events;

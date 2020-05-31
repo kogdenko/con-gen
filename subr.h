@@ -117,6 +117,7 @@ struct socket_info {
 	be16_t soi_fport;
 	int soi_ipproto;
 	int soi_state;
+	char soi_debug[64];
 };
 
 void *xmalloc(size_t);

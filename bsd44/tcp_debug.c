@@ -83,12 +83,12 @@ tcp_trace(int act,
 	tcp_seq seq, ack;
 	int len, flags;
 
-	if (tp) {
-		printf("%p %s:", tp, tcpstates[ostate]);
-	} else {
-		printf("???????? ");
-	}
 	printf("%s ", tanames[act]);
+	if (tp) {
+		printf("[%p %s] ", tp, tcpstates[ostate]);
+	} else {
+		printf("[?] ");
+	}
 	switch (act) {
 	case TA_INPUT:
 	case TA_OUTPUT:

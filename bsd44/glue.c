@@ -113,10 +113,14 @@ bsd_server_listen(int proto)
 static void
 con_close(int is_client)
 {
+	if (done) {
+		return;
+	}
 	connections++;
 	if (nflag) {
 		if (connections == nflag) {
 			done = 1;
+			return;
 		}
 	}
 	if (is_client) {
@@ -161,14 +165,23 @@ client(struct socket *so, short events, struct sockaddr_in *addr,
 			cp->cn_sent = 1;
 			conn_sendto(so);
 		}
-	}
-	if (len) {
-		rc = parse_http(dat, len, &cp->cn_http);
-		if (rc) {
+	} else {
+		if (events & POLLERR) {
 			bsd_close(so);
+			return;
 		}
-	} else if (events & (POLLERR|POLLIN)) {
-		bsd_close(so);
+	}
+	if (events & POLLIN) {
+		if (len) {
+			rc = parse_http(dat, len, &cp->cn_http);
+			if (rc) {
+				bsd_close(so);
+				return;
+			}
+		} else {
+			bsd_close(so);
+			return;
+		}
 	}
 }
 

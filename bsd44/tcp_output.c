@@ -75,7 +75,7 @@ tcp_output(struct tcpcb *tp)
 		return;
 	}
 	do {
-		if (/*1 ||*/  not_empty_txr(NULL) == NULL) {
+		if (1 ||  not_empty_txr(NULL) == NULL) {
 			so->so_state |= SS_ISTXPENDING;
 			DLIST_INSERT_TAIL(&so_txq, so, so_txlist);
 			break;

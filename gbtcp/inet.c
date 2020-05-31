@@ -151,7 +151,7 @@ tcp_in(struct inet_parser *p)
 		}
 	}
 	p->inp_th->th_cksum = cksum;
-	if (p->inp_th_len > sizeof(*p->inp_th)) {
+	if (p->inp_th_len < sizeof(*p->inp_th)) {
 		tcpstat.tcps_rcvbadoff++;
 		return IN_DROP;
 	}

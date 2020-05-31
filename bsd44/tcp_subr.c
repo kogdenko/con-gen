@@ -46,13 +46,6 @@
 int tcp_rttdflt = TCPTV_SRTTDFLT / PR_SLOWHZ;
 int tcp_do_wscale = 1;
 int tcp_do_timestamps = 1;
-/*
- * Tcp initialization
- */
-void
-tcp_init()
-{
-}
 
 /*
  * Create template to be used to send tcp packets on a connection.
@@ -218,6 +211,7 @@ tcp_close(struct tcpcb *tp)
 	struct socket *so;
 
 	so = tcpcbtoso(tp);
+	tp->t_state = TCPS_CLOSED;
 	tcp_canceltimers(tp);
 	soisdisconnected(so);
 	/* clobber input pcb cache if we're closing the cached connection */
