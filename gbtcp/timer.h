@@ -17,8 +17,9 @@ struct timer {
 
 typedef void (*timer_f)(struct timer *);
 
-int timer_mod_init();
-void timer_mod_deinit();
+int init_timers();
+void deinit_timers();
+
 void check_timers();
 void timer_init(struct timer *);
 int timer_is_running(struct timer *);

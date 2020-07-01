@@ -51,137 +51,198 @@ static const char *icmpnames[ICMP_MAXTYPE + 1] = {
 void
 print_tcpstat(int verbose)
 {
+	uint64_t sndtotal;
+	uint64_t sndpack, sndbyte;
+	uint64_t sndrexmitpack, sndrexmitbyte;
+	uint64_t sndacks, delack;
+	uint64_t sndurg;
+	uint64_t sndprobe;
+	uint64_t sndwinup;
+	uint64_t sndctrl;
+	uint64_t rcvtotal;
+	uint64_t rcvackpack, rcvackbyte;
+	uint64_t rcvdupack;
+	uint64_t rcvacktoomuch;
+	uint64_t rcvpack, rcvbyte;
+	uint64_t rcvduppack, rcvdupbyte;
+	uint64_t pawsdrop;
+	uint64_t rcvpartduppack, rcvpartdupbyte;
+	uint64_t rcvoopack, rcvoobyte;
+	uint64_t rcvpackafterwin, rcvbyteafterwin;
+	uint64_t rcvwinprobe;
+	uint64_t rcvwinupd;
+	uint64_t rcvafterclose;
+	uint64_t rcvbadsum;
+	uint64_t rcvbadoff;
+	uint64_t rcvshort;
+	uint64_t connattempt;
+	uint64_t accepts;
+	uint64_t listendrop;
+	uint64_t connects;
+	uint64_t closed, drops;
+	uint64_t conndrops;
+	uint64_t rttupdated, segstimed;
+	uint64_t rexmttimeo;
+	uint64_t timeoutdrop;
+	uint64_t persisttimeo;
+	uint64_t keeptimeo;
+	uint64_t keepprobe;
+	uint64_t keepdrops;
+	uint64_t predack;
+	uint64_t preddat;
+
 	printf("tcp:\n");
-	if (tcpstat.tcps_sndtotal || verbose) {
-		printf("\t%"PRIu64" packets sent\n",
-		       tcpstat.tcps_sndtotal);
+	sndtotal = counter64_get(&tcpstat.tcps_sndtotal);
+	if (sndtotal || verbose) {
+		printf("\t%"PRIu64" packets sent\n", sndtotal);
 	}
-	if (tcpstat.tcps_sndpack || tcpstat.tcps_sndbyte || verbose) {
+	sndpack = counter64_get(&tcpstat.tcps_sndpack);
+	sndbyte = counter64_get(&tcpstat.tcps_sndbyte);
+	if (sndpack || sndbyte || verbose) {
 		printf("\t\t%"PRIu64" data packets (%"PRIu64" bytes)\n",
-		       tcpstat.tcps_sndpack, tcpstat.tcps_sndbyte);
+		       sndpack, sndbyte);
 	}
-	if (tcpstat.tcps_sndrexmitpack || tcpstat.tcps_sndrexmitbyte ||
-	    verbose) {
+	sndrexmitpack = counter64_get(&tcpstat.tcps_sndrexmitpack);
+	sndrexmitbyte = counter64_get(&tcpstat.tcps_sndrexmitbyte);
+	if (sndrexmitpack || sndrexmitbyte || verbose) {
 		printf("\t\t%"PRIu64" data packets (%"PRIu64" bytes) retransmitted\n",
-		       tcpstat.tcps_sndrexmitpack, tcpstat.tcps_sndrexmitbyte);
+		       sndrexmitpack, sndrexmitbyte);
 	}
 //	printf("\t\t%llu data packets unnecessarily retransmitted\n",
 //	       tcpstat.tcps_sndrexmitbad);
 //	printf("\t\t%llu resends initiated by MTU discovery\n",
 //	       tcpstat.tcps_mturesent);
-	if (tcpstat.tcps_sndacks || tcpstat.tcps_delack || verbose) {
+	sndacks = counter64_get(&tcpstat.tcps_sndacks);
+	delack = counter64_get(&tcpstat.tcps_delack);
+	if (sndacks || delack || verbose) {
 		printf("\t\t%"PRIu64" ack-only packets (%"PRIu64" delayed)\n",
-		       tcpstat.tcps_sndacks, tcpstat.tcps_delack);
+		       sndacks, delack);
 	}
-	if (tcpstat.tcps_sndurg || verbose) {
-		printf("\t\t%"PRIu64" URG only packets\n",
-		       tcpstat.tcps_sndurg);
+	sndurg = counter64_get(&tcpstat.tcps_sndurg);
+	if (sndurg || verbose) {
+		printf("\t\t%"PRIu64" URG only packets\n", sndurg);
 	}
-	if (tcpstat.tcps_sndprobe || verbose) {
-		printf("\t\t%"PRIu64" window probe packets\n",
-		       tcpstat.tcps_sndprobe);
+	sndprobe = counter64_get(&tcpstat.tcps_sndprobe);
+	if (sndprobe || verbose) {
+		printf("\t\t%"PRIu64" window probe packets\n", sndprobe);
 	}
-	if (tcpstat.tcps_sndwinup || verbose) {
-		printf("\t\t%"PRIu64" window update packets\n",
-		       tcpstat.tcps_sndwinup);
+	sndwinup = counter64_get(&tcpstat.tcps_sndwinup);
+	if (sndwinup || verbose) {
+		printf("\t\t%"PRIu64" window update packets\n", sndwinup);
 	}
-	if (tcpstat.tcps_sndctrl || verbose) {
-		printf("\t\t%"PRIu64" control packets\n",
-		       tcpstat.tcps_sndctrl);
+	sndctrl = counter64_get(&tcpstat.tcps_sndctrl);
+	if (sndctrl || verbose) {
+		printf("\t\t%"PRIu64" control packets\n", sndctrl);
 	}
 	// packets received
-	if (tcpstat.tcps_rcvtotal || verbose) {
-		printf("\t%"PRIu64" packets received\n",
-		       tcpstat.tcps_rcvtotal);
+	rcvtotal = counter64_get(&tcpstat.tcps_rcvtotal);
+	if (rcvtotal || verbose) {
+		printf("\t%"PRIu64" packets received\n", rcvtotal);
 	}
-	if (tcpstat.tcps_rcvackpack || tcpstat.tcps_rcvackbyte || verbose) {
+	rcvackpack = counter64_get(&tcpstat.tcps_rcvackpack);
+	rcvackbyte = counter64_get(&tcpstat.tcps_rcvackbyte);
+	if (rcvackpack || rcvackbyte || verbose) {
 		printf("\t\t%"PRIu64" acks (for %"PRIu64" bytes)\n",
-		       tcpstat.tcps_rcvackpack, tcpstat.tcps_rcvackbyte);
+		       rcvackpack, rcvackbyte);
 	}
-	if (tcpstat.tcps_rcvdupack || verbose) {
-		printf("\t\t%"PRIu64" duplicate acks\n",
-		       tcpstat.tcps_rcvdupack);
+	rcvdupack = counter64_get(&tcpstat.tcps_rcvdupack);
+	if (rcvdupack || verbose) {
+		printf("\t\t%"PRIu64" duplicate acks\n", rcvdupack);
 	}
-	if (tcpstat.tcps_rcvacktoomuch || verbose) {
+	rcvacktoomuch = counter64_get(&tcpstat.tcps_rcvacktoomuch);
+	if (rcvacktoomuch || verbose) {
 		printf("\t\t%"PRIu64" acks for unsent data\n",
-		       tcpstat.tcps_rcvacktoomuch);
+		       rcvacktoomuch);
 	}
-	if (tcpstat.tcps_rcvpack || tcpstat.tcps_rcvbyte || verbose) {
+	rcvpack = counter64_get(&tcpstat.tcps_rcvpack);
+	rcvbyte = counter64_get(&tcpstat.tcps_rcvbyte);
+	if (rcvpack || rcvbyte || verbose) {
 		printf("\t\t%"PRIu64" packets (%"PRIu64" bytes) received in-sequence\n",
-		       tcpstat.tcps_rcvpack, tcpstat.tcps_rcvbyte);
+		       rcvpack, rcvbyte);
 	}
-	if (tcpstat.tcps_rcvduppack || tcpstat.tcps_rcvdupbyte || verbose) {
+	rcvduppack = counter64_get(&tcpstat.tcps_rcvduppack);
+	rcvdupbyte = counter64_get(&tcpstat.tcps_rcvdupbyte);
+	if (rcvduppack || rcvdupbyte || verbose) {
 		printf("\t\t%"PRIu64" completely duplicate packets (%"PRIu64" bytes)\n",
-		       tcpstat.tcps_rcvduppack, tcpstat.tcps_rcvdupbyte);
+		       rcvduppack, rcvdupbyte);
 	}
-	if (tcpstat.tcps_pawsdrop || verbose) {
-		printf("\t\t%"PRIu64" old duplicate packets\n",
-		       tcpstat.tcps_pawsdrop);
+	pawsdrop = counter64_get(&tcpstat.tcps_pawsdrop);
+	if (pawsdrop || verbose) {
+		printf("\t\t%"PRIu64" old duplicate packets\n", pawsdrop);
 	}
-	if (tcpstat.tcps_rcvpartduppack || tcpstat.tcps_rcvpartdupbyte ||
-	    verbose) {
+	rcvpartduppack = counter64_get(&tcpstat.tcps_rcvpartduppack);
+	rcvpartdupbyte = counter64_get(&tcpstat.tcps_rcvpartdupbyte);
+	if (rcvpartduppack || rcvpartdupbyte || verbose) {
 		printf("\t\t%"PRIu64" packets with some dup. data (%"PRIu64" bytes duped)\n",
-		       tcpstat.tcps_rcvpartduppack,
-		       tcpstat.tcps_rcvpartdupbyte);
+		       rcvpartduppack, rcvpartdupbyte);
 	}
-	if (tcpstat.tcps_rcvoopack || tcpstat.tcps_rcvoobyte || verbose) {
+	rcvoopack = counter64_get(&tcpstat.tcps_rcvoopack);
+	rcvoobyte = counter64_get(&tcpstat.tcps_rcvoobyte);
+	if (rcvoopack || rcvoobyte || verbose) {
 		printf("\t\t%"PRIu64" out-of-order packets (%"PRIu64" bytes)\n",
-		       tcpstat.tcps_rcvoopack, tcpstat.tcps_rcvoobyte);
+		       rcvoopack, rcvoobyte);
 	}
-	if (tcpstat.tcps_rcvpackafterwin || tcpstat.tcps_rcvbyteafterwin ||
-	    verbose) {
+	rcvpackafterwin = counter64_get(&tcpstat.tcps_rcvpackafterwin);
+	rcvbyteafterwin = counter64_get(&tcpstat.tcps_rcvbyteafterwin);
+	if (rcvpackafterwin || rcvbyteafterwin || verbose) {
 		printf("\t\t%"PRIu64" packets (%"PRIu64" bytes) of data after window\n",
-		       tcpstat.tcps_rcvpackafterwin,
-		       tcpstat.tcps_rcvbyteafterwin);
+		       rcvpackafterwin, rcvbyteafterwin);
 	}
-	if (tcpstat.tcps_rcvwinprobe || verbose) {
-		printf("\t\t%"PRIu64" window probes\n",
-		       tcpstat.tcps_rcvwinprobe);
+	rcvwinprobe = counter64_get(&tcpstat.tcps_rcvwinprobe);
+	if (rcvwinprobe || verbose) {
+		printf("\t\t%"PRIu64" window probes\n", rcvwinprobe);
 	}
-	if (tcpstat.tcps_rcvwinupd || verbose) {
-		printf("\t\t%"PRIu64" window update packets\n",
-		       tcpstat.tcps_rcvwinupd);
+	rcvwinupd = counter64_get(&tcpstat.tcps_rcvwinupd);
+	if (rcvwinupd || verbose) {
+		printf("\t\t%"PRIu64" window update packets\n", rcvwinupd);
 	}
-	if (tcpstat.tcps_rcvafterclose || verbose) {
+	rcvafterclose = counter64_get(&tcpstat.tcps_rcvafterclose);
+	if (rcvafterclose || verbose) {
 		printf("\t\t%"PRIu64" packets received after close\n",
-		       tcpstat.tcps_rcvafterclose);
+		       rcvafterclose);
 	}
-	if (tcpstat.tcps_rcvbadsum || verbose) {
+	rcvbadsum = counter64_get(&tcpstat.tcps_rcvbadsum);
+	if (rcvbadsum || verbose) {
 		printf("\t\t%"PRIu64" discarded for bad checksums\n",
-		       tcpstat.tcps_rcvbadsum);
+		       rcvbadsum);
 	}
-	if (tcpstat.tcps_rcvbadoff || verbose) {
+	rcvbadoff = counter64_get(&tcpstat.tcps_rcvbadoff);
+	if (rcvbadoff || verbose) {
 		printf("\t\t%"PRIu64" discarded for bad header offset fields\n",
-		       tcpstat.tcps_rcvbadoff);
+		       rcvbadoff);
 	}
-	if (tcpstat.tcps_rcvshort || verbose) {
+	rcvshort = counter64_get(&tcpstat.tcps_rcvshort);
+	if (rcvshort || verbose) {
 		printf("\t\t%"PRIu64" discarded because packet too short\n",
-		       tcpstat.tcps_rcvshort);
+		       rcvshort);
 	}
 //	printf("\t\t%llu discarded due to memory problems\n",
 //	       tcpstat.tcps_rcvmemdrop);
 	// connection requests
-	if (tcpstat.tcps_connattempt || verbose) {
-		printf("\t%"PRIu64" connection requests\n",
-		       tcpstat.tcps_connattempt);
+	connattempt = counter64_get(&tcpstat.tcps_connattempt);
+	if (connattempt || verbose) {
+		printf("\t%"PRIu64" connection requests\n", connattempt);
 	}
-	if (tcpstat.tcps_accepts || verbose) {
-		printf("\t%"PRIu64" connection accepts\n",
-		       tcpstat.tcps_accepts);
+	accepts = counter64_get(&tcpstat.tcps_accepts);
+	if (accepts || verbose) {
+		printf("\t%"PRIu64" connection accepts\n", accepts);
 	}
 	//printf("\t%llu bad connection attempts\n", tcpstat.tcps_badsyn);
-	if (tcpstat.tcps_listendrop || verbose) {
-		printf("\t%"PRIu64" listen queue overflows\n",
-		       tcpstat.tcps_listendrop);
+	listendrop = counter64_get(&tcpstat.tcps_listendrop);
+	if (listendrop || verbose) {
+		printf("\t%"PRIu64" listen queue overflows\n", listendrop);
 	}
 	//printf("\t%llu ignored RSTs in the windows\n", tcpstat.tcps_badrst);
-	if (tcpstat.tcps_connects || verbose) {
+	connects = counter64_get(&tcpstat.tcps_connects);
+	if (connects || verbose) {
 		printf("\t%"PRIu64" connections established (including accepts)\n",
-		       tcpstat.tcps_connects);
+		       connects);
 	}
-	if (tcpstat.tcps_closed || tcpstat.tcps_drops || verbose) {
+	closed = counter64_get(&tcpstat.tcps_closed);
+	drops = counter64_get(&tcpstat.tcps_drops);
+	if (closed || drops || verbose) {
 		printf("\t%"PRIu64" connections closed (including %"PRIu64" drops)\n",
-		       tcpstat.tcps_closed, tcpstat.tcps_drops);
+		       closed, drops);
 	}
 //	printf("\t\t%llu times used RTT from hostcache\n", tcpstat.tcps_usedrtt);
 //	printf("\t\t%llu times used RTT variance from hostcache\n",
@@ -194,176 +255,221 @@ print_tcpstat(int verbose)
 //	       tcpstat.tcps_cachedrttvar);
 //	printf("\t\t%llu connections updated cached ssthresh on close\n",
 //	       tcpstat.tcps_cachedssthresh);
-	if (tcpstat.tcps_conndrops || verbose) {
+	conndrops = counter64_get(&tcpstat.tcps_conndrops);
+	if (conndrops || verbose) {
 		printf("\t%"PRIu64" embryonic connections dropped\n",
-		       tcpstat.tcps_conndrops);
+		       conndrops);
 	}
-	if (tcpstat.tcps_rttupdated || tcpstat.tcps_segstimed || verbose) {
+	rttupdated = counter64_get(&tcpstat.tcps_rttupdated);
+	segstimed = counter64_get(&tcpstat.tcps_segstimed);
+	if (rttupdated || segstimed || verbose) {
 		printf("\t%"PRIu64" segments updated rtt (of %"PRIu64" attempts)\n",
-		       tcpstat.tcps_rttupdated, tcpstat.tcps_segstimed);
+		       rttupdated, segstimed);
 	}
-	if (tcpstat.tcps_rexmttimeo || verbose) {
-		printf("\t%"PRIu64" retransmit timeouts\n",
-		       tcpstat.tcps_rexmttimeo);
+	rexmttimeo = counter64_get(&tcpstat.tcps_rexmttimeo);
+	if (rexmttimeo || verbose) {
+		printf("\t%"PRIu64" retransmit timeouts\n", rexmttimeo);
 	}
-	if (tcpstat.tcps_timeoutdrop || verbose) {
+	timeoutdrop = counter64_get(&tcpstat.tcps_timeoutdrop);
+	if (timeoutdrop || verbose) {
 		printf("\t\t%"PRIu64" connections dropped by rexmit timeout\n",
-		       tcpstat.tcps_timeoutdrop);
+		       timeoutdrop);
 	}
-	if (tcpstat.tcps_persisttimeo || verbose) {
-		printf("\t%"PRIu64" persist timeouts\n",
-		       tcpstat.tcps_persisttimeo);
+	persisttimeo = counter64_get(&tcpstat.tcps_persisttimeo);
+	if (persisttimeo || verbose) {
+		printf("\t%"PRIu64" persist timeouts\n", persisttimeo);
 	}
 //	printf("\t\t%llu connections dropped by persist timeout\n",
 //	       tcpstat.tcps_persistdrop);
-	if (tcpstat.tcps_keeptimeo || verbose) {
-		printf("\t%"PRIu64" keepalive timeouts\n",
-		       tcpstat.tcps_keeptimeo);
+	keeptimeo = counter64_get(&tcpstat.tcps_keeptimeo);
+	if (keeptimeo || verbose) {
+		printf("\t%"PRIu64" keepalive timeouts\n", keeptimeo);
 	}
-	if (tcpstat.tcps_keepprobe || verbose) {
-		printf("\t\t%"PRIu64" keepalive probes sent\n",
-		       tcpstat.tcps_keepprobe);
+	keepprobe = counter64_get(&tcpstat.tcps_keepprobe);
+	if (keepprobe || verbose) {
+		printf("\t\t%"PRIu64" keepalive probes sent\n", keepprobe);
 	}
-	if (tcpstat.tcps_keepdrops || verbose) {
+	keepdrops = counter64_get(&tcpstat.tcps_keepdrops);
+	if (keepdrops || verbose) {
 		printf("\t\t%"PRIu64" connections dropped by keepalive\n",
-		       tcpstat.tcps_keepdrops);
+		       keepdrops);
 	}
-	if (tcpstat.tcps_predack || verbose) {
-		printf("\t%"PRIu64" correct ACK header predictions\n",
-		       tcpstat.tcps_predack);
+	predack = counter64_get(&tcpstat.tcps_predack);
+	if (predack || verbose) {
+		printf("\t%"PRIu64" correct ACK header predictions\n", predack);
 	}
-	if (tcpstat.tcps_preddat || verbose) {
+	preddat = counter64_get(&tcpstat.tcps_preddat);
+	if (preddat || verbose) {
 		printf("\t%"PRIu64" correct data packet header predictions\n",
-		       tcpstat.tcps_preddat);
+		       preddat);
 	}
 }
 
 void
 print_udpstat(int verbose)
 {
+	uint64_t ipackets;
+	uint64_t hdrops;
+	uint64_t badlen;
+	uint64_t badsum;
+	uint64_t noport;
+	uint64_t noportbcast;
+	uint64_t fullsock;
 	uint64_t delivered;
+	uint64_t opackets;
 
 	printf("udp:\n");
-	if (udpstat.udps_ipackets || verbose) {
-		printf("\t%"PRIu64" datagrams received\n",
-		       udpstat.udps_ipackets);
+	ipackets = counter64_get(&udpstat.udps_ipackets);
+	delivered = ipackets;
+	if (ipackets || verbose) {
+		printf("\t%"PRIu64" datagrams received\n", ipackets);
 	}
-	if (udpstat.udps_hdrops || verbose) {
-		printf("\t%"PRIu64" with incomplete header\n",
-		       udpstat.udps_hdrops);
+	hdrops = counter64_get(&udpstat.udps_hdrops);
+	delivered -= hdrops;
+	if (hdrops || verbose) {
+		printf("\t%"PRIu64" with incomplete header\n", hdrops);
 	}
-	if (udpstat.udps_badlen || verbose) {
-		printf("\t%"PRIu64" with bad data length field\n",
-		       udpstat.udps_badlen);
+	badlen = counter64_get(&udpstat.udps_badlen);
+	delivered -= badlen;
+	if (badlen || verbose) {
+		printf("\t%"PRIu64" with bad data length field\n", badlen);
 	}
-	if (udpstat.udps_badsum || verbose) {
-		printf("\t%"PRIu64" with bad checksum\n", udpstat.udps_badsum);
+	badsum = counter64_get(&udpstat.udps_badsum);
+	delivered -= badsum;
+	if (badsum || verbose) {
+		printf("\t%"PRIu64" with bad checksum\n", badsum);
 	}
 //	printf("\t%llu with no checksum\n", udpstat.udps_nosum);
-	if (udpstat.udps_noport || verbose) {
-		printf("\t%"PRIu64" dropped due to no socket\n",
-		       udpstat.udps_noport);
+	noport = counter64_get(&udpstat.udps_noport);
+	delivered -= noport;
+	if (noport || verbose) {
+		printf("\t%"PRIu64" dropped due to no socket\n", noport);
 	}
-	if (udpstat.udps_noportbcast || verbose) {
+	noportbcast = counter64_get(&udpstat.udps_noportbcast);
+	delivered -= noportbcast;
+	if (noportbcast || verbose) {
 		printf("\t%"PRIu64" broadcast/multicast datagrams undelivered\n",
-		       udpstat.udps_noportbcast);
+		       noportbcast);
 	}
-	if (udpstat.udps_fullsock || verbose) {
+	fullsock = counter64_get(&udpstat.udps_fullsock);
+	delivered -= fullsock;
+	if (fullsock || verbose) {
 		printf("\t%"PRIu64" dropped due to full socket buffers\n",
-		       udpstat.udps_fullsock);
+		       fullsock);
 	}
-	delivered = udpstat.udps_ipackets -
-	            udpstat.udps_hdrops -
-	            udpstat.udps_badlen -
-	            udpstat.udps_badsum -
-	            udpstat.udps_noport -
-	            udpstat.udps_noportbcast -
-	            udpstat.udps_fullsock;
 	if (delivered || verbose) {
 		printf("\t%"PRIu64" delivered\n", delivered);
 	}
-	if (udpstat.udps_opackets || verbose) {
-		printf("\t%"PRIu64" datagrams output\n",
-		       udpstat.udps_opackets);
+	opackets = counter64_get(&udpstat.udps_opackets);
+	if (opackets || verbose) {
+		printf("\t%"PRIu64" datagrams output\n", opackets);
 	}
 }
 
 static void
 print_ipstat(int verbose)
 {
+	uint64_t total;
+	uint64_t badsum;
+	uint64_t toosmall;
+	uint64_t tooshort;
+	uint64_t badhlen;
+	uint64_t badlen;
+	uint64_t badoptions;
+	uint64_t badvers;
+	uint64_t fragments;
+	uint64_t fragdropped;
+	uint64_t fragtimeout;
+	uint64_t reassembled;
+	uint64_t delivered;
+	uint64_t noproto;
+	uint64_t localout;
+	uint64_t noroute;
+	uint64_t fragmented;
+	uint64_t cantfrag;
+
 	printf("ip:\n");
-	if (ipstat.ips_total || verbose) {
-		printf("\t%"PRIu64" total packets received\n",
-		       ipstat.ips_total);
+	total = counter64_get(&ipstat.ips_total);
+	if (total || verbose) {
+		printf("\t%"PRIu64" total packets received\n", total);
 	}
-	if (ipstat.ips_badsum || verbose) {
-		printf("\t%"PRIu64" bad header checksums\n",
-		       ipstat.ips_badsum);
+	badsum = counter64_get(&ipstat.ips_badsum);
+	if (badsum || verbose) {
+		printf("\t%"PRIu64" bad header checksums\n", badsum);
 	}
-	if (ipstat.ips_toosmall || verbose) {
+	toosmall = counter64_get(&ipstat.ips_toosmall);
+	if (toosmall || verbose) {
 		printf("\t%"PRIu64" with size smaller than minimum\n",
-		       ipstat.ips_toosmall);
+		       toosmall);
 	}
-	if (ipstat.ips_tooshort || verbose) {
-		printf("\t%"PRIu64" with data size < data length\n",
-		       ipstat.ips_tooshort);
+	tooshort = counter64_get(&ipstat.ips_tooshort);
+	if (tooshort || verbose) {
+		printf("\t%"PRIu64" with data size < data length\n", tooshort);
 	}
 	//printf("\t%llu with ip length > max ip packet size\n", ipstat.ips_toolong);
-	if (ipstat.ips_badhlen | verbose) {
+	badhlen = counter64_get(&ipstat.ips_badhlen);
+	if (badhlen | verbose) {
 		printf("\t%"PRIu64" with header length < data size\n",
-		       ipstat.ips_badhlen);
+		       badhlen);
 	}
-	if (ipstat.ips_badlen || verbose) {
+	badlen = counter64_get(&ipstat.ips_badlen);
+	if (badlen || verbose) {
 		printf("\t%"PRIu64" with data length < header length\n",
-		       ipstat.ips_badlen);
+		       badlen);
 	}
-	if (ipstat.ips_badoptions || verbose) {
-		printf("\t%"PRIu64" with bad options\n",
-		       ipstat.ips_badoptions);
+	badoptions = counter64_get(&ipstat.ips_badoptions);
+	if (badoptions || verbose) {
+		printf("\t%"PRIu64" with bad options\n", badoptions);
 	}
-	if (ipstat.ips_badvers || verbose) {
-		printf("\t%"PRIu64" with incorrect version number\n",
-		       ipstat.ips_badvers);
+	badvers = counter64_get(&ipstat.ips_badvers);
+	if (badvers || verbose) {
+		printf("\t%"PRIu64" with incorrect version number\n", badvers);
 	}
-	if (ipstat.ips_fragments || verbose) {
-		printf("\t%"PRIu64" fragments received\n",
-		       ipstat.ips_fragments);
+	fragments = counter64_get(&ipstat.ips_fragments);
+	if (fragments || verbose) {
+		printf("\t%"PRIu64" fragments received\n", fragments);
 	}
-	if (ipstat.ips_fragdropped || verbose) {
+	fragdropped = counter64_get(&ipstat.ips_fragdropped);
+	if (fragdropped || verbose) {
 		printf("\t%"PRIu64" fragments dropped (dup or out of space)\n",
-		       ipstat.ips_fragdropped);
+		       fragdropped);
 	}
-	if (ipstat.ips_fragtimeout || verbose) {
+	fragtimeout = counter64_get(&ipstat.ips_fragtimeout);
+	if (fragtimeout || verbose) {
 		printf("\t%"PRIu64" fragments dropped after timeout\n",
-		       ipstat.ips_fragtimeout);
+		       fragtimeout);
 	}
-	if (ipstat.ips_reassembled || verbose) {
-		printf("\t%"PRIu64" packets reassembled ok\n",
-		       ipstat.ips_reassembled);
+	reassembled = counter64_get(&ipstat.ips_reassembled);
+	if (reassembled || verbose) {
+		printf("\t%"PRIu64" packets reassembled ok\n", reassembled);
 	}
-	if (ipstat.ips_delivered || verbose) {
-		printf("\t%"PRIu64" packets for this host\n",
-		       ipstat.ips_delivered);
+	delivered = counter64_get(&ipstat.ips_delivered);
+	if (delivered || verbose) {
+		printf("\t%"PRIu64" packets for this host\n", delivered);
 	}
-	if (ipstat.ips_noproto || verbose) {
+	noproto = counter64_get(&ipstat.ips_noproto);
+	if (noproto || verbose) {
 		printf("\t%"PRIu64" packets for unknown/unsupported protocol\n",
-		       ipstat.ips_noproto);
+		       noproto);
 	}
-	if (ipstat.ips_localout || verbose) {
-		printf("\t%"PRIu64" packets sent from this host\n",
-		       ipstat.ips_localout);
+	localout = counter64_get(&ipstat.ips_localout);
+	if (localout || verbose) {
+		printf("\t%"PRIu64" packets sent from this host\n", localout);
 	}
-	if (ipstat.ips_noroute || verbose) {
+	noroute = counter64_get(&ipstat.ips_noroute);
+	if (noroute || verbose) {
 		printf("\t%"PRIu64" output packets discarded due to no route\n",
-		       ipstat.ips_noroute);
+		       noroute);
 	}
-	if (ipstat.ips_fragmented || verbose) {
+	fragmented = counter64_get(&ipstat.ips_fragmented);
+	if (fragmented || verbose) {
 		printf("\t%"PRIu64" output datagrams fragmented\n",
-		       ipstat.ips_fragmented);
+		       fragmented);
 	}
-	if (ipstat.ips_cantfrag || verbose) {
+	cantfrag = counter64_get(&ipstat.ips_cantfrag);
+	if (cantfrag || verbose) {
 		printf("\t%"PRIu64" datagrams that can't be fragmented\n",
-		       ipstat.ips_cantfrag);
+		       cantfrag);
 	}
 }
 
@@ -371,77 +477,92 @@ static void
 print_icmpstat(int verbose)
 {
 	int i;
+	uint64_t error;
+	uint64_t oldicmp;
+	uint64_t outhist;
+	uint64_t badcode;
+	uint64_t tooshort;
+	uint64_t checksum;
+	uint64_t badlen;
+	uint64_t inhist;
+	uint64_t reflect;
 
 	printf("icmp:\n");
-	if (icmpstat.icps_error || verbose) {
-		printf("\t%"PRIu64" calls to icmp_error\n",
-		       icmpstat.icps_error);
+	error = counter64_get(&icmpstat.icps_error);
+	if (error || verbose) {
+		printf("\t%"PRIu64" calls to icmp_error\n", error);
 	}
-	if (icmpstat.icps_oldicmp || verbose) {
+	oldicmp = counter64_get(&icmpstat.icps_oldicmp);
+	if (oldicmp || verbose) {
 		printf("\t%"PRIu64" errors not generated in response to an icmp message\n",
-		       icmpstat.icps_oldicmp);
+		       oldicmp);
 	}
 	for (i = 0; i < ICMP_MAXTYPE + 1; ++i) {
-		if (icmpstat.icps_outhist[i]) {
+		outhist = counter64_get(icmpstat.icps_outhist + i);
+		if (outhist) {
 			break;
 		}
 	}
 	if (i < ICMP_MAXTYPE + 1) {
 		printf("\tOutput histogram:\n");
 		for (i = 0; i < ICMP_MAXTYPE + 1; ++i) {
-			if (icmpstat.icps_outhist[i]) {
+			outhist = counter64_get(icmpstat.icps_outhist + i);
+			if (outhist) {
 				printf("\t\t");
 				if (icmpnames[i] == NULL) {
 					printf("#%d", i);
 				} else {
 					printf("%s", icmpnames[i]);
 				}
-				printf(": %"PRIu64"\n", icmpstat.icps_outhist[i]);
+				printf(": %"PRIu64"\n", outhist);
 			}
 		}
 	}
-	if (icmpstat.icps_badcode || verbose) {
-		printf("\t%"PRIu64" messages with bad code fields\n",
-		       icmpstat.icps_badcode);
+	badcode = counter64_get(&icmpstat.icps_badcode);
+	if (badcode || verbose) {
+		printf("\t%"PRIu64" messages with bad code fields\n", badcode);
 	}
-	if (icmpstat.icps_tooshort || verbose) {
+	tooshort = counter64_get(&icmpstat.icps_tooshort);
+	if (tooshort || verbose) {
 		printf("\t%"PRIu64" messages less than the minimum length\n",
-		       icmpstat.icps_tooshort);
+		       tooshort);
 	}
-	if (icmpstat.icps_checksum || verbose) {
-		printf("\t%"PRIu64" messages with bad checksum\n",
-		       icmpstat.icps_checksum);
+	checksum = counter64_get(&icmpstat.icps_checksum);
+	if (checksum || verbose) {
+		printf("\t%"PRIu64" messages with bad checksum\n", checksum);
 	}
-	if (icmpstat.icps_badlen || verbose) {
-		printf("\t%"PRIu64" messages with bad length\n",
-		       icmpstat.icps_badlen);
+	badlen = counter64_get(&icmpstat.icps_badlen);
+	if (badlen || verbose) {
+		printf("\t%"PRIu64" messages with bad length\n", badlen);
 	}
 //	printf("\t%"PRIu64" multicast echo requests ignored\n",
 //	       icmpstat.icps_bmcastecho);
 //	printf("\t%"PRIu64" multicast timestamp requests ignored",
 //	       icmpstat.icps_bmcasttstamp);
 	for (i = 0; i < ICMP_MAXTYPE + 1; ++i) {
-		if (icmpstat.icps_inhist[i]) {
+		inhist = counter64_get(icmpstat.icps_inhist + i);
+		if (inhist) {
 			break;
 		}
 	}
 	if (i < ICMP_MAXTYPE + 1) {
 		printf("Input histogram:\n");
 		for (i = 0; i < ICMP_MAXTYPE + 1; ++i) {
-			if (icmpstat.icps_inhist[i]) {
+			inhist = counter64_get(icmpstat.icps_inhist + i);
+			if (inhist) {
 				printf("\t\t");
 				if (icmpnames[i] == NULL) {
 					printf("#%d", i);
 				} else {
 					printf("%s", icmpnames[i]);
 				}
-				printf(": %"PRIu64"\n", icmpstat.icps_inhist[i]);
+				printf(": %"PRIu64"\n", inhist);
 			}
 		}
 	}
-	if (icmpstat.icps_reflect || verbose) {
-		printf("\t%"PRIu64" message responses generated\n",
-		       icmpstat.icps_reflect);
+	reflect = counter64_get(&icmpstat.icps_reflect);
+	if (reflect || verbose) {
+		printf("\t%"PRIu64" message responses generated\n", reflect);
 	}
 //	printf("\t%"PRIu64" invalid return addresses\n", icmpstat.icps_badaddr);
 //	printf("\t%"PRIu64" no return routes\n", icmpstat.icps_noroute);
@@ -449,7 +570,7 @@ print_icmpstat(int verbose)
 }
 
 void
-pr_stats(int verbose)
+print_stats(int verbose)
 {
 	print_tcpstat(verbose);
 	print_udpstat(verbose);
@@ -460,8 +581,9 @@ pr_stats(int verbose)
 void bsd_get_so_info(void *, struct socket_info *);
 void toy_get_so_info(void *, struct socket_info *);
 
+#if 0
 void
-pr_socketfn(void *udata, void *e)
+print_socket(void *udata, void *e)
 {
 	struct in_addr tmp;
 	const char *state, *proto;
@@ -492,11 +614,16 @@ pr_socketfn(void *udata, void *e)
 	printf("%-5.5s %-22.22s %-22.22s %-11.11s %s\n",
 	       proto, bl, bf, state, x.soi_debug);
 }
+#endif
 
 void
-pr_sockets()
+print_sockets()
 {
+//	int i;
+//	struct therad *t;
+
 	printf("%-5.5s %-22.22s %-22.22s %-11.11s %s\n",
 	       "Proto", "Local Address", "Foreign Address", "State ", "Debug");
-	htable_foreach(&in_htable, NULL, pr_socketfn);
+	// TODO:
+//	htable_foreach(&in_htable, NULL, print_socket);
 }

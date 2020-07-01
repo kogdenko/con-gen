@@ -19,8 +19,6 @@ struct dlist *dlist_first(struct dlist *);
 struct dlist *dlist_last(struct dlist *);
 void dlist_insert_head(struct dlist *, struct dlist *);
 void dlist_insert_tail(struct dlist *, struct dlist *);
-void dlist_insert_before(struct dlist *, struct dlist *);
-void dlist_insert_after(struct dlist *, struct dlist *);
 void dlist_remove(struct dlist *);
 
 #define DLIST_HEAD_INIT(name) { &name, &name }
@@ -41,12 +39,6 @@ void dlist_remove(struct dlist *);
 
 #define DLIST_INSERT_TAIL(head, var, field) \
 	dlist_insert_tail(head, &((var)->field))
-
-#define DLIST_INSERT_BEFORE(bvar, var, field) \
-	dlist_insert_before(&((bvar)->field), &((var)->field))
-
-#define DLIST_INSERT_AFTER(avar, var, field) \
-	dlist_insert_after(&((avar)->field), &((var)->field))
 
 #define DLIST_REMOVE(var, field) \
 	dlist_remove(&(var)->field)

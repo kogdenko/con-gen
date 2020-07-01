@@ -57,22 +57,6 @@ dlist_insert_tail(struct dlist *head, struct dlist *l)
 }
 
 void
-dlist_insert_before(struct dlist *b, struct dlist *l)
-{
-	l->dls_next = b;
-	l->dls_prev = b->dls_prev;
-	b->dls_prev = l;
-}
-
-void
-dlist_insert_after(struct dlist *a, struct dlist *l)
-{
-	l->dls_next = a->dls_next;
-	l->dls_prev = a;
-	a->dls_next = l;
-}
-
-void
 dlist_remove(struct dlist *list)
 {
 	list->dls_next->dls_prev = list->dls_prev;

@@ -35,14 +35,14 @@ arp_reply(struct arp_hdr *ah)
 	eh_rpl = (struct eth_hdr *)NETMAP_BUF(txr, m->buf_idx);
 	ah_rpl = (struct arp_hdr *)(eh_rpl + 1);
 	eh_rpl->eh_type = ETH_TYPE_ARP_BE;
-	memcpy(eh_rpl->eh_saddr, eth_laddr, 6);
+	memcpy(eh_rpl->eh_saddr, current->t_eth_laddr, 6);
 	memcpy(eh_rpl->eh_daddr, ah->ah_data.aip_sha, 6);
 	ah_rpl->ah_hrd = ARP_HRD_ETH_BE;
 	ah_rpl->ah_pro = ETH_TYPE_IP4_BE;
 	ah_rpl->ah_hlen = 6;
 	ah_rpl->ah_plen = sizeof(be32_t);
 	ah_rpl->ah_op = ARP_OP_REPLY_BE;
-	memcpy(&ah_rpl->ah_data.aip_sha, eth_laddr, 6);
+	memcpy(&ah_rpl->ah_data.aip_sha, current->t_eth_laddr, 6);
 	ah_rpl->ah_data.aip_sip = ah->ah_data.aip_tip;
 	memcpy(&ah_rpl->ah_data.aip_tha, ah->ah_data.aip_sha, 6);
 	ah_rpl->ah_data.aip_tip = ah->ah_data.aip_sip;
@@ -123,13 +123,13 @@ tcp_in(struct inet_parser *p)
 	int len, win, tmp, cksum;
 
 	if (p->inp_rem < sizeof(struct tcp_hdr)) {
-		tcpstat.tcps_rcvshort++;
+		counter64_inc(&tcpstat.tcps_rcvshort);
 		return IN_DROP;
 	}
 	p->inp_th = (struct tcp_hdr *)p->inp_cur;
 	p->inp_th_len = TCP_HDR_LEN(p->inp_th->th_data_off);
 	if (p->inp_rem < p->inp_th_len) {
-		tcpstat.tcps_rcvshort++;
+		counter64_inc(&tcpstat.tcps_rcvshort);
 		return IN_DROP;
 	}
 	SHIFT(p, p->inp_th_len);
@@ -143,16 +143,18 @@ tcp_in(struct inet_parser *p)
 	p->inp_payload = (u_char *)p->inp_th + p->inp_th_len;
 	cksum = p->inp_th->th_cksum;
 	p->inp_th->th_cksum = 0;
-	if (tcp_do_incksum) {
+	if (current->t_tcp_do_incksum) {
 		tmp = tcp_cksum((struct ip *)p->inp_ih, p->inp_ip_payload_len);
 		if (cksum != tmp) {
-			tcpstat.tcps_rcvbadsum++;
-			return IN_DROP;
+			counter64_inc(&tcpstat.tcps_rcvbadsum);
+			if (current->t_tcp_do_incksum > 1) {
+				return IN_DROP;
+			}
 		}
 	}
 	p->inp_th->th_cksum = cksum;
 	if (p->inp_th_len < sizeof(*p->inp_th)) {
-		tcpstat.tcps_rcvbadoff++;
+		counter64_inc(&tcpstat.tcps_rcvbadoff);
 		return IN_DROP;
 	}
 	return IN_OK;
@@ -164,7 +166,7 @@ icmp4_in(struct inet_parser *p)
 	int ih_len, type, code;
 
 	if (p->inp_rem < sizeof(struct icmp4_hdr)) {
-		icmpstat.icps_tooshort++;
+		counter64_inc(&icmpstat.icps_tooshort);
 		return IN_DROP;
 	}
 	p->inp_icp = (struct icmp4_hdr *)p->inp_cur;
@@ -174,7 +176,7 @@ icmp4_in(struct inet_parser *p)
 	if (type > ICMP_MAXTYPE) {
 		return IN_DROP;
 	}
-	icmpstat.icps_inhist[type]++;
+	counter64_inc(icmpstat.icps_inhist + type);
 	switch (type) {
 	case ICMP_UNREACH:
 		switch (code) {
@@ -196,34 +198,34 @@ icmp4_in(struct inet_parser *p)
 			p->inp_errnum = EMSGSIZE;
 			break;
 		default:
-			icmpstat.icps_badcode++;
+			counter64_inc(&icmpstat.icps_badcode);;
 			return IN_DROP;
 		}
 		break;
 	case ICMP_TIMXCEED:
 		if (code > 1) {
-			icmpstat.icps_badcode++;
+			counter64_inc(&icmpstat.icps_badcode);
 			return IN_DROP;
 		}
 		// TODO:
 		break;
 	case ICMP_PARAMPROB:
 		if (code > 1) {
-			icmpstat.icps_badcode++;
+			counter64_inc(&icmpstat.icps_badcode);
 			return IN_DROP;
 		}
 		p->inp_errnum = ENOPROTOOPT;
 		break;
 	case ICMP_SOURCEQUENCH:
 		if (code) {
-			icmpstat.icps_badcode++;
+			counter64_inc(&icmpstat.icps_badcode);
 			return IN_DROP;
 		}
 		// TODO:
 		break;
 	case ICMP_REDIRECT:
 		if (code > 3) {
-			icmpstat.icps_badcode++;
+			counter64_inc(&icmpstat.icps_badcode);
 			return IN_DROP;
 		}
 		// TODO:
@@ -234,13 +236,13 @@ icmp4_in(struct inet_parser *p)
 	p->inp_emb_ih = NULL;
 	p->inp_emb_th = NULL;
 	if (p->inp_rem < sizeof(*p->inp_emb_ih)) {
-		icmpstat.icps_badlen++;
+		counter64_inc(&icmpstat.icps_badlen);
 		return IN_DROP;
 	}
 	p->inp_emb_ih = (struct ip4_hdr *)p->inp_cur;
 	ih_len = IP4_HDR_LEN(p->inp_emb_ih->ih_ver_ihl);
 	if (ih_len < sizeof(*p->inp_emb_ih)) {
-		icmpstat.icps_badlen++;
+		counter64_inc(&icmpstat.icps_badlen);
 		return IN_DROP;
 	}
 	SHIFT(p, ih_len);
@@ -248,21 +250,21 @@ icmp4_in(struct inet_parser *p)
 	switch (p->inp_emb_ipproto) {
 	case IPPROTO_UDP:
 		if (p->inp_rem < sizeof(*p->inp_emb_uh)) {
-			icmpstat.icps_badlen++;
+			counter64_inc(&icmpstat.icps_badlen);
 			return IN_DROP;
 		}
 		p->inp_emb_uh = (struct udp_hdr *)p->inp_cur;
 		return IN_OK;
 	case IPPROTO_TCP:
 		if (p->inp_rem < sizeof(*p->inp_emb_th)) {
-			icmpstat.icps_badlen++;
+			counter64_inc(&icmpstat.icps_badlen);
 			return IN_BYPASS;
 		}
 		p->inp_emb_th = (struct tcp_hdr *)p->inp_cur;
 		return IN_OK;
 	case IPPROTO_ICMP:
 		if (p->inp_rem < sizeof(*p->inp_emb_icp)) {
-			icmpstat.icps_badlen++;
+			counter64_inc(&icmpstat.icps_badlen);
 			return IN_DROP;
 		}
 		p->inp_emb_icp = (struct icmp4_hdr *)p->inp_cur;
@@ -277,10 +279,10 @@ ip_in(struct inet_parser *p)
 {
 	int rc, tmp, total_len, cksum;
 
-	ipstat.ips_total++;
-	ipstat.ips_delivered++;
+	counter64_inc(&ipstat.ips_total);
+	counter64_inc(&ipstat.ips_delivered);
 	if (p->inp_rem < sizeof(struct ip4_hdr)) {
-		ipstat.ips_toosmall++;
+		counter64_inc(&ipstat.ips_toosmall);
 		return IN_DROP;
 	}
 	p->inp_ih = (struct ip4_hdr *)(p->inp_eh + 1);
@@ -291,45 +293,47 @@ ip_in(struct inet_parser *p)
 	//	return IN_BYPASS;
 	//}
 	if (p->inp_ih->ih_frag_off & IP4_FRAG_MASK) {
-		ipstat.ips_fragments++;
-		ipstat.ips_fragdropped++;
+		counter64_inc(&ipstat.ips_fragments);
+		counter64_inc(&ipstat.ips_fragdropped);
 		return IN_BYPASS;
 	}
 	p->inp_ih_len = IP4_HDR_LEN(p->inp_ih->ih_ver_ihl);
 	if (p->inp_ih_len < sizeof(*p->inp_ih)) {
-		ipstat.ips_badhlen++;
+		counter64_inc(&ipstat.ips_badhlen);
 		return IN_DROP;
 	}
 	if (p->inp_rem < p->inp_ih_len) {
-		ipstat.ips_badhlen++;
+		counter64_inc(&ipstat.ips_badhlen);
 		return IN_DROP;
 	}
 	SHIFT(p, p->inp_ih_len);
 	total_len = ntohs(p->inp_ih->ih_total_len);
 	if (total_len < p->inp_ih_len) {
-		ipstat.ips_badlen++;
+		counter64_inc(&ipstat.ips_badlen);
 		return IN_DROP;
 	}
 	p->inp_ip_payload_len = total_len - p->inp_ih_len;
 	if (p->inp_ip_payload_len > p->inp_rem) {
-		ipstat.ips_tooshort++;
+		counter64_inc(&ipstat.ips_tooshort);
 		return IN_DROP;
 	}
 	p->inp_ipproto = p->inp_ih->ih_proto;
 	cksum = p->inp_ih->ih_cksum;
 	p->inp_ih->ih_cksum = 0;
-	if (ip_do_incksum) {
+	if (current->t_ip_do_incksum) {
 		tmp = ip_cksum((struct ip *)p->inp_ih);
 		if (tmp != cksum) {
-			ipstat.ips_badsum++;
-			return IN_DROP;
+			counter64_inc(&ipstat.ips_badsum);
+			if (current->t_ip_do_incksum > 1) {
+				return IN_DROP;
+			}
 		}
 	}
 	p->inp_ih->ih_cksum = cksum;
 	switch (p->inp_ipproto) {
 	case IPPROTO_UDP:
 		if (p->inp_rem < sizeof(struct udp_hdr)) {
-			udpstat.udps_badlen++;
+			counter64_inc(&udpstat.udps_badlen);
 			return IN_DROP;
 		}
 		p->inp_uh = (struct udp_hdr *)p->inp_cur;
@@ -342,7 +346,7 @@ ip_in(struct inet_parser *p)
 		rc = icmp4_in(p);
 		return rc;
 	default:
-		ipstat.ips_noproto++;
+		counter64_inc(&ipstat.ips_noproto);
 		rc = IN_BYPASS;
 		break;
 	}

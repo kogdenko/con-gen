@@ -36,19 +36,18 @@
 #include "udp_var.h"
 #include "../gbtcp/list.h"
 
-static DLIST_HEAD(somhead);
-
 static struct socket *
 somalloc()
 {
 	struct socket *so;
-	if (dlist_is_empty(&somhead)) {
+
+	if (dlist_is_empty(&current->t_so_pool)) {
 		so = malloc(sizeof(*so));
 		if (so == NULL) {
 			return NULL;
 		}
 	} else {
-		so = DLIST_FIRST(&somhead, struct socket, inp_list);
+		so = DLIST_FIRST(&current->t_so_pool, struct socket, inp_list);
 		DLIST_REMOVE(so, inp_list);
 	}
 	so->so_head = 0;
@@ -69,7 +68,8 @@ somalloc()
 static void
 somfree(struct socket *so)
 {
-	DLIST_INSERT_HEAD(&somhead, so, inp_list);
+	assert(!(so->so_state & SS_ISATTACHED));
+	DLIST_INSERT_HEAD(&current->t_so_pool, so, inp_list);
 }
 
 /*
@@ -563,13 +563,8 @@ void
 sowakeup(struct socket *so,  short events,  struct sockaddr_in *addr,
 	void *dat, int len)
 {
-//	if (so->so_state & SS_CANTRCVMORE) {
-//		events &= ~POLLIN;
-//	}
-//	if (so->so_state & SS_CANTSENDMORE) {
-//		events &= ~POLLOUT;
-//	}
-	if (events && so->so_userfn != NULL) {
+	assert(events);
+	if (so->so_userfn != NULL) {
 		if (so->so_state & SS_ISPROCESSING) {
 			so->so_events |= events;
 		} else {
@@ -666,12 +661,10 @@ struct sockbuf_chunk {
 #define sbchspace(ch) \
 	(SBCHUNK_DATASIZE - ((ch)->sbc_len + (ch)->sbc_off))
 
-static DLIST_HEAD(sbchhead);
-
 static void
 sbchfree(struct sockbuf_chunk *ch)
 {
-	DLIST_INSERT_HEAD(&sbchhead, ch, sbc_list);
+	DLIST_INSERT_HEAD(&current->t_sob_pool, ch, sbc_list);
 }
 
 static struct sockbuf_chunk *
@@ -679,13 +672,14 @@ sbchalloc(struct sockbuf *sb)
 {
 	struct sockbuf_chunk *ch;
 
-	if (dlist_is_empty(&sbchhead)) {
+	if (dlist_is_empty(&current->t_sob_pool)) {
 		ch = malloc(SBCHUNK_SIZE);
 		if (ch == NULL) {
 			return NULL;
 		}
 	} else {
-		ch = DLIST_FIRST(&sbchhead, struct sockbuf_chunk, sbc_list);
+		ch = DLIST_FIRST(&current->t_sob_pool,
+		                 struct sockbuf_chunk, sbc_list);
 		DLIST_REMOVE(ch, sbc_list);
 	}
 	ch->sbc_len = 0;

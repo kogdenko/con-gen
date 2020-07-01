@@ -43,11 +43,6 @@
  * IP initialization: fill in IP protocol switch table.
  * All protocols not implemented in kernel go to raw IP protocol handler.
  */
-void
-ip_init()
-{
-	ip_id = (nanosec & 0xffff);
-}
 
 /*
  * Ip input routine.  Checksum and byte swap header.  If fragmented
@@ -60,31 +55,33 @@ ip_input(struct ip *ip, int len, int eth_flags)
 	uint32_t ia;
 	int hlen;
 
-	ipstat.ips_total++;
+	counter64_inc(&ipstat.ips_total);
 	if (len < sizeof(struct ip)) {
-		ipstat.ips_toosmall++;
+		counter64_inc(&ipstat.ips_toosmall);
 		return;
 	}
 	if (ip->ip_v != IPVERSION) {
-		ipstat.ips_badvers++;
+		counter64_inc(&ipstat.ips_badvers);
 		return;
 	}
 	hlen = ip->ip_hl << 2;
 	if (hlen < sizeof(struct ip)) {	/* minimum header length */
-		ipstat.ips_badhlen++;
+		counter64_inc(&ipstat.ips_badhlen);
 		return;
 	}
 	if (hlen > len) {
-		ipstat.ips_badhlen++;
+		counter64_inc(&ipstat.ips_badhlen);
 		return;
 	}
 	ip_sum = ip->ip_sum;
 	ip->ip_sum = 0;
-	if (ip_do_incksum) {
+	if (current->t_ip_do_incksum) {
 		ip->ip_sum = ip_cksum(ip);
 		if (ip->ip_sum != ip_sum) {
-			ipstat.ips_badsum++;
-			return;
+			counter64_inc(&ipstat.ips_badsum);
+			if (current->t_ip_do_incksum) {
+				return;
+			}
 		}
 	}
 
@@ -93,7 +90,7 @@ ip_input(struct ip *ip, int len, int eth_flags)
 	 */
 	NTOHS(ip->ip_len);
 	if (ip->ip_len < hlen) {
-		ipstat.ips_badlen++;
+		counter64_inc(&ipstat.ips_badlen);
 		return;
 	}
 	NTOHS(ip->ip_id);
@@ -105,14 +102,15 @@ ip_input(struct ip *ip, int len, int eth_flags)
 	 * Drop packet if shorter than we expect.
 	 */
 	if (len < ip->ip_len) {
-		ipstat.ips_tooshort++;
+		counter64_inc(&ipstat.ips_tooshort);
 		return;
 	}
 
 	/*
 	 * Check our list of addresses, to see if the packet is for us.
 	 */
-	for (ia = ip_laddr_min; ia <= ip_laddr_max; ++ia) {
+	for (ia = current->t_ip_laddr_min;
+	     ia <= current->t_ip_laddr_max; ++ia) {
 		if (ia == ntohl(ip->ip_dst.s_addr)) {
 			goto ours;
 		}
@@ -126,11 +124,11 @@ ip_input(struct ip *ip, int len, int eth_flags)
 
 ours:
 	if (ip->ip_off &~ IP_DF) {
-		ipstat.ips_fragments++;
+		counter64_inc(&ipstat.ips_fragments);
 		return;
 	}
 	ip->ip_len -= hlen;
-	ipstat.ips_delivered++;
+	counter64_inc(&ipstat.ips_delivered);
 	switch (ip->ip_p) {
 	case IPPROTO_TCP:
 		tcp_input(ip, hlen, eth_flags);

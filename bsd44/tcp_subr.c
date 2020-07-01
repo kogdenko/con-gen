@@ -42,11 +42,6 @@
 #include "tcp_var.h"
 #include "if_ether.h"
 
-/* patchable/settable parameters for tcp */
-int tcp_rttdflt = TCPTV_SRTTDFLT / PR_SLOWHZ;
-int tcp_do_wscale = 1;
-int tcp_do_timestamps = 1;
-
 /*
  * Create template to be used to send tcp packets on a connection.
  * Call after host entry created, allocates an mbuf and fills
@@ -153,10 +148,10 @@ tcp_attach(struct socket *so)
 	memset(tp, 0, sizeof(*tp));
 	tp->t_maxseg = TCP_MSS;
 	tp->t_flags = 0;
-	if (tcp_do_wscale) {
+	if (current->t_tcp_do_wscale) {
 		tp->t_flags |= TF_REQ_SCALE;
 	}
-	if (tcp_do_timestamps) {
+	if (current->t_tcp_do_timestamps) {
 		tp->t_flags |= TF_REQ_TSTMP;
 	}
 	/*
@@ -165,7 +160,7 @@ tcp_attach(struct socket *so)
 	 * reasonable initial retransmit time.
 	 */
 	tp->t_srtt = TCPTV_SRTTBASE;
-	tp->t_rttvar = tcp_rttdflt * PR_SLOWHZ << 2;
+	tp->t_rttvar = current->t_tcp_rttdflt * PR_SLOWHZ << 2;
 	TCPT_RANGESET(tp->t_rxtcur, 
 	    ((TCPTV_SRTTBASE >> 2) + (TCPTV_SRTTDFLT << 2)) >> 1,
 	    TCPTV_MIN, TCPTV_REXMTMAX);
@@ -188,9 +183,9 @@ tcp_drop(struct tcpcb *tp, int e)
 	if (TCPS_HAVERCVDSYN(tp->t_state)) {
 		tp->t_state = TCPS_CLOSED;
 		tcp_output(tp);
-		tcpstat.tcps_drops++;
+		counter64_inc(&tcpstat.tcps_drops);
 	} else {
-		tcpstat.tcps_conndrops++;
+		counter64_inc(&tcpstat.tcps_conndrops);
 	}
 	if (e == ETIMEDOUT && tp->t_softerror) {
 		e = tp->t_softerror;
@@ -216,7 +211,7 @@ tcp_close(struct tcpcb *tp)
 	soisdisconnected(so);
 	/* clobber input pcb cache if we're closing the cached connection */
 	in_pcbdetach(so);
-	tcpstat.tcps_closed++;
+	counter64_inc(&tcpstat.tcps_closed);
 	return NULL;
 }
 

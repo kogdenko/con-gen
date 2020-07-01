@@ -1,50 +1,39 @@
 #include "./bsd44/socket.h"
-//#include "./bsd44/tcp_var.h"
-//#include "./bsd44/udp_var.h"
-//#include "./bsd44/icmp_var.h"
 #include "./bsd44/if_ether.h"
 #include "./bsd44/ip.h"
 #include "./gbtcp/timer.h"
+#include "global.h"
 #include "netstat.h"
 #include <getopt.h>
-#include <pthread.h>
-#ifndef __linux__
-#include <pthread_np.h>
-#endif
-
-int nflag = 0;
-int concurrency = 1;
 
 static int Nflag;
-static int burst_size = 256;
 static struct timer report_timer;
 static uint64_t report_time;
 static int report_bytes_flag;
-int if_mtu = 552;
-uint64_t tsc_hz;
-uint64_t tsc_mhz;
-uint64_t nanosec;
-uint64_t tsc;
-uint64_t if_ibytes;
-uint64_t if_ipackets;
-uint64_t if_obytes;
-uint64_t if_opackets;
-uint64_t if_imcasts;
+static char http_request[1500];
+static char http_reply[1500];
+static int http_request_len;
+static int http_reply_len;
 
-uint32_t tcp_now;		/* for RFC 1323 timestamps */
-static uint64_t tcp_nowage;
+counter64_t if_ibytes;
+counter64_t if_ipackets;
+counter64_t if_obytes;
+counter64_t if_opackets;
+counter64_t if_imcasts;
+
+static uint64_t tsc_mhz;
+
+int n_counters = 1;
+
+struct thread threads[N_THREADS_MAX];
+int n_threads;
+__thread struct thread *current;
 
 void bsd_eth_in(void *, int);
 void bsd_flush();
 void bsd_server_listen(int);
 void bsd_client_connect();
 uint32_t bsd_socket_hash(struct dlist *);
-
-void toy_eth_in(void *, int);
-void toy_flush();
-void toy_server_listen(int);
-void toy_client_connect();
-uint32_t toy_socket_hash(struct dlist *);
 
 void toy_eth_in(void *, int);
 void toy_flush();
@@ -95,97 +84,8 @@ rdtsc()
 	return tsc.u_64;
 }
 
-static void
-sighandler(int signum)
-{
-	done = 1;
-}
-
-
-static void
-rx()
-{
-	int i, j, n;
-	void *buf;
-	struct netmap_slot *slot;
-	struct netmap_ring *rxr;
-
-	for (i = nmd->first_rx_ring; i <= nmd->last_rx_ring; ++i) {
-		rxr = NETMAP_RXRING(nmd->nifp, i);
-		n = nm_ring_space(rxr);
-		if (n > burst_size) {
-			n = burst_size;
-		}
-		for (j = 0; j < n; ++j) {
-			DEV_PREFETCH(rxr);
-			slot = rxr->slot + rxr->cur;
-			buf = NETMAP_BUF(rxr, slot->buf_idx);
-			if (slot->len >= 14) {
-				if (use_toy) {
-					toy_eth_in(buf, slot->len);
-				} else {
-					bsd_eth_in(buf, slot->len);
-				}
-			}
-			rxr->head = rxr->cur = nm_ring_next(rxr, rxr->cur);
-		}
-	}
-}
-
-void
-process_events()
-{
-	int rc;
-	uint64_t t;
-	char buf[32];
-	struct pollfd pfds[2];
-
-	pfds[0].fd = nmd->fd;
-	pfds[0].events = POLLIN;
-	if (tx_full) {
-		pfds[0].events |= POLLOUT;
-	}
-	pfds[1].fd = STDIN_FILENO;
-	pfds[1].events = POLLIN;
-	poll(pfds, 2, 10);
-	t = rdtsc();
-	if (t > tsc) {
-		tsc = t;
-		nanosec = 1000 * tsc / tsc_mhz;
-		while (nanosec >= tcp_nowage + NANOSECONDS_SECOND/PR_SLOWHZ) {
-			tcp_now++;
-			tcp_nowage += NANOSECONDS_SECOND/PR_SLOWHZ;
-		}
-	}
-	check_timers();
-	if (pfds[0].revents & POLLIN) {
-		rx();
-	}
-	if (pfds[0].revents & POLLOUT) {
-		tx_full = 0;
-	}
-	if (use_toy) {
-		toy_flush();
-	} else {
-		bsd_flush();
-	}
-	if (pfds[1].revents & POLLIN) {
-		rc = read(STDOUT_FILENO, buf, sizeof(buf));
-		if (rc > 1) {
-			switch (buf[0]) {
-			case 's':
-				pr_stats(verbose);
-				break;
-			case 'c':
-				pr_sockets();
-				break;
-			}
-		}
-	}
-}
-
 static int
-iprange_scanf(uint32_t *pmin, uint32_t *pmax, const char *s)
+scan_ip_range(uint32_t *pmin, uint32_t *pmax, const char *s)
 {
 	char *p;
 	int rc;
@@ -240,55 +140,13 @@ set_affinity(int cpu_id)
 	return 0;
 }
 
-int
-init(const char *ifname)
-{
-	int i, rc, len;
-	uint64_t t;
-	char nbuf[IFNAMSIZ + 16];
-
-	srand(getpid() ^ time(NULL));
-	dlist_init(&so_txq);
-	len = strlen(ifname);
-	if (len >= IFNAMSIZ) {
-		return EINVAL;
-	}
-	snprintf(nbuf, sizeof(nbuf), "netmap:%s", ifname);
-	nmd = nm_open(nbuf, NULL, 0, NULL);
-	if (nmd == NULL) {
-		rc = errno;
-		fprintf(stderr, "nm_open('%s') failed (%s)\n",
-		        nbuf, strerror(rc));
-		return rc;
-	}
-	t = rdtsc();
-	usleep(10000);
-	tsc = rdtsc();
-	tsc_hz = (tsc - t) * 100;
-	tsc_mhz = tsc_hz / 1000000;
-	assert(tsc_hz);
-	nanosec = 1000 * tsc / tsc_mhz;
-	tcp_now = 1;
-	tcp_nowage = nanosec;
-	timer_mod_init();
-	n_if_addrs = ip_laddr_max - ip_laddr_min + 1;
-	assert(n_if_addrs > 0);
-	if (n_if_addrs > 100) {
-		n_if_addrs = 100;
-	}
-	if_addrs = xmalloc(n_if_addrs * sizeof(struct if_addr));
-	for (i = 0; i < n_if_addrs; ++i) {
-		ifaddr_init(if_addrs + i);
-	}
-	htable_init(&in_htable, 1024,
-	            use_toy ? toy_socket_hash : bsd_socket_hash);
-	return 0;
-}
-
 static void
-report(struct timer *timer)
+print_report(struct timer *timer)
 {
 	static int n;
+	uint64_t new_ipackets, new_ibytes;
+	uint64_t new_opackets, new_obytes;
+	uint64_t new_closed, new_sndrexmitpack;
 	static uint64_t old_ipackets, old_ibytes;
 	static uint64_t old_opackets, old_obytes;
 	static uint64_t old_closed, old_sndrexmitpack;
@@ -311,20 +169,29 @@ report(struct timer *timer)
 	if (n == 20) {
 		n = 0;
 	}
-	dt = (double)(nanosec - report_time) / NANOSECONDS_SECOND;
-	report_time = nanosec;
-	ipps = (if_ipackets - old_ipackets) / dt;
-	old_ipackets = if_ipackets;
-	ibps = (if_ibytes - old_ibytes) / dt;
-	old_ibytes = if_ibytes;
-	opps = (if_opackets - old_opackets) / dt;
-	old_opackets = if_opackets;
-	obps = (if_obytes - old_obytes) / dt;
-	old_obytes = if_obytes;
-	cps = (tcpstat.tcps_closed - old_closed) / dt;
-	old_closed = tcpstat.tcps_closed;
-	rxmtps = (tcpstat.tcps_sndrexmitpack - old_sndrexmitpack) / dt;
-	old_sndrexmitpack = tcpstat.tcps_sndrexmitpack;
+	dt = (double)(current->t_time - report_time) / NANOSECONDS_SECOND;
+	report_time = current->t_time;
+	new_ipackets = counter64_get(&if_ipackets);
+	new_opackets = counter64_get(&if_opackets);
+	new_ibytes = counter64_get(&if_ibytes);
+	new_obytes = counter64_get(&if_obytes);
+	new_closed = counter64_get(&tcpstat.tcps_closed);
+	//dbg("closed: 0=%"PRIu64", 1=%"PRIu64,
+	//	tcpstat.tcps_closed.cnt_per_thread[0],
+	//	tcpstat.tcps_closed.cnt_per_thread[1]);
+	new_sndrexmitpack = counter64_get(&tcpstat.tcps_sndrexmitpack);
+	ipps = (new_ipackets - old_ipackets) / dt;
+	opps = (new_opackets - old_opackets) / dt;
+	ibps = (new_ibytes - old_ibytes) / dt;
+	obps = (new_obytes - old_obytes) / dt;
+	cps = (new_closed - old_closed) / dt;
+	rxmtps = (new_sndrexmitpack - old_sndrexmitpack) / dt;
+	old_ipackets = new_ipackets;
+	old_ibytes = new_ibytes;
+	old_opackets = new_opackets;
+	old_obytes = new_obytes;
+	old_closed = new_closed;
+	old_sndrexmitpack = new_sndrexmitpack;
 	norm(cps_b, cps, Nflag);
 	norm(ipps_b, ipps, Nflag);
 	norm(ibps_b, ibps, Nflag);
@@ -340,7 +207,144 @@ report(struct timer *timer)
 		printf("%-10s", obps_b);
 	}
 	printf("%s\n", rxmtps_b);
-	timer_set(timer, NANOSECONDS_SECOND, report);
+	timer_set(timer, NANOSECONDS_SECOND, print_report);
+}
+
+static void
+sighandler(int signum)
+{
+	int i;
+
+	for (i = 0; i < n_threads; ++i) {
+		threads[i].t_done = 1;
+	}
+}
+
+static void
+thread_process_rx()
+{
+	int i, j, n;
+	void *buf;
+	struct netmap_slot *slot;
+	struct netmap_ring *rxr;
+
+	for (i = current->t_nmd->first_rx_ring;
+	     i <= current->t_nmd->last_rx_ring; ++i) {
+		rxr = NETMAP_RXRING(current->t_nmd->nifp, i);
+		n = nm_ring_space(rxr);
+		if (n > current->t_burst_size) {
+			n = current->t_burst_size;
+		}
+		for (j = 0; j < n; ++j) {
+			DEV_PREFETCH(rxr);
+			slot = rxr->slot + rxr->cur;
+			buf = NETMAP_BUF(rxr, slot->buf_idx);
+			if (slot->len >= 14) {
+				if (current->t_toy) {
+					toy_eth_in(buf, slot->len);
+				} else {
+					bsd_eth_in(buf, slot->len);
+				}
+			}
+			rxr->head = rxr->cur = nm_ring_next(rxr, rxr->cur);
+		}
+	}
+}
+
+void
+thread_process()
+{
+	int rc, n_pfds;
+	uint64_t t, age;
+	char buf[32];
+	struct pollfd pfds[2];
+
+	pfds[0].fd = current->t_nmd->fd;
+	pfds[0].events = POLLIN;
+	if (current->t_tx_throttled) {
+		pfds[0].events |= POLLOUT;
+	}
+	n_pfds = 1;
+	if (current->t_id == 0) {
+		pfds[1].fd = STDIN_FILENO;
+		pfds[1].events = POLLIN;
+		n_pfds = 2;
+	}
+	poll(pfds, n_pfds, 10);
+	t = rdtsc();
+	if (t > current->t_tsc) {
+		current->t_tsc = t;
+		current->t_time = 1000llu * current->t_tsc / tsc_mhz;
+		age = current->t_tcp_nowage + NANOSECONDS_SECOND/PR_SLOWHZ;
+		if (current->t_time >= age) {
+			current->t_tcp_now++;
+			current->t_tcp_nowage += NANOSECONDS_SECOND/PR_SLOWHZ;
+		}
+	}
+	if (pfds[0].revents & POLLIN) {
+		thread_process_rx();
+	}
+	check_timers();
+	if (pfds[0].revents & POLLOUT) {
+		current->t_tx_throttled = 0;
+	}
+	if (current->t_toy) {
+		toy_flush();
+	} else {
+		bsd_flush();
+	}
+	if (current->t_id == 0 && pfds[1].revents & POLLIN) {
+		rc = read(STDOUT_FILENO, buf, sizeof(buf));
+		if (rc > 1) {
+			switch (buf[0]) {
+			case 's':
+				print_stats(verbose);
+				break;
+			case 'c':
+				print_sockets();
+				break;
+			}
+		}
+	}
+}
+
+static void *
+thread_routine(void *udata)
+{
+	int ipproto;
+
+	current = udata;
+	if (current->t_affinity >= 0) {
+		set_affinity(current->t_affinity);
+	}
+	current->t_tsc = rdtsc();
+	current->t_time = 1000 * current->t_tsc / tsc_mhz;
+	current->t_tcp_now = 1;
+	current->t_tcp_nowage = current->t_time;
+	init_timers();
+	if (current->t_id == 0) {
+		report_time = current->t_time;
+		timer_init(&report_timer);
+		timer_set(&report_timer, NANOSECONDS_SECOND, print_report);
+	}
+	if (current->t_Lflag || current->t_udp) {
+		ipproto = current->t_udp ? IPPROTO_UDP: IPPROTO_TCP;
+		if (current->t_toy) {
+			toy_server_listen(ipproto);
+		} else {
+			bsd_server_listen(ipproto);
+		}
+	} else {
+		if (current->t_toy) {
+			toy_client_connect();
+		} else {
+			bsd_client_connect();
+		}
+	}
+	while (!current->t_done) {
+		thread_process();
+	}
+	return 0;
 }
 
 static void
@@ -387,6 +391,8 @@ static struct option long_options[] = {
 	{ "ip-out-cksum", optional_argument, 0, 0 },
 	{ "tcp-in-cksum", optional_argument, 0, 0 },
 	{ "tcp-out-cksum", optional_argument, 0, 0 },
+	{ "in-cksum", optional_argument, 0, 0 },
+	{ "out-cksum", optional_argument, 0, 0 },
 	{ "tcp-wscale", optional_argument, 0, 0 },
 	{ "tcp-timestamps", optional_argument, 0, 0 },
 	{ "tcp-fin-timeout", required_argument, 0, 0 },
@@ -395,22 +401,65 @@ static struct option long_options[] = {
 	{ 0, 0, 0, 0 }
 };
 
-int
-main(int argc, char **argv)
+static int
+thread_init(struct thread *t, struct thread *pt, int argc, char **argv)
 {
-	int rc, opt, ipproto, option_index, udp_flag;
-	long long optval;
-	const char *ifname;
-	char hostname[64];
+	int i, rc, opt, option_index;
 	const char *optname;
+	char ifname[IFNAMSIZ + 7];
+	long long optval;
 
-	pflag_port = htons(80);
-	udp_flag = 0;
-	ifname = NULL;
-	iprange_scanf(&ip_laddr_min, &ip_laddr_max, "10.0.0.1");
-	iprange_scanf(&ip_faddr_min, &ip_faddr_max, "10.1.0.1");
-	ether_scanf(eth_laddr, "00:00:00:00:00:00");
-	ether_scanf(eth_faddr, "ff:ff:ff:ff:ff:ff");
+	t->t_id = t - threads;
+	t->t_tcp_rttdflt = TCPTV_SRTTDFLT / PR_SLOWHZ;
+	dlist_init(&t->t_so_txq);
+	dlist_init(&t->t_so_pool);
+	dlist_init(&t->t_sob_pool);
+	if (pt == NULL) {
+		t->t_ip_do_incksum = 2;
+		t->t_ip_do_outcksum = 2;
+		t->t_tcp_do_incksum = 2;
+		t->t_tcp_do_outcksum = 2;
+		t->t_tcp_do_wscale = 1;
+		t->t_tcp_do_timestamps = 1;
+		t->t_tcp_fintimo = 60 * NANOSECONDS_SECOND;
+		t->t_port = htons(80);
+		t->t_mtu = 522;
+		t->t_burst_size = 256;
+		t->t_concurrency = 1;
+		ether_scanf(t->t_eth_laddr, "00:00:00:00:00:00");
+		ether_scanf(t->t_eth_faddr, "ff:ff:ff:ff:ff:ff");
+		scan_ip_range(&t->t_ip_laddr_min,
+		              &t->t_ip_laddr_max, "10.0.0.1");
+		scan_ip_range(&t->t_ip_faddr_min,
+		              &t->t_ip_faddr_max, "10.1.0.1");
+		t->t_affinity = -1;
+	} else {
+		t->t_toy = pt->t_toy;
+		t->t_Lflag = pt->t_Lflag;
+		t->t_so_debug = pt->t_so_debug;
+		t->t_ip_do_incksum = pt->t_ip_do_incksum;
+		t->t_ip_do_outcksum = pt->t_ip_do_outcksum;
+		t->t_tcp_do_incksum = pt->t_tcp_do_incksum;
+		t->t_tcp_do_outcksum = pt->t_tcp_do_outcksum;
+		t->t_tcp_do_wscale = pt->t_tcp_do_wscale;
+		t->t_tcp_do_timestamps = pt->t_tcp_do_wscale;
+		t->t_tcp_twtimo = pt->t_tcp_twtimo;
+		t->t_tcp_fintimo = pt->t_tcp_fintimo;
+		t->t_nflag = pt->t_nflag;
+		t->t_port = pt->t_port;
+		t->t_mtu = pt->t_mtu;
+		t->t_burst_size = pt->t_burst_size;
+		t->t_concurrency = pt->t_concurrency;
+		memcpy(t->t_eth_laddr, pt->t_eth_laddr, 6);
+		memcpy(t->t_eth_faddr, pt->t_eth_faddr, 6);
+		t->t_ip_laddr_min = pt->t_ip_laddr_min;
+		t->t_ip_laddr_max = pt->t_ip_laddr_max;
+		t->t_ip_faddr_min = pt->t_ip_faddr_min;
+		t->t_ip_faddr_max = pt->t_ip_faddr_max;
+		t->t_udp = pt->t_udp;
+		t->t_affinity = pt->t_affinity;
+	}
+	ifname[0] = '\0';
 	while ((opt = getopt_long(argc, argv,
 	                          "hvi:s:d:S:D:a:n:b:c:p:NL",
 	                          long_options, &option_index)) != -1) {
@@ -419,55 +468,71 @@ main(int argc, char **argv)
 		case 0:
 			optname = long_options[option_index].name;
 			if (!strcmp(optname, "udp")) {
-				udp_flag = 1;
+				t->t_udp = 1;
 			} else if (!strcmp(optname, "toy")) {
-				use_toy = 1;
+				t->t_toy = 1;
 			} else if (!strcmp(optname, "so-debug")) {
-				so_debug_flag = 1;
+				t->t_so_debug = 1;
 			} else if (!strcmp(optname, "ip-in-cksum")) {
 				if (optarg == NULL) {
-					ip_do_incksum = 1;
+					t->t_ip_do_incksum = 2;
 				} else {
-					ip_do_incksum = optval;
+					t->t_ip_do_incksum = optval;
 				}
 			} else if (!strcmp(optname, "ip-out-cksum")) {
 				if (optarg == NULL) {
-					ip_do_outcksum = 1;
+					t->t_ip_do_outcksum = 1;
 				} else {
-					ip_do_outcksum = optval;
+					t->t_ip_do_outcksum = optval;
 				}
 			} else if (!strcmp(optname, "tcp-in-cksum")) {
 				if (optarg == NULL) {
-					tcp_do_incksum = 1;
+					t->t_tcp_do_incksum = 2;
 				} else {
-					tcp_do_incksum = optval;
+					t->t_tcp_do_incksum = optval;
 				}
 			} else if (!strcmp(optname, "tcp-out-cksum")) {
 				if (optarg == NULL) {
-					tcp_do_outcksum = 1;
+					t->t_tcp_do_outcksum = 1;
 				} else {
-					tcp_do_outcksum = optval;
+					t->t_tcp_do_outcksum = optval;
+				}
+			} else if (!strcmp(optname, "in-cksum")) {
+				if (optarg == NULL) {
+					t->t_ip_do_incksum = 2;
+					t->t_tcp_do_incksum = 2;
+				} else {
+					t->t_ip_do_incksum = optval;
+					t->t_tcp_do_incksum = optval;
+				}
+			} else if (!strcmp(optname, "out-cksum")) {
+				if (optarg == NULL) {
+					t->t_ip_do_outcksum = 1;
+					t->t_tcp_do_outcksum = 1;
+				} else {
+					t->t_ip_do_outcksum = optval;
+					t->t_tcp_do_outcksum = optval;
 				}
 			} else if (!strcmp(optname, "tcp-wscale")) {
 				if (optarg == NULL) {
-					tcp_do_wscale = 1;
+					t->t_tcp_do_wscale = 1;
 				} else {
-					tcp_do_wscale = optval;
+					t->t_tcp_do_wscale = optval;
 				}
 			} else if (!strcmp(optname, "tcp-timestamps")) {
 				if (optarg == NULL) {
-					tcp_do_timestamps = 1;
+					t->t_tcp_do_timestamps = 1;
 				} else {
-					tcp_do_timestamps = optval;
+					t->t_tcp_do_timestamps = optval;
 				}
 			} else if (!strcmp(optname, "tcp-fin-timeout")) {
 				if (optval < 30) {
 					goto err;
 				}
-				tcp_fintimo = optval * NANOSECONDS_SECOND;
+				t->t_tcp_fintimo = optval * NANOSECONDS_SECOND;
 				break;
 			} else if (!strcmp(optname, "tcp-timewait-timeout")) {
-				tcp_twtimo = optval * NANOSECONDS_SECOND;
+				t->t_tcp_twtimo = optval * NANOSECONDS_SECOND;
 				break;
 			} else if (!strcmp(optname, "report-bytes")) {
 				report_bytes_flag = 1;
@@ -475,80 +540,150 @@ main(int argc, char **argv)
 			break;
 		case 'h':
 			usage();
-			return 0;
+			break;
 		case 'v':
 			verbose++;
 			break;
 		case 'i':
-			ifname = optarg;
+			snprintf(ifname, sizeof(ifname), "netmap:%s", optarg);
 			break;
 		case 's':
-			rc = iprange_scanf(&ip_laddr_min, &ip_laddr_max, optarg);
+			rc = scan_ip_range(&t->t_ip_laddr_min,
+			                   &t->t_ip_laddr_max, optarg);
 			if (rc) {
 				goto err;
 			}
 			break;
 		case 'd':
-			rc = iprange_scanf(&ip_faddr_min, &ip_faddr_max, optarg);
+			rc = scan_ip_range(&t->t_ip_faddr_min,
+			                   &t->t_ip_faddr_max, optarg);
 			if (rc) {
 				goto err;
 			}
 			break;
 		case 'S':
-			rc = ether_scanf(eth_laddr, optarg);
+			rc = ether_scanf(t->t_eth_laddr, optarg);
 			if (rc) {
 				goto err;
 			}
 			break;
 		case 'D':
-			rc = ether_scanf(eth_faddr, optarg);
+			rc = ether_scanf(t->t_eth_faddr, optarg);
 			if (rc) {
 				goto err;
 			}
 			break;
 		case 'a':
-			rc = set_affinity(optval);
-			if (rc) {
-				goto err;
-			}
+			t->t_affinity = optval;
 			break;
 		case 'n':
-			nflag = optval;
+			t->t_nflag = optval;
 			break;
 		case 'b':
-			burst_size = strtoul(optarg, NULL, 10);
-			if (!burst_size) {
+			t->t_burst_size = strtoul(optarg, NULL, 10);
+			if (!t->t_burst_size) {
 				goto err;
 			}
 			break;
 		case 'c':
-			concurrency = strtoul(optarg, NULL, 10);
-			if (!concurrency) {
+			t->t_concurrency = strtoul(optarg, NULL, 10);
+			if (!t->t_concurrency) {
 				goto err;
 			}
 			break;
 		case 'p':
-			pflag_port = htons(strtoul(optarg, NULL, 10));
+			t->t_port = htons(strtoul(optarg, NULL, 10));
 			break;
 		case 'N':
 			Nflag = 1;
 			break;
 		case 'L':
-			Lflag = 1;
+			t->t_Lflag = 1;
 			break;
 		default:
 err:
 			fprintf(stderr, "invalid argument '-%c': %s\n",
 			        opt, optarg);
-			return 2;
+			return -EINVAL;
 		}
 	}
-	if (ifname == NULL) {
+	if (ifname[0] == '\0') {
 		usage();
-		return 1;
+		return -EINVAL;
 	}
-	init(ifname);
-	signal(SIGINT, sighandler);
+	t->t_nmd = nm_open(ifname, NULL, 0, NULL);
+	if (t->t_nmd == NULL) {
+		rc = -errno;
+		fprintf(stderr, "nm_open('%s') failed (%s)\n",
+			ifname, strerror(-rc));
+		return rc;
+	}
+	t->t_n_addrs = t->t_ip_laddr_max - t->t_ip_laddr_min + 1;
+	if (t->t_n_addrs > 100) {
+		t->t_n_addrs = 100;
+	}
+	t->t_addrs = xmalloc(t->t_n_addrs * sizeof(struct if_addr));
+	for (i = 0; i < t->t_n_addrs; ++i) {
+		ifaddr_init(t->t_addrs + i);
+	}
+	htable_init(&t->t_in_htable, 65536,
+	            t->t_toy ? toy_socket_hash : bsd_socket_hash);
+	if (t->t_Lflag) {
+		t->t_http = http_reply;
+		t->t_http_len = http_reply_len;
+	} else {
+		t->t_http = http_request;
+		t->t_http_len = http_request_len;
+	}
+	t->t_counters = xmalloc(n_counters * sizeof(uint64_t));
+	memset(t->t_counters, 0, n_counters * sizeof(uint64_t));
+	return 0;
+}
+
+static void
+sleep_compute_hz()
+{
+	uint64_t t, t2, tsc_hz;
+
+	t = rdtsc();
+	usleep(10000);
+	t2 = rdtsc();
+	tsc_hz = (t2 - t) * 100;
+	tsc_mhz = tsc_hz / 1000000;
+	assert(tsc_hz);
+}
+
+static void
+init_counters(counter64_t *a, int n)
+{
+	int i;
+
+	for (i = 0; i < n; ++i) {
+		counter64_init(a + i);
+	}
+}
+
+#define INIT_STAT(s) \
+	init_counters((counter64_t *)&s, sizeof(s)/sizeof(counter64_t))
+
+int
+main(int argc, char **argv)
+{
+	int i, rc, opt_off;
+	char hostname[64];
+	struct thread *t, *pt;
+
+	srand48(getpid() ^ time(NULL));
+	counter64_init(&if_ibytes);
+	counter64_init(&if_ipackets);
+	counter64_init(&if_obytes);
+	counter64_init(&if_opackets);
+	counter64_init(&if_imcasts);
+	INIT_STAT(udpstat);
+	INIT_STAT(tcpstat);
+	INIT_STAT(ipstat);
+	INIT_STAT(icmpstat);
+	sleep_compute_hz();
 	rc = gethostname(hostname, sizeof(hostname));
 	if (rc == -1) {
 		fprintf(stderr, "gethostname() failed (%s)\n",
@@ -557,41 +692,50 @@ err:
 	} else {
 		hostname[sizeof(hostname) - 1] = '\0';
 	}
-	if (Lflag) {
-		http_len = snprintf(http, sizeof(http), 
-			"HTTP/1.0 200 OK\r\n"
-			"Server: con-gen\r\n"
-			"Content-Type: text/html\r\n"
-			"Connection: close\r\n"
-			"Hi\r\n\r\n");
-	} else {
-		http_len = snprintf(http, sizeof(http),
-			"GET / HTTP/1.0\r\n"
-			"Host: %s\r\n"
-			"User-Agent: con-gen\r\n"
-			"\r\n",
-			hostname);
-	}
-	if (Lflag || udp_flag) {
-		ipproto = udp_flag ? IPPROTO_UDP: IPPROTO_TCP;
-		if (use_toy) {
-			toy_server_listen(ipproto);
-		} else {
-			bsd_server_listen(ipproto);
+	http_request_len = snprintf(http_request, sizeof(http_request),
+		"GET / HTTP/1.0\r\n"
+		"Host: %s\r\n"
+		"User-Agent: con-gen\r\n"
+		"\r\n",
+		hostname);	
+	http_reply_len = snprintf(http_reply, sizeof(http_reply), 
+		"HTTP/1.0 200 OK\r\n"
+		"Server: con-gen\r\n"
+		"Content-Type: text/html\r\n"
+		"Connection: close\r\n"
+		"Hi\r\n\r\n");
+	pt = NULL;
+	opt_off = 0;
+	while (opt_off < argc - 1 && n_threads < N_THREADS_MAX) {
+		t = threads + n_threads;
+		rc = thread_init(t, pt, argc - opt_off, argv + opt_off);
+		if (rc) {
+			return EXIT_FAILURE;
 		}
-	} else {
-		if (use_toy) {
-			toy_client_connect();
-		} else {
-			bsd_client_connect();
+		opt_off += (optind - 1);
+		optind = 1;
+		pt = t;
+		n_threads++;
+	}
+	if (n_threads == 0) {
+		usage();
+		return EXIT_FAILURE;
+	}
+	signal(SIGINT, sighandler);
+	for (i = 1; i < n_threads; ++i) {
+		t = threads + i;
+		rc = pthread_create(&t->t_pthread, NULL, thread_routine, t);
+		if (rc) {
+			fprintf(stderr, "pthread_create() failed (%s)\n",
+				strerror(rc));
+			return EXIT_FAILURE;
 		}
 	}
-	report_time = nanosec;
-	timer_init(&report_timer);
-	timer_set(&report_timer, NANOSECONDS_SECOND, report);
-	while (!done) {
-		process_events();
+	thread_routine(threads + 0);
+	for (i = 1; i < n_threads; ++i) {
+		t = threads + i;
+		pthread_join(t->t_pthread, NULL);
 	}
-	pr_stats(verbose);
+	print_stats(verbose);
 	return 0;
 }

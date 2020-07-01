@@ -23,7 +23,7 @@ struct htable_dynamic {
 	struct htable_static htd_tables[2];
 };
 
-#if 0
+#if 1
 typedef struct htable_static htable_t;
 
 #define htable_init htable_static_init

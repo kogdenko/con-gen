@@ -36,12 +36,16 @@ AMD fx8350
 ```
 bsd: ~ 510kcps (4mpps)
 
-## Run several instances
+## Multithread mode
 ```
 ethtool -L eth2 combined 2
 ethtool -K eth2 ntuple on
 ethtool -N eth2 flow-type tcp4 dst-ip 1.1.1.3  action 0
 ethtool -N eth2 flow-type tcp4 dst-ip 1.1.1.4  action 1
-./con-gen -S 00:1b:21:95:69:64 -D 00:1B:21:A6:E5:3C -s 1.1.1.3 -d 1.1.1.2  -a 1 -p 80 -c 1000 -i eth2-0
-./con-gen -S 00:1b:21:95:69:64 -D 00:1B:21:A6:E5:3C -s 1.1.1.4 -d 1.1.1.2  -a 1 -p 80 -c 1000 -i eth2-1
+./con-gen -S 00:1b:21:95:69:64 -D 00:1B:21:A6:E5:3C -s 1.1.1.3 -d 1.1.1.2  -a 1 -p 80 -c 1000 -i eth2-0 -- -s 1.1.1.4  -a 1 -i eth2-1
+```
+
+To delete rule after use:
+```
+ethtool -N eth2 delete 2045
 ```

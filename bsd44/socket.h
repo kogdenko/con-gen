@@ -58,6 +58,8 @@ struct sockbuf {
  * private data and error information.
  */
 struct socket {
+	struct dlist inp_list;
+
 	uint32_t so_options;		/* from socket call, see socket.h */
 	u_char	so_proto;
 	short   so_events;
@@ -69,7 +71,6 @@ struct socket {
 	struct	dlist so_q[2];		/* queue of partial/incoming connections */
 #define so_ql so_q[0]
 
-	struct dlist inp_list;
 	be32_t inp_laddr;
 	be32_t inp_faddr;
 	be16_t inp_lport;

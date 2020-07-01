@@ -1,34 +1,11 @@
 #include "global.h"
 #include "subr.h"
 
-htable_t in_htable;
-int Lflag;
-be16_t pflag_port;
-int so_debug_flag;
-int use_toy;
-int done;
 int verbose;
-int tx_full;
-struct nm_desc *nmd;
-struct dlist so_txq;
-u_char eth_laddr[6];
-u_char eth_faddr[6];
-uint32_t ip_laddr_min;
-uint32_t ip_laddr_max;
-uint32_t ip_faddr_min;
-uint32_t ip_faddr_max;
-struct if_addr *if_addrs;
-int n_if_addrs;
-int ip_do_incksum = 1;
-int ip_do_outcksum = 1;
-int tcp_do_incksum = 1;
-int tcp_do_outcksum = 1;
 struct udpstat udpstat;
 struct tcpstat tcpstat;
 struct ipstat ipstat;
 struct icmpstat icmpstat;
-int http_len;
-char http[1500];
 
 const char *tcpstates[TCP_NSTATES] = {
 	[TCPS_CLOSED] = "CLOSED",
@@ -44,6 +21,26 @@ const char *tcpstates[TCP_NSTATES] = {
 	[TCPS_TIME_WAIT] = "TIME_WAIT",
 };
 
+void
+dbg5(const char *file, u_int line, const char *func, int suppressed,
+     const char *fmt, ...)
+{
+	int len;
+	char buf[BUFSIZ];
+	va_list ap;
+
+	len = snprintf(buf, sizeof(buf), "%-6d: %-20s: %-4d: %-20s: ",
+	               getpid(), file, line, func);
+	va_start(ap, fmt);
+	len += vsnprintf(buf + len, sizeof(buf) - len, fmt, ap);
+	va_end(ap);
+	if (len < sizeof(buf) && suppressed) {
+		snprintf(buf + len, sizeof(buf) - len, " (suppressed %d)",
+		         suppressed);
+	}
+	printf("%s\n", buf);
+}
+
 struct pseudo {
 	be32_t ph_src;
 	be32_t ph_dst;
@@ -51,6 +48,7 @@ struct pseudo {
 	uint8_t ph_proto;
 	be16_t ph_len;
 } __attribute__((packed));
+
 
 static inline uint64_t
 cksum_add(uint64_t sum, uint64_t x)
@@ -179,11 +177,12 @@ not_empty_txr(struct netmap_slot **pslot)
 	int i;
 	struct netmap_ring *txr;
 
-	if (tx_full) {
+	if (current->t_tx_throttled) {
 		return NULL;
 	}
-	for (i = nmd->first_tx_ring; i <= nmd->last_tx_ring; ++i) {
-		txr = NETMAP_TXRING(nmd->nifp, i);
+	for (i = current->t_nmd->first_tx_ring;
+	     i <= current->t_nmd->last_tx_ring; ++i) {
+		txr = NETMAP_TXRING(current->t_nmd->nifp, i);
 		if (!nm_ring_empty(txr)) {
 			if (pslot != NULL) {
 				*pslot = txr->slot + txr->cur;
@@ -192,7 +191,7 @@ not_empty_txr(struct netmap_slot **pslot)
 			return txr;	
 		}
 	}
-	tx_full = 1;
+	current->t_tx_throttled = 1;
 	return NULL;
 }
 
@@ -215,6 +214,25 @@ parse_http(const char *s, int len, u_char *ctx)
 		}
 	}
 	return 0;
+}
+
+void
+counter64_init(counter64_t *c)
+{
+	*c = n_counters++;
+}
+
+uint64_t
+counter64_get(counter64_t *c)
+{
+	int i;
+	uint64_t accum;
+
+	accum = 0;
+	for (i = 0; i < n_threads; ++i) {
+		accum += current->t_counters[*c];
+	}
+	return accum;
 }
 
 void
@@ -262,19 +280,19 @@ alloc_ephemeral_port(uint32_t *laddr, uint16_t *lport)
 	static int ifai, ifan;
 	struct if_addr *ifa;
 
-	for (i = 0; i < n_if_addrs; ++i) {
+	for (i = 0; i < current->t_n_addrs; ++i) {
 		if (ifan >= NEPHEMERAL) {
 			ifan = 0;
 			ifai++;
-			if (ifai == n_if_addrs) {
+			if (ifai == current->t_n_addrs) {
 				ifai = 0;
 			}
 		}
-		ifa = if_addrs + ifai;
+		ifa = current->t_addrs + ifai;
 		ifan++;
 		*lport = ifaddr_alloc_ephemeral_port(ifa);
 		if (*lport) {
-			*laddr = ip_laddr_min + ifai;
+			*laddr = current->t_ip_laddr_min + ifai;
 			return 0;
 		}
 	}
@@ -287,10 +305,10 @@ free_ephemeral_port(uint32_t laddr, uint16_t lport)
 	int ifai;
 	struct if_addr *ifa;
 
-	assert(laddr >= ip_laddr_min);
-	ifai = laddr - ip_laddr_min;
-	assert(ifai < n_if_addrs);
-	ifa = if_addrs + ifai;
+	assert(laddr >= current->t_ip_laddr_min);
+	ifai = laddr - current->t_ip_laddr_min;
+	assert(ifai < current->t_n_addrs);
+	ifa = current->t_addrs + ifai;
 	ifaddr_free_ephemeral_port(ifa, lport);
 }
 
@@ -299,9 +317,9 @@ select_faddr()
 {
 	static int fi;
 
-	if (fi + ip_faddr_min > ip_faddr_max) {
+	if (fi + current->t_ip_faddr_min > current->t_ip_faddr_max) {
 		fi = 0;
 	}
-	return ip_faddr_min + fi++;
+	return current->t_ip_faddr_min + fi++;
 }
 

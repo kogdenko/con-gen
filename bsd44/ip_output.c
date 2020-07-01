@@ -53,17 +53,17 @@ ip_output(struct netmap_ring *txr, struct netmap_slot *m, struct ip *ip)
 	ip->ip_ttl = IPDEFTTL;
 	ip->ip_tos = 0;
 	ip->ip_hl = sizeof(*ip) >> 2;
-	ipstat.ips_localout++;
-	assert((u_short)ip->ip_len <= if_mtu);
+	counter64_inc(&ipstat.ips_localout);
+	assert((u_short)ip->ip_len <= current->t_mtu);
 	ip->ip_len = htons((u_short)ip->ip_len);
 	ip->ip_off = htons((u_short)ip->ip_off);
 	ip->ip_sum = 0;
-	if (ip_do_outcksum) {
+	if (current->t_ip_do_outcksum) {
 		ip->ip_sum = ip_cksum(ip);
 	}
 	eh = ((struct ether_header *)ip) - 1;
 	eh->ether_type = htons(ETHERTYPE_IP);
- 	memcpy(eh->ether_shost, eth_laddr, sizeof(eh->ether_shost));
- 	memcpy(eh->ether_dhost, eth_faddr, sizeof(eh->ether_dhost));
+ 	memcpy(eh->ether_shost, current->t_eth_laddr, sizeof(eh->ether_shost));
+ 	memcpy(eh->ether_dhost, current->t_eth_faddr, sizeof(eh->ether_dhost));
 	ether_output(txr, m);
 }

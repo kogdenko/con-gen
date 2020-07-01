@@ -65,7 +65,7 @@ tcp_connect(struct socket *so, const struct sockaddr_in *nam)
 		tp->request_r_scale++;
 	}
 	soisconnecting(so);
-	tcpstat.tcps_connattempt++;
+	counter64_inc(&tcpstat.tcps_connattempt);
 	tp->t_state = TCPS_SYN_SENT;
 	tcp_setslowtimer(tp, TCPT_KEEP, TCPTV_KEEP_INIT);
 	tcp_sendseqinit(tp, h);
@@ -324,7 +324,7 @@ tcp_sendseqinit(struct tcpcb *tp, uint32_t h)
 
 	/* Must not overlap in 2 minutes (MSL)
 	 * Increment 1 seq at 16 ns (like in Linux) */
-	iss = h + (uint32_t)(nanosec >> 6);
+	iss = h + (uint32_t)(current->t_time >> 6);
 	tp->snd_una = tp->snd_nxt = tp->snd_max = tp->snd_wl2 = iss;
 }
 

@@ -5,45 +5,72 @@
 #include "netstat.h"
 #include "gbtcp/htable.h"
 
-extern int nflag;
-extern int Lflag;
-extern int use_toy;
-extern be16_t pflag_port;
-extern int so_debug_flag;
-extern int done;
-extern int concurrency;
+struct thread {
+	u_char t_id;
+	u_char t_toy;
+	u_char t_done;
+	u_char t_Lflag;
+	u_char t_so_debug;
+	u_char t_ip_do_incksum;
+	u_char t_ip_do_outcksum;
+	u_char t_tcp_do_incksum;
+	u_char t_tcp_do_outcksum;
+	int t_tcp_rttdflt;
+	u_char t_tcp_do_wscale;
+	u_char t_tcp_do_timestamps;
+	u_int t_nflag;
+	be16_t t_port;
+	u_short t_mtu;
+	u_short t_burst_size;
+	u_char t_tx_throttled;
+	struct nm_desc *t_nmd;
+	struct dlist t_so_pool;
+	struct dlist t_so_txq;
+	struct dlist t_sob_pool;
+	int t_n_clients;
+	int t_n_requests;
+	int t_concurrency;
+	uint64_t t_tsc;
+	uint64_t t_time;
+	uint32_t t_tcp_now; /* for RFC 1323 timestamps */
+	uint64_t t_tcp_nowage;
+	uint64_t t_tcp_twtimo;  /* max seg lifetime (hah!) */
+	uint64_t t_tcp_fintimo;
+	u_char t_eth_laddr[6];
+	u_char t_eth_faddr[6];
+	uint32_t t_ip_laddr_min;
+	uint32_t t_ip_laddr_max;
+	uint32_t t_ip_faddr_min;
+	uint32_t t_ip_faddr_max;
+	struct if_addr *t_addrs;
+	int t_n_addrs;
+	char *t_http;
+	int t_http_len;
+	htable_t t_in_htable;
+	void *t_in_binded[EPHEMERAL_MIN];
+	u_char t_udp;
+	int t_affinity;
+	pthread_t t_pthread;
+	uint64_t *t_counters;
+};
+
 extern int verbose;
-extern int tx_full;
-extern struct dlist so_txq;
-extern struct nm_desc *nmd;
-extern u_char eth_laddr[6];
-extern u_char eth_faddr[6]; 
-extern uint32_t ip_laddr_min;
-extern uint32_t ip_laddr_max;
-extern uint32_t ip_faddr_min;
-extern uint32_t ip_faddr_max;
-extern struct if_addr *if_addrs;
-extern int n_if_addrs;
-extern int http_len;
-extern char http[1500];
-extern int ip_do_incksum;
-extern int ip_do_outcksum;
-extern int tcp_do_incksum;
-extern int tcp_do_outcksum;
-extern int if_mtu;
-extern uint64_t if_ibytes;
-extern uint64_t if_ipackets;
-extern uint64_t if_obytes;
-extern uint64_t if_opackets;
-extern uint64_t if_imcasts;
+extern int n_counters;
+
+extern counter64_t if_ibytes;
+extern counter64_t if_ipackets;
+extern counter64_t if_obytes;
+extern counter64_t if_opackets;
+extern counter64_t if_imcasts;
+
+extern int n_threads;
+extern __thread struct thread *current;
+extern struct thread threads[N_THREADS_MAX];
+
 extern struct udpstat udpstat;
 extern struct tcpstat tcpstat;
 extern struct ipstat ipstat;
 extern struct icmpstat icmpstat;
 extern const char *tcpstates[TCP_NSTATES];
-
-extern uint64_t nanosec;
-extern int in_length;
-extern htable_t in_htable;
 
 #endif

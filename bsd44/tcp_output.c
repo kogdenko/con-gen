@@ -77,7 +77,7 @@ tcp_output(struct tcpcb *tp)
 	do {
 		if (1 ||  not_empty_txr(NULL) == NULL) {
 			so->so_state |= SS_ISTXPENDING;
-			DLIST_INSERT_TAIL(&so_txq, so, so_txlist);
+			DLIST_INSERT_TAIL(&current->t_so_txq, so, so_txlist);
 			break;
 		}
 	} while (tcp_output_real(tp) > 0);
@@ -108,7 +108,7 @@ tcp_output_real(struct tcpcb *tp)
 	 * to send, then transmit; otherwise, investigate further.
 	 */
 	idle = (tp->snd_max == tp->snd_una);
-	if (idle && tcp_now - tp->t_idle >= tp->t_rxtcur) {
+	if (idle && current->t_tcp_now - tp->t_idle >= tp->t_rxtcur) {
 		/*
 		 * We have been idle for "a while" and no acks are
 		 * expected to clock out any data we send --
@@ -326,7 +326,7 @@ send:
 		u_char *optp = opt + optlen;
 		be32_t ts_val, ts_ecr;
 
- 		ts_val = htonl(tcp_now);
+ 		ts_val = htonl(current->t_tcp_now);
 		ts_ecr = htonl(tp->ts_recent);
 
  		/* Form timestamp option as shown in appendix A of RFC 1323. */
@@ -357,13 +357,13 @@ send:
 	 */
 	if (len) {
 		if (t_force && len == 1)
-			tcpstat.tcps_sndprobe++;
+			counter64_inc(&tcpstat.tcps_sndprobe);
 		else if (SEQ_LT(tp->snd_nxt, tp->snd_max)) {
-			tcpstat.tcps_sndrexmitpack++;
-			tcpstat.tcps_sndrexmitbyte += len;
+			counter64_inc(&tcpstat.tcps_sndrexmitpack);
+			counter64_add(&tcpstat.tcps_sndrexmitbyte, len);
 		} else {
-			tcpstat.tcps_sndpack++;
-			tcpstat.tcps_sndbyte += len;
+			counter64_inc(&tcpstat.tcps_sndpack);
+			counter64_add(&tcpstat.tcps_sndbyte, len);
 		}
 		txr = not_empty_txr(&m);
 		if (txr == NULL) {
@@ -384,11 +384,11 @@ send:
 		}
 	} else {
 		if (tp->t_flags & TF_ACKNOW) {
-			tcpstat.tcps_sndacks++;
+			counter64_inc(&tcpstat.tcps_sndacks);
 		} else if (flags & (TH_SYN|TH_FIN|TH_RST)) {
-			tcpstat.tcps_sndctrl++;
+			counter64_inc(&tcpstat.tcps_sndctrl);
 		} else {
-			tcpstat.tcps_sndwinup++;
+			counter64_inc(&tcpstat.tcps_sndwinup);
 		}
 		txr = not_empty_txr(&m);
 		if (txr == NULL) {
@@ -454,7 +454,7 @@ send:
 	 * so that it doesn't drift into the send window on sequence
 	 * number wraparound.
 	 */
-	if (tcp_do_outcksum) {
+	if (current->t_tcp_do_outcksum) {
 		th->th_sum = tcp_cksum(ip, sizeof(*th) + optlen + len);
 	}
 	/*
@@ -484,9 +484,9 @@ send:
 			 * not currently timing anything.
 			 */
 			if (tp->t_rtt == 0) {
-				tp->t_rtt = tcp_now;
+				tp->t_rtt = current->t_tcp_now;
 				tp->t_rtseq = startseq;
-				tcpstat.tcps_segstimed++;
+				counter64_inc(&tcpstat.tcps_segstimed);
 			}
 		}
 		/*
@@ -518,7 +518,7 @@ send:
 	}
 	ip->ip_len = hdrlen + len;
 	ip_output(txr, m, ip);
-	tcpstat.tcps_sndtotal++;
+	counter64_inc(&tcpstat.tcps_sndtotal);
 
 	/*
 	 * Data sent (as far as we can tell).

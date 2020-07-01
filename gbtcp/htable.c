@@ -16,8 +16,6 @@ htable_static_init(struct htable_static *t, int size, htable_f hash_fn)
 	t->hts_mask = size - 1;
 	t->hts_hash_fn = hash_fn;
 	t->hts_array = xmalloc(size * sizeof(struct dlist));
-	t->hts_size = size;
-	t->hts_mask = size - 1;
 	for (i = 0; i < size; ++i) {
 		dlist_init(t->hts_array + i);
 	}

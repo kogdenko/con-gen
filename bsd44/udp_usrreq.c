@@ -64,13 +64,13 @@ udp_input(struct ip *ip,
 	struct	sockaddr_in udp_in;
 	struct ip save_ip;
 
-	udpstat.udps_ipackets++;
+	counter64_inc(&udpstat.udps_ipackets);
 
 	/*
 	 * Get IP and UDP header together in first mbuf.
 	 */
 	if (ip->ip_len < sizeof(struct udp_hdr)) {
-		udpstat.udps_hdrops++;
+		counter64_inc(&udpstat.udps_hdrops);
 		return;
 	}
 	uh = (struct udp_hdr *)((u_char *)ip + iphlen);
@@ -82,7 +82,7 @@ udp_input(struct ip *ip,
 	len = ntohs((u_short)uh->uh_ulen);
 	if (ip->ip_len != len) {
 		if (len > ip->ip_len) {
-			udpstat.udps_badlen++;
+			counter64_inc(&udpstat.udps_badlen);
 			return;
 		}
 	}
@@ -100,7 +100,7 @@ udp_input(struct ip *ip,
 		uh->uh_sum = 0;
 		uh->uh_sum = udp_cksum(ip, len);
 		if (uh->uh_sum != uh_sum) {
-			udpstat.udps_badsum++;
+			counter64_inc(&udpstat.udps_badsum);
 			return;
 		}
 	}
@@ -112,9 +112,9 @@ udp_input(struct ip *ip,
 	                  ip->ip_dst.s_addr, uh->uh_dport,
 	                  ip->ip_src.s_addr, uh->uh_sport);
 	if (so == NULL) {
-		udpstat.udps_noport++;
+		counter64_inc(&udpstat.udps_noport);
 		if (eth_flags & (M_BCAST | M_MCAST)) {
-			udpstat.udps_noportbcast++;
+			counter64_inc(&udpstat.udps_noportbcast);
 		} else {
 			*ip = save_ip;
 			ip->ip_len += iphlen;
@@ -172,7 +172,7 @@ udp_output(struct socket *so,
 	struct netmap_ring *txr;
 	struct netmap_slot *m;
 
-	if (sizeof(*ip) + sizeof(*uh) + len > if_mtu) {
+	if (sizeof(*ip) + sizeof(*uh) + len > current->t_mtu) {
 		return -EMSGSIZE;
 	}
 	if (addr != NULL) {
@@ -212,7 +212,7 @@ udp_output(struct socket *so,
 	if (udpcksum) {
 		uh->uh_sum = udp_cksum(ip, sizeof(*uh) + len);
 	}
-	udpstat.udps_opackets++;
+	counter64_inc(&udpstat.udps_opackets);
 	ip_output(txr, m, ip);
 	if (addr) {
 		in_pcbdisconnect(so);

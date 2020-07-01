@@ -38,8 +38,6 @@
 #include "udp_var.h"
 #include "../gbtcp/htable.h"
 
-static void *in_binded[EPHEMERAL_MIN];
-
 uint32_t
 bsd_socket_hash(struct dlist *l)
 {
@@ -63,14 +61,14 @@ in_pcbbind(struct socket *so, be16_t lport)
 		return EINVAL;
 	}
 	i = ntohs(lport);
-	if (i >= ARRAY_SIZE(in_binded)) {
+	if (i >= ARRAY_SIZE(current->t_in_binded)) {
 		return EADDRINUSE;
 	}
-	if (in_binded[i] != NULL) {
+	if (current->t_in_binded[i] != NULL) {
 		return EADDRINUSE;
 	}
-	in_binded[i] = so;
-	so->inp_laddr = htonl(ip_laddr_min);
+	current->t_in_binded[i] = so;
+	so->inp_laddr = htonl(current->t_ip_laddr_min);
 	so->inp_lport = lport;
 	return 0;
 }
@@ -79,15 +77,16 @@ int
 in_pcbattach(struct socket *so, uint32_t *ph)
 {
 	uint32_t h;
-	struct dlist *bucket;
+	struct dlist *b;
 	struct socket *it;
 
 	if (so->so_state & SS_ISATTACHED) {
 		return -EALREADY;
 	}
 	h = bsd_socket_hash(&so->inp_list);
-	bucket = htable_bucket_get(&in_htable, h);
-	DLIST_FOREACH(it, bucket, inp_list) {
+	b = htable_bucket_get(&current->t_in_htable, h);
+	DLIST_FOREACH(it, b, inp_list) {
+		assert(it != so);
 		if (it->so_proto == so->so_proto &&
 		    it->inp_laddr == so->inp_laddr &&
 		    it->inp_lport == so->inp_lport &&
@@ -97,7 +96,7 @@ in_pcbattach(struct socket *so, uint32_t *ph)
 		}
 	}
 	so->so_state |= SS_ISATTACHED;
-	htable_add(&in_htable, &so->inp_list, h);
+	htable_add(&current->t_in_htable, &so->inp_list, h);
 	*ph = h;
 	return 0;
 }
@@ -148,19 +147,19 @@ in_pcbdetach(struct socket *so)
 
 	lport = ntohs(so->inp_lport);
 	if (lport < EPHEMERAL_MIN) {
-		if (in_binded[lport] == so) {
-			in_binded[lport] = NULL;
+		if (current->t_in_binded[lport] == so) {
+			current->t_in_binded[lport] = NULL;
 		}
 	}
 	if (so->so_state & SS_ISATTACHED) {
 		so->so_state &= ~SS_ISATTACHED;
-		htable_del(&in_htable, &so->inp_list);
+		htable_del(&current->t_in_htable, &so->inp_list);
 		if (lport >= EPHEMERAL_MIN) {
 			laddr = ntohl(so->inp_laddr);
 			free_ephemeral_port(laddr, lport);
 		}
+		sofree(so);
 	}
-	sofree(so);
 	return 0;
 }
 
@@ -172,13 +171,8 @@ in_pcbdisconnect(struct socket *so)
 }
 
 void
-in_pcbnotify(int proto,
-             be32_t laddr,
-             be16_t lport,
-             be32_t faddr,
-             be16_t fport,
-             int err,
-             void (*notify)(struct socket *, int))
+in_pcbnotify(int proto, be32_t laddr, be16_t lport, be32_t faddr, be16_t fport,
+	int err, void (*notify)(struct socket *, int))
 {
 	struct socket *so;
 
@@ -212,7 +206,7 @@ in_pcblookup(int proto, be32_t laddr, be16_t lport, be32_t faddr, be16_t fport)
 {
 	int i;
 	uint32_t h;
-	struct dlist *bucket;
+	struct dlist *b;
 	struct socket *so, tmp;
 
 	tmp.inp_laddr = laddr;
@@ -220,8 +214,8 @@ in_pcblookup(int proto, be32_t laddr, be16_t lport, be32_t faddr, be16_t fport)
 	tmp.inp_faddr = faddr;
 	tmp.inp_fport = fport;
 	h = bsd_socket_hash(&tmp.inp_list);
-	bucket = htable_bucket_get(&in_htable, h);
-	DLIST_FOREACH(so, bucket, inp_list) {	
+	b = htable_bucket_get(&current->t_in_htable, h);
+	DLIST_FOREACH(so, b, inp_list) {	
 		if (so->so_proto == proto &&
 		    so->inp_laddr == laddr &&
 		    so->inp_lport == lport &&
@@ -232,7 +226,7 @@ in_pcblookup(int proto, be32_t laddr, be16_t lport, be32_t faddr, be16_t fport)
 	}
 	i = ntohs(lport);
 	if (i < EPHEMERAL_MIN) {
-		return in_binded[i];
+		return current->t_in_binded[i];
 	} else {
 		return NULL;
 	}

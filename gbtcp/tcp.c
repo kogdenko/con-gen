@@ -1,7 +1,7 @@
 #include "tcp.h"
 #include "inet.h"
 
-#define MSS (if_mtu - 40)
+#define MSS (current->t_mtu - 40)
 
 struct sock {
 	struct dlist list;
@@ -45,11 +45,7 @@ struct sock {
 	uint16_t ip_id;
 };
 
-uint64_t requests;
-int in_length = -1;
-
-static int nsockets;
-static struct dlist avail_conns = DLIST_HEAD_INIT(avail_conns);
+static int in_length = -1;
 
 static int  tcp_set_state(struct sock *, int);
 static int  tcp_timer_set_probe(struct sock *);
@@ -118,7 +114,7 @@ tcp_into_sndq(struct sock *so)
 	assert(so->used);
 	if (so->in_txq == 0) {
 		so->in_txq = 1;
-		DLIST_INSERT_TAIL(&so_txq, so, tx_list);
+		DLIST_INSERT_TAIL(&current->t_so_txq, so, tx_list);
 	}
 }
 
@@ -185,19 +181,18 @@ tcp_open()
 {
 	struct sock *so;
 
-	if (dlist_is_empty(&avail_conns)) {
+	if (dlist_is_empty(&current->t_so_pool)) {
 		so = xmalloc(sizeof(*so));
 	} else {
-		so = DLIST_FIRST(&avail_conns, struct sock, list);
+		so = DLIST_FIRST(&current->t_so_pool, struct sock, list);
 		DLIST_REMOVE(so, list);
 	}
-	nsockets++;
+	current->t_n_clients++;
 	assert(so->used == 0);
 	so->flags = 0;
 	so->used = 1;
 	so->nagle = 1;
 	so->nagle_acked = 1;
-	so->sack = nanosec >> 6;
 	so->ssnt = 0;
 	so->spos = 0;
 	so->swnd = 0;
@@ -227,7 +222,8 @@ tcp_add(struct sock *so)
 	uint32_t h;
 
 	h = SO_HASH(so->param.faddr, so->param.lport, so->param.fport);
-	htable_add(&in_htable, &so->list, h);
+	htable_add(&current->t_in_htable, &so->list, h);
+	so->sack = h + (uint32_t)(current->t_time >> 6);
 }
 
 static struct sock *
@@ -238,7 +234,7 @@ tcp_get(struct tcp_param *param)
 	struct dlist *b;
 
 	h = SO_HASH(param->faddr, param->lport, param->fport);
-	b = htable_bucket_get(&in_htable, h);
+	b = htable_bucket_get(&current->t_in_htable, h);
 	DLIST_FOREACH(so, b, list) {
 		if (!memcmp(param, &so->param, sizeof(*param))) {
 			return so;
@@ -270,17 +266,19 @@ tcp_connect()
 	struct sock *so;
 
 	so = tcp_open();
-	tcpstat.tcps_connattempt++;
+	counter64_inc(&tcpstat.tcps_connattempt);
 	rc = alloc_ephemeral_port(&laddr, &lport);
 	if (rc) {
 		return rc;
 	}
-	assert(laddr >= ip_laddr_min && laddr <= ip_laddr_max);
-	so->param.fport = pflag_port;
+	assert(laddr >= current->t_ip_laddr_min);
+	assert(laddr <= current->t_ip_laddr_max);
 	faddr = select_faddr();
 	so->param.faddr = htonl(faddr);
+	so->param.fport = current->t_port;
 	so->param.lport = htons(lport);
 	so->param.laddr = htonl(laddr);
+	//dbg("connect %x:%hu->%x:%hu", laddr, lport, faddr, ntohs(so->param.fport)); 
 	tcp_add(so);
 	tcp_set_state(so, TCPS_SYN_SENT);
 	tcp_into_sndq(so);
@@ -301,7 +299,7 @@ toy_server_listen(int ipproto)
 	if (ipproto != IPPROTO_TCP) {
 		panic(0, "unsupported protocol: %d", ipproto);
 	}
-	lport = ntohs(pflag_port);
+	lport = ntohs(current->t_port);
 	if (lport > EPHEMERAL_MAX) {
 		panic(EADDRNOTAVAIL, "toy_bind() failed");
 	}
@@ -327,15 +325,16 @@ tcp_close(struct sock *so)
 	}
 	DLIST_REMOVE(so, list);
 	so->used = 0;
-	DLIST_INSERT_HEAD(&avail_conns, so, list);
-	nsockets--;
-	requests++;
-	tcpstat.tcps_closed++;
-	if (done == 0) {
-		if (nflag && requests >= nflag) {
-			done = 1;
-		} else if (Lflag == 0) {
-			while (nsockets < concurrency) {
+	DLIST_INSERT_HEAD(&current->t_so_pool, so, list);
+	current->t_n_clients--;
+	current->t_n_requests++;
+	counter64_inc(&tcpstat.tcps_closed);
+	if (current->t_done == 0) {
+		if (current->t_nflag &&
+		    current->t_n_requests >= current->t_nflag) {
+			current->t_done = 1;
+		} else if (current->t_Lflag == 0) {
+			while (current->t_n_clients < current->t_concurrency) {
 				rc = tcp_connect();
 				if (rc) {
 					break;
@@ -348,8 +347,8 @@ tcp_close(struct sock *so)
 static void
 tcp_establish(struct sock *so)
 {
-	tcpstat.tcps_connects++;
-	if (Lflag == 0) {
+	counter64_inc(&tcpstat.tcps_connects);
+	if (current->t_Lflag == 0) {
 		tcp_into_sndq(so);
 	}
 }
@@ -391,10 +390,10 @@ tcp_timer_set_rexmit(struct sock *so)
 static void
 calc_cksum(struct ip4_hdr *ih, struct tcp_hdr *th, int len)
 {
-	if (ip_do_outcksum) {
+	if (current->t_ip_do_outcksum) {
 		ih->ih_cksum = ip_cksum((struct ip *)ih);
 	}
-	if (tcp_do_outcksum) {
+	if (current->t_tcp_do_outcksum) {
 		th->th_cksum = tcp_cksum((struct ip *)ih, len);
 	}
 }
@@ -418,7 +417,7 @@ tcp_fill(struct sock *so, void *buf, struct tcb *tcb, int len_max)
 	}
 	if (tcb->tcb_len) {
 		assert(tcb->tcb_len <= so->rwnd - so->ssnt);
-		if (so->spos + so->ssnt + tcb->tcb_len == http_len ||
+		if (so->spos + so->ssnt + tcb->tcb_len == current->t_http_len ||
 			(so->rwnd - so->ssnt) - tcb->tcb_len <= MSS) {
 			tcb->tcb_flags |= TCP_FLAG_PSH;
 		}
@@ -428,13 +427,13 @@ tcp_fill(struct sock *so, void *buf, struct tcb *tcb, int len_max)
 		tcb->tcb_seq = so->sack - 1;
 	} else {
 		tcb->tcb_seq = so->sack + so->ssnt;
-		if (so->sfin_acked) {
+		if (so->sfin_sent && (tcb->tcb_flags & TCP_FLAG_FIN) == 0) {
 			tcb->tcb_seq++;
 		}
 	}
 	tcb->tcb_ack = so->rseq;
-	assert(so->spos + so->ssnt + tcb->tcb_len <= http_len);
-	memcpy(th + 1, http + so->spos + so->ssnt, tcb->tcb_len);
+	assert(so->spos + so->ssnt + tcb->tcb_len <= current->t_http_len);
+	memcpy(th + 1, current->t_http + so->spos + so->ssnt, tcb->tcb_len);
 	th_len = sizeof(*th);
 	total_len = sizeof(*ih) + th_len + tcb->tcb_len;
 	ih->ih_ver_ihl = IP4_VER_IHL;
@@ -479,26 +478,26 @@ tcp_xmit_out(struct netmap_ring *txr, struct netmap_slot *m, struct sock *so,
 	struct tcb tcb;
 
 	eh = (struct eth_hdr *)NETMAP_BUF(txr, m->buf_idx);
-	memcpy(eh->eh_saddr, eth_laddr, sizeof(eh->eh_saddr));
-	memcpy(eh->eh_daddr, eth_faddr, sizeof(eh->eh_daddr));
+	memcpy(eh->eh_saddr, current->t_eth_laddr, sizeof(eh->eh_saddr));
+	memcpy(eh->eh_daddr, current->t_eth_faddr, sizeof(eh->eh_daddr));
 	eh->eh_type = ETH_TYPE_IP4_BE;
 	tcb.tcb_flags = tcp_flags;
 	tcb.tcb_len = len;
 	total_len = tcp_fill(so, eh + 1, &tcb, len_max);
 	m->len = sizeof(*eh) + total_len;
-	tcpstat.tcps_sndtotal++;
+	counter64_inc(&tcpstat.tcps_sndtotal);
 	if (tcb.tcb_len) {
-		tcpstat.tcps_sndpack++;
-		tcpstat.tcps_sndbyte += tcb.tcb_len;
+		counter64_inc(&tcpstat.tcps_sndpack);
+		counter64_add(&tcpstat.tcps_sndbyte, tcb.tcb_len);
 	}
 	if (so->so_rexmited &&
 	    (tcb.tcb_len || tcb.tcb_flags & (TCP_FLAG_SYN|TCP_FLAG_FIN))) {
 		so->so_rexmited = 0;
-		tcpstat.tcps_sndrexmitpack++;
-		tcpstat.tcps_sndrexmitbyte += tcb.tcb_len;
+		counter64_inc(&tcpstat.tcps_sndrexmitpack);
+		counter64_add(&tcpstat.tcps_sndrexmitbyte, tcb.tcb_len);
 	}
 	if (tcb.tcb_flags == TCP_FLAG_ACK) {
-		tcpstat.tcps_sndacks++;
+		counter64_inc(&tcpstat.tcps_sndacks);
 	}
 	ether_output(txr, m);
 }
@@ -552,9 +551,9 @@ tcp_xmit_established(struct netmap_ring *txr, struct netmap_slot *m, struct sock
 	}
 	tcp_flags = 0;
 	len_max = 0;
-	if (Lflag == 0 || so->rstate == 4) {
+	if (current->t_Lflag == 0 || so->rstate == 4) {
 		// rstate == 4 - mean that peer send '\r\n\r\n'
-		len_max = http_len - (so->spos + so->ssnt);
+		len_max = current->t_http_len - (so->spos + so->ssnt);
 		assert(len_max >= 0);
 	}
 	if (len_max == 0) {
@@ -638,8 +637,8 @@ toy_flush()
 	struct netmap_slot *m;
 	struct sock *so;
 
-	while (!dlist_is_empty(&so_txq)) {
-		so = DLIST_FIRST(&so_txq, struct sock, tx_list);
+	while (!dlist_is_empty(&current->t_so_txq)) {
+		so = DLIST_FIRST(&current->t_so_txq, struct sock, tx_list);
 		while (1) {
 			txr = not_empty_txr(&m);
 			if (txr == NULL) {
@@ -662,7 +661,7 @@ static int
 tcp_process_dupack(struct sock *so)
 {
 	if (so->state >= TCPS_ESTABLISHED) {
-		tcpstat.tcps_rcvduppack++;
+		counter64_inc(&tcpstat.tcps_rcvduppack);
 		so->ssnt = 0;
 	} else {
 		tcp_into_rstq(so);
@@ -799,17 +798,17 @@ tcp_rcv_data(struct sock *so, struct tcb *tcb, void *payload)
 	off = diff_seq(tcb->tcb_seq, so->rseq);
 	n = tcb->tcb_len - off;
 	if (off == 0) {
-		tcpstat.tcps_rcvpack++;
-		tcpstat.tcps_rcvbyte += tcb->tcb_len;
+		counter64_inc(&tcpstat.tcps_rcvpack);
+		counter64_add(&tcpstat.tcps_rcvbyte, tcb->tcb_len);
 	} else if (off == tcb->tcb_len) {
-		tcpstat.tcps_rcvduppack++;
-		tcpstat.tcps_rcvdupbyte += tcb->tcb_len;
+		counter64_inc(&tcpstat.tcps_rcvduppack);
+		counter64_add(&tcpstat.tcps_rcvdupbyte, tcb->tcb_len);
 	} else if (off > tcb->tcb_len) {
-		tcpstat.tcps_pawsdrop++;
+		counter64_inc(&tcpstat.tcps_pawsdrop);
 		return;
 	} else {
-		tcpstat.tcps_rcvpartduppack++;
-		tcpstat.tcps_rcvpartdupbyte += n;
+		counter64_inc(&tcpstat.tcps_rcvpartduppack);
+		counter64_add(&tcpstat.tcps_rcvpartdupbyte, n);
 	}
 	tcp_on_rcv(so, payload, n);
 	so->rseq += n;
@@ -859,16 +858,16 @@ tcp_rcv_open(struct sock *so, struct tcb *tcb, void *payload)
 	if (tcb->tcb_flags & TCP_FLAG_RST) {
 		// TODO: check seq
 		if (so->state < TCPS_ESTABLISHED) {
-			tcpstat.tcps_conndrops++;
+			counter64_inc(&tcpstat.tcps_conndrops);
 		} else {
-			tcpstat.tcps_drops++;
+			counter64_inc(&tcpstat.tcps_drops);
 		}
 		tcp_close(so);
 		return;
 	}
 	if (so->rsyn) {
 		if (!tcp_is_in_order(so, tcb)) {
-			tcpstat.tcps_rcvoopack++;
+			counter64_inc(&tcpstat.tcps_rcvoopack);
 			tcp_into_ackq(so);
 			return;
 		}
@@ -921,23 +920,24 @@ tcp_rcv_closed(struct tcp_param *param, struct tcb *tcb)
 {
 	uint32_t laddr;
 
-	if (Lflag == 0) {
+	if (current->t_Lflag == 0) {
 		return IN_BYPASS;
 	}
 	laddr = ntohl(param->laddr);
-	if (ip_laddr_min != 0) {
-		if (laddr < ip_laddr_min || laddr > ip_laddr_max) {
+	if (current->t_ip_laddr_min != 0) {
+		if (laddr < current->t_ip_laddr_min ||
+		    laddr > current->t_ip_laddr_max) {
 			return IN_BYPASS;
 		}
 	}
-	if (param->lport != pflag_port) {
+	if (param->lport != current->t_port) {
 		return IN_BYPASS;
 	}
 	if (tcb->tcb_flags == TCP_FLAG_SYN) {
-		tcpstat.tcps_accepts++;
+		counter64_inc(&tcpstat.tcps_accepts);
 		tcp_rcv_syn(param, tcb);
 	} else {
-		tcpstat.tcps_badsyn++;
+		counter64_inc(&tcpstat.tcps_badsyn);
 	}
 	return IN_OK;
 }
@@ -950,8 +950,8 @@ toy_eth_in(void *data, int len)
 	struct inet_parser p;
 	struct sock *so;
 
-	if_ipackets++;
-	if_ibytes += len;
+	counter64_inc(&if_ipackets);
+	counter64_add(&if_ibytes, len);
 	inet_parser_init(&p, data, len);
 	rc = eth_in(&p);
 	if (rc != IN_OK) {
@@ -960,7 +960,7 @@ toy_eth_in(void *data, int len)
 	if (p.inp_ipproto != IPPROTO_TCP) {
 		return IN_BYPASS;
 	}
-	tcpstat.tcps_rcvtotal++;
+	counter64_inc(&tcpstat.tcps_rcvtotal);
 	param.laddr = p.inp_ih->ih_daddr;
 	param.faddr = p.inp_ih->ih_saddr;
 	param.lport = p.inp_th->th_dport;
@@ -994,12 +994,12 @@ tcp_timeout_rexmit(struct timer *timer)
 	assert(so->used);
 	assert(so->sfin_acked == 0);
 	assert(TCP_IS_REXMIT(so));
-	tcpstat.tcps_rexmttimeo++;
+	counter64_inc(&tcpstat.tcps_rexmttimeo);
 	so->ssnt = 0;
 	so->sfin_sent = 0;
 	so->so_rexmited = 1;
 	if (so->nr_tries++ > 6) {
-		tcpstat.tcps_timeoutdrop++;
+		counter64_inc(&tcpstat.tcps_timeoutdrop);
 		tcp_close(so);
 		return;
 	}
@@ -1013,7 +1013,7 @@ tcp_timeout_delack(struct timer *timer)
 
 	so = container_of(timer, struct sock, timer_delack);
 	assert(so->used);
-	tcpstat.tcps_delack++;
+	counter64_inc(&tcpstat.tcps_delack);
 	tcp_into_ackq(so);
 }
 
@@ -1027,7 +1027,7 @@ tcp_timeout_probe(struct timer *timer)
 	assert(so->sfin_acked == 0);
 	assert(TCP_IS_REXMIT(so) == 0);
 	assert(so->probe);
-	tcpstat.tcps_persisttimeo++;
+	counter64_inc(&tcpstat.tcps_persisttimeo);
 	if (so->nr_tries < 7) {
 		so->nr_tries++;
 	}

@@ -53,12 +53,13 @@ icmp_reflectsrc(be32_t dst)
 {
 	uint32_t ia;
 
-	for (ia = ip_laddr_min; ia <= ip_laddr_max; ++ia) {
+	for (ia = current->t_ip_laddr_min;
+	     ia <= current->t_ip_laddr_max; ++ia) {
 		if (dst == htonl(ia)) {
 			return dst;
 		}
 	}
-	return htonl(ip_laddr_min);
+	return htonl(current->t_ip_laddr_min);
 }
 
 /*
@@ -102,7 +103,7 @@ icmp_error(struct ip *oip, int type, int code, be32_t dest)
 		printf("icmp_error(%x, %d, %d)\n", oip, type, code);
 #endif
 	if (type != ICMP_REDIRECT) {
-		icmpstat.icps_error++;
+		counter64_inc(&icmpstat.icps_error);
 	}
 	/*
 	 * Don't send error if not the first fragment of message.
@@ -125,7 +126,7 @@ icmp_error(struct ip *oip, int type, int code, be32_t dest)
 	icp = (struct icmp *)(nip + 1);
 	if ((u_int)type > ICMP_MAXTYPE)
 		panic(0, "icmp_error");
-	icmpstat.icps_outhist[type]++;
+	counter64_inc(icmpstat.icps_outhist + type);
 	icp->icmp_type = type;
 	if (type == ICMP_REDIRECT) {
 		icp->icmp_gwaddr.s_addr = dest;
@@ -140,7 +141,7 @@ icmp_error(struct ip *oip, int type, int code, be32_t dest)
 			code = 0;
 		} else if (type == ICMP_UNREACH &&
 			code == ICMP_UNREACH_NEEDFRAG) {
-			icp->icmp_nextmtu = htons(if_mtu);
+			icp->icmp_nextmtu = htons(current->t_mtu);
 		}
 	}
 
@@ -186,12 +187,12 @@ icmp_input(struct ip *ip, int hlen)
 			icmplen);
 	}
 	if (icmplen < ICMP_MINLEN) {
-		icmpstat.icps_tooshort++;
+		counter64_inc(&icmpstat.icps_tooshort);
 		return;
 	}
 	i = MIN(icmplen, ICMP_ADVLENMIN);
 	if (ip->ip_len < i)  {
-		icmpstat.icps_tooshort++;
+		counter64_inc(&icmpstat.icps_tooshort);
 		return;
 	}
 	icp = (struct icmp *)((u_char *)ip + hlen);
@@ -199,7 +200,7 @@ icmp_input(struct ip *ip, int hlen)
 	icp->icmp_cksum = 0;
 	icp->icmp_cksum = in_cksum(icp, icmplen);
 	if (icp->icmp_cksum != icmp_cksum) {
-		icmpstat.icps_checksum++;
+		counter64_inc(&icmpstat.icps_checksum);
 		return;
 	}
 
@@ -213,7 +214,7 @@ icmp_input(struct ip *ip, int hlen)
 	if (icp->icmp_type > ICMP_MAXTYPE) {
 		return;
 	}
-	icmpstat.icps_inhist[icp->icmp_type]++;
+	counter64_inc(icmpstat.icps_inhist + icp->icmp_type);
 	code = icp->icmp_code;
 	switch (icp->icmp_type) {
 
@@ -265,7 +266,7 @@ deliver:
 		 */
 		if (icmplen < ICMP_ADVLENMIN || icmplen < ICMP_ADVLEN(icp) ||
 		    icp->icmp_ip.ip_hl < (sizeof(struct ip) >> 2)) {
-			icmpstat.icps_badlen++;
+			counter64_inc(&icmpstat.icps_badlen);
 			return;
 		}
 		NTOHS(icp->icmp_ip.ip_len);
@@ -287,14 +288,14 @@ deliver:
 		break;
 
 	badcode:
-		icmpstat.icps_badcode++;
+		counter64_inc(&icmpstat.icps_badcode);
 		break;
 
 	case ICMP_ECHO:
 		icp->icmp_type = ICMP_ECHOREPLY;
 		ip->ip_len += hlen;     /* since ip_input deducts this */
-		icmpstat.icps_reflect++;
-		icmpstat.icps_outhist[icp->icmp_type]++;
+		counter64_inc(&icmpstat.icps_reflect);
+		counter64_inc(icmpstat.icps_outhist + icp->icmp_type);
 		icmp_reflect(ip);
 		return;
 
@@ -304,7 +305,7 @@ deliver:
 		}
 		if (icmplen < ICMP_ADVLENMIN || icmplen < ICMP_ADVLEN(icp) ||
 		    icp->icmp_ip.ip_hl < (sizeof(struct ip) >> 2)) {
-			icmpstat.icps_badlen++;
+			counter64_inc(&icmpstat.icps_badlen);
 			break;
 		}
 		/*

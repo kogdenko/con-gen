@@ -92,7 +92,8 @@ in:
 	op = ntohs(ea->arp_op);
 	memcpy(&isaddr, ea->arp_spa, sizeof(isaddr));
 	memcpy(&itaddr, ea->arp_tpa, sizeof(itaddr));
-	for (ia = ip_laddr_min; ia <= ip_laddr_max; ++ia) {
+	for (ia = current->t_ip_laddr_min;
+	     ia <= current->t_ip_laddr_max; ++ia) {
 		ian = htonl(ia);
 		if ((itaddr.s_addr == ian) || (isaddr.s_addr == ian)) {
 			myaddr.s_addr = ian;
@@ -102,7 +103,7 @@ in:
 	if (myaddr.s_addr == 0) {
 		goto out;
 	}
-	if (!memcmp(ea->arp_sha, eth_laddr, sizeof(ea->arp_sha))) {
+	if (!memcmp(ea->arp_sha, current->t_eth_laddr, sizeof(ea->arp_sha))) {
 		goto out;	/* it's from me, ignore it. */
 	}
 	if (!memcmp(ea->arp_sha, etherbroadcastaddr, sizeof(ea->arp_sha))) {
@@ -126,7 +127,7 @@ out:
 	if (itaddr.s_addr == myaddr.s_addr) {
 		/* I am the target */
 		memcpy(ea->arp_tha, ea->arp_sha, sizeof(ea->arp_sha));
-		memcpy(ea->arp_sha, eth_laddr, sizeof(ea->arp_sha));
+		memcpy(ea->arp_sha, current->t_eth_laddr, sizeof(ea->arp_sha));
 	} else {
 		goto out;
 	}
@@ -141,7 +142,7 @@ out:
 	m->len = sizeof(*eh) +  sizeof(*ea);
 	eh = (struct ether_header *)NETMAP_BUF(txr, m->buf_idx);
 	memcpy(eh + 1, ea, sizeof(*ea));
-	memcpy(eh->ether_shost, eth_laddr, sizeof(eh->ether_shost));
+	memcpy(eh->ether_shost, current->t_eth_laddr, sizeof(eh->ether_shost));
 	memcpy(eh->ether_dhost, ea->arp_tha, sizeof(eh->ether_dhost));
 	eh->ether_type = htons(ETHERTYPE_ARP);
 	ether_output(txr, m);
@@ -153,8 +154,8 @@ out:
 void
 ether_output(struct netmap_ring *txr, struct netmap_slot *m)
 {
-	if_obytes += m->len;
-	if_opackets++;
+	counter64_add(&if_obytes, m->len);
+	counter64_inc(&if_opackets);
 	txr->head = txr->cur = nm_ring_next(txr, txr->cur);
 }
 
@@ -167,8 +168,8 @@ bsd_eth_in(void *data, int len)
 
 	eh = data;
 	eth_flags = 0;
-	if_ibytes += sizeof(*eh) + len;
-	if_ipackets++;
+	counter64_add(&if_ibytes, sizeof(*eh) + len);
+	counter64_inc(&if_ipackets);
 	len -= sizeof(*eh);
 	if (memcmp(etherbroadcastaddr, eh->ether_dhost,
 	           sizeof(etherbroadcastaddr)) == 0) {
@@ -177,7 +178,7 @@ bsd_eth_in(void *data, int len)
 		eth_flags |= M_MCAST;
 	}
 	if (eth_flags & (M_BCAST|M_MCAST)) {
-		if_imcasts++;
+		counter64_inc(&if_imcasts);
 	}
 	NTOHS(eh->ether_type);
 	switch (eh->ether_type) {

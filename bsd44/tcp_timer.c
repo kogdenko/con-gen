@@ -52,7 +52,7 @@ tcp_DELACK_timo(struct timer *timer)
 	if (tp->t_flags & TF_DELACK) {
 		tp->t_flags &= ~TF_DELACK;
 		tp->t_flags |= TF_ACKNOW;
-		tcpstat.tcps_delack++;
+		counter64_inc(&tcpstat.tcps_delack);
 		tcp_output(tp);
 	}
 }
@@ -61,7 +61,7 @@ void
 tcp_setdelacktimer(struct tcpcb *tp)
 {
 	tp->t_flags |= TF_DELACK;
-	timer_set(&tp->t_timer_delack, 200* 1000 * 1000, &tcp_DELACK_timo);
+	timer_set(&tp->t_timer_delack, 200 * 1000 * 1000, &tcp_DELACK_timo);
 }
 
 /*
@@ -93,7 +93,7 @@ tcp_PERSIST_timo(struct timer *timer)
 
 	tp = container_of(timer, struct tcpcb, t_timer[TCPT_PERSIST]);
 
-	tcpstat.tcps_persisttimeo++;
+	counter64_inc(&tcpstat.tcps_persisttimeo);
 	tcp_setpersist(tp);
 	tp->t_force = 1;
 	tcp_output(tp);
@@ -114,12 +114,12 @@ tcp_REXMT_timo(struct timer *timer)
 
 	if (++tp->t_rxtshift > TCP_MAXRXTSHIFT) {
 		tp->t_rxtshift = TCP_MAXRXTSHIFT;
-		tcpstat.tcps_timeoutdrop++;
+		counter64_inc(&tcpstat.tcps_timeoutdrop);
 		tp = tcp_drop(tp, tp->t_softerror ?
 			      tp->t_softerror : ETIMEDOUT);
 		return;
 	}
-	tcpstat.tcps_rexmttimeo++;
+	counter64_inc(&tcpstat.tcps_rexmttimeo);
 	rexmt = TCP_REXMTVAL(tp) * tcp_backoff[tp->t_rxtshift];
 	TCPT_RANGESET(tp->t_rxtcur, rexmt, TCPTV_MIN, TCPTV_REXMTMAX);
 	tcp_setslowtimer(tp, TCPT_REXMT, tp->t_rxtcur);
@@ -186,7 +186,7 @@ tcp_KEEP_timo(struct timer *timer)
 
 	tp = container_of(timer, struct tcpcb, t_timer[TCPT_KEEP]);
 
-	tcpstat.tcps_keeptimeo++;
+	counter64_inc(&tcpstat.tcps_keeptimeo);
 	if (tp->t_state < TCPS_ESTABLISHED) {
 		goto dropit;
 	}
@@ -194,7 +194,7 @@ tcp_KEEP_timo(struct timer *timer)
 	if (so->so_options & SO_OPTION(SO_KEEPALIVE) &&
 	    tp->t_state <= TCPS_CLOSE_WAIT) {
 		uint16_t idle;
-		idle = tcp_now - tp->t_idle;
+		idle = current->t_tcp_now - tp->t_idle;
 		if (idle >= TCPTV_KEEP_IDLE + tcp_maxidle) {
 			goto dropit;
 		}
@@ -210,7 +210,7 @@ tcp_KEEP_timo(struct timer *timer)
 		 * by the protocol spec, this requires the
 		 * correspondent TCP to respond.
 		 */
-		tcpstat.tcps_keepprobe++;
+		counter64_inc(&tcpstat.tcps_keepprobe);
 		tcp_respond(tp, NULL, NULL, tp->rcv_nxt, tp->snd_una - 1, 0);
 		tcp_setslowtimer(tp, TCPT_KEEP, TCPTV_KEEPINTVL);
 	} else {
@@ -218,7 +218,7 @@ tcp_KEEP_timo(struct timer *timer)
 	}
 	return;
 dropit:
-	tcpstat.tcps_keepdrops++;
+	counter64_inc(&tcpstat.tcps_keepdrops);
 	tp = tcp_drop(tp, ETIMEDOUT);
 }
 

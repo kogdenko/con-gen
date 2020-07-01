@@ -6,9 +6,6 @@ struct conn {
 	u_char cn_http;
 };
 
-static int nclients;
-static int connections;
-
 static void client(struct socket *, short, struct sockaddr_in *, void *, int);
 static void server(struct socket *, short, struct sockaddr_in *, void *, int);
 
@@ -18,8 +15,8 @@ bsd_flush()
 	int rc;
 	struct socket *so;
 
-	while (!dlist_is_empty(&so_txq)) {
-		so = DLIST_FIRST(&so_txq, struct socket, so_txlist);
+	while (!dlist_is_empty(&current->t_so_txq)) {
+		so = DLIST_FIRST(&current->t_so_txq, struct socket, so_txlist);
 		if (not_empty_txr(NULL) == NULL) {
 			break;
 		}
@@ -46,18 +43,18 @@ bsd_client_connect()
 	}
 	so->so_userfn = client;
 	so->so_user = 0;
-	if (so_debug_flag) {
+	if (current->t_so_debug) {
 		sosetopt(so, SO_DEBUG);
 	}
 	faddr = select_faddr();
 	addr.sin_family = AF_INET;
 	addr.sin_addr.s_addr = htonl(faddr);
-	addr.sin_port = pflag_port;
+	addr.sin_port = current->t_port;
 	rc = bsd_connect(so, &addr);
 	if (rc < 0) {
 		panic(-rc, "bsd_connect() failed");
 	}
-	nclients++;
+	current->t_n_clients++;
 }
 
 static void
@@ -93,14 +90,14 @@ bsd_server_listen(int proto)
 	if (rc < 0) {
 		panic(-rc, "bsd_socket() failed");
 	}
-	if (so_debug_flag) {
+	if (current->t_so_debug) {
 		sosetopt(so, SO_DEBUG);
 	}
 	so->so_userfn = proto == IPPROTO_TCP ? srv_accept : udp_echo;
 	so->so_user = 0;
-	rc = bsd_bind(so, pflag_port);
+	rc = bsd_bind(so, current->t_port);
 	if (rc) {
-		panic(-rc, "bsd_bind(%u) failed", ntohs(pflag_port));
+		panic(-rc, "bsd_bind(%u) failed", ntohs(current->t_port));
 	}
 	if (proto == IPPROTO_TCP) {
 		rc = bsd_listen(so);
@@ -111,21 +108,21 @@ bsd_server_listen(int proto)
 }
 
 static void
-con_close(int is_client)
+con_close()
 {
-	if (done) {
+	if (current->t_done) {
 		return;
 	}
-	connections++;
-	if (nflag) {
-		if (connections == nflag) {
-			done = 1;
+	current->t_n_requests++;
+	if (current->t_nflag) {
+		if (current->t_n_requests == current->t_nflag) {
+			current->t_done = 1;
 			return;
 		}
 	}
-	if (is_client) {
-		nclients--;
-		while (nclients < concurrency) {
+	if (!current->t_Lflag) {
+		current->t_n_clients--;
+		while (current->t_n_clients < current->t_concurrency) {
 			bsd_client_connect();
 		}
 	}
@@ -136,10 +133,11 @@ conn_sendto(struct socket *so)
 {
 	int rc;
 
-	rc = bsd_sendto(so, http, http_len, MSG_NOSIGNAL, NULL);
+	rc = bsd_sendto(so, current->t_http, current->t_http_len,
+	                MSG_NOSIGNAL, NULL);
 	if (rc < 0) {
 		panic(-rc, "bsd_sendto() failed");
-	} else if (rc != http_len) {
+	} else if (rc != current->t_http_len) {
 		panic(0, "bsd_sendto() stalled");
 	}
 
@@ -154,7 +152,7 @@ client(struct socket *so, short events, struct sockaddr_in *addr,
 
 	cp = (struct conn *)&so->so_user;
 	if (events & POLLNVAL) {
-		con_close(1);
+		con_close();
 		return;
 	}
 	if (cp->cn_sent == 0) {
@@ -194,7 +192,7 @@ server(struct socket *so, short events, struct sockaddr_in *addr,
 
 	cp = (struct conn *)&so->so_user;
 	if (events & POLLNVAL) {
-		con_close(0);
+		con_close();
 		return;
 	}
 	if (len) {
