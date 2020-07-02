@@ -28,9 +28,12 @@
 #include <sys/types.h>
 #include <sys/fcntl.h>
 #include <pthread.h>
-#ifndef __linux__
+#ifdef __linux__
+#include <linux/ethtool.h>
+#include <linux/sockios.h>
+#else // __linux__
 #include <pthread_np.h>
-#endif
+#endif // __linux__
 
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h>
@@ -152,6 +155,10 @@ void panic3(const char *, int, int, const char *, ...)
 struct netmap_ring *not_empty_txr(struct netmap_slot **);
 void ether_output(struct netmap_ring *, struct netmap_slot *);
 
+char *strzcpy(char *, const char *, size_t);
+uint32_t toeplitz_hash(const u_char *, int, const u_char *);
+uint32_t rss_hash4(be32_t, be32_t, be16_t, be16_t, u_char *);
+
 int parse_http(const char *, int, u_char *);
 
 typedef int counter64_t;
@@ -174,6 +181,21 @@ struct if_addr {
 	struct dlist *ifa_ports;
 	struct dlist ifa_port_head;
 };
+
+struct ip_socket {
+	struct dlist ipso_list;
+	union {
+		struct ip_socket *ipso_cache;
+		uint32_t ipso_hash;
+	};
+	be32_t ipso_laddr;
+	be32_t ipso_faddr;
+	be16_t ipso_lport;
+	be16_t ipso_fport;
+};
+
+int ip_connect(struct ip_socket *, uint32_t *);
+void ip_disconnect(struct ip_socket *);
 
 void ifaddr_init(struct if_addr *);
 uint16_t ifaddr_alloc_ephemeral_port(struct if_addr *);

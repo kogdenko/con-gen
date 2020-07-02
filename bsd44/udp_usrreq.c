@@ -165,7 +165,6 @@ udp_output(struct socket *so,
            const struct sockaddr_in *addr)
 {
 	int rc;
-	uint32_t h;
 	u_char *buf;
 	struct ip *ip;
 	struct udp_hdr *uh;
@@ -175,16 +174,21 @@ udp_output(struct socket *so,
 	if (sizeof(*ip) + sizeof(*uh) + len > current->t_mtu) {
 		return -EMSGSIZE;
 	}
-	if (addr != NULL) {
-		rc = in_pcbconnect(so, addr, &h);
-		if (rc) {
-			return rc;	
-		}
-	} else {
+//	if (addr != NULL) {
+//		rc = in_pcbconnect(so, addr, &h);
+//		if (rc) {
+//			return rc;	
+//		}
+//	} else {
 		if (so->inp_faddr == INADDR_ANY) {
 			return -ENOTCONN;
+		} else {
+			rc = in_pcbconnect(so, NULL);
+			if (rc) {
+				return rc;	
+			}
 		}
-	}
+//	}
 	txr = not_empty_txr(&m);
 	if (txr == NULL) {
 		return -ENOBUFS;
@@ -221,12 +225,11 @@ udp_output(struct socket *so,
 }
 
 int
-udp_connect(struct socket *so, const struct sockaddr_in *nam)
+udp_connect(struct socket *so)
 {
 	int rc;
-	uint32_t h;
 
-	rc = in_pcbconnect(so, nam, &h);
+	rc = in_pcbconnect(so, NULL);
 	if (rc == 0) {
 		soisconnected(so);
 	}

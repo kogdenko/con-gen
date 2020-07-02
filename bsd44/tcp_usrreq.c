@@ -46,7 +46,7 @@
  * Send initial segment on connection.
  */
 int
-tcp_connect(struct socket *so, const struct sockaddr_in *nam)
+tcp_connect(struct socket *so)
 {
 	struct tcpcb *tp;
 	uint32_t h;
@@ -55,7 +55,7 @@ tcp_connect(struct socket *so, const struct sockaddr_in *nam)
 	tp = sototcpcb(so);
 	ostate = tp->t_state;
 
-	rc = in_pcbconnect(so, nam, &h);
+	rc = in_pcbconnect(so, &h);
 	if (rc) {
 		goto out;
 	}

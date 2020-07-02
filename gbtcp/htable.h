@@ -23,7 +23,7 @@ struct htable_dynamic {
 	struct htable_static htd_tables[2];
 };
 
-#if 1
+#if 0
 typedef struct htable_static htable_t;
 
 #define htable_init htable_static_init
@@ -32,7 +32,7 @@ typedef struct htable_static htable_t;
 #define htable_add htable_static_add
 #define htable_del htable_static_del
 #define htable_foreach htable_static_foreach
-#else
+#else // 1
 typedef struct htable_dynamic htable_t;
 
 #define htable_init htable_dynamic_init
@@ -41,7 +41,7 @@ typedef struct htable_dynamic htable_t;
 #define htable_add htable_dynamic_add
 #define htable_del htable_dynamic_del
 #define htable_foreach htable_dynamic_foreach
-#endif
+#endif // 1
 
 void htable_static_init(struct htable_static *, int, htable_f);
 void htable_static_deinit(struct htable_static *);

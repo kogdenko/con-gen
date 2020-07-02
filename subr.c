@@ -216,6 +216,65 @@ parse_http(const char *s, int len, u_char *ctx)
 	return 0;
 }
 
+char *
+strzcpy(char *dest, const char *src, size_t n)
+{
+	size_t i;
+
+	for (i = 0; i < n - 1; ++i) {
+		if (src[i] == '\0') {
+			break;
+		}
+		dest[i] = src[i];
+	}
+	dest[i] = '\0';
+	return dest;
+}
+
+uint32_t
+toeplitz_hash(const u_char *data, int cnt, const u_char *key)
+{   
+	uint32_t h, v;
+	int i, b;
+
+	h = 0; 
+	v = (key[0] << 24) + (key[1] << 16) + (key[2] << 8) + key[3];
+	for (i = 0; i < cnt; i++) {
+		for (b = 0; b < 8; ++b) {
+			if (data[i] & (1 << (7 - b))) {
+				h ^= v;
+			}
+			v <<= 1;
+			if ((i + 4) < RSS_KEY_SIZE &&
+			    (key[i + 4] & (1 << (7 - b)))) {
+				v |= 1;
+			}
+		}
+	}
+	return h;
+}
+
+uint32_t
+rss_hash4(be32_t laddr, be32_t faddr, be16_t lport, be16_t fport, u_char *key)
+{
+	int off;
+	uint32_t h;
+	u_char data[12];
+
+	off = 0;
+	*(be32_t *)(data + off) = faddr;
+	off += 4;
+	*(be32_t *)(data + off) = laddr;
+	off += 4;
+	*(be16_t *)(data + off) = fport;
+	off += 2;
+	*(be16_t *)(data + off) = lport;
+	off += 2;
+	h = toeplitz_hash(data, off, key);
+	h &= 0x0000007F;
+	return h;
+}
+
 void
 counter64_init(counter64_t *c)
 {
@@ -236,91 +295,73 @@ counter64_get(counter64_t *c)
 	return accum;
 }
 
-void
-ifaddr_init(struct if_addr *ifa)
+static struct ip_socket *
+ip_socket_get(struct ip_socket *x, uint32_t h)
 {
-	int i;
+	struct dlist *b;
+	struct ip_socket *so;
 
-	ifa->ifa_ports = xmalloc(NEPHEMERAL * sizeof(struct dlist));
-	dlist_init(&ifa->ifa_port_head);
-	for (i = 0; i < NEPHEMERAL; ++i) {
-		dlist_insert_tail(&ifa->ifa_port_head, ifa->ifa_ports + i);
+	b = htable_bucket_get(&current->t_in_htable, h);
+	DLIST_FOREACH(so, b, ipso_list) {
+		if (so->ipso_laddr == x->ipso_laddr &&
+		    so->ipso_faddr == x->ipso_faddr &&
+		    so->ipso_lport == x->ipso_lport &&
+		    so->ipso_fport == x->ipso_fport) {
+			return so;
+		}
 	}
-}
-
-uint16_t
-ifaddr_alloc_ephemeral_port(struct if_addr *ifa)
-{
-	struct dlist *p;
-
-	if (dlist_is_empty(&ifa->ifa_port_head)) {
-		return 0;
-	}
-	p = dlist_first(&ifa->ifa_port_head);
-	dlist_remove(p);
-	p->dls_next = NULL;
-	return EPHEMERAL_MIN + (p - ifa->ifa_ports);
-}
-
-void
-ifaddr_free_ephemeral_port(struct if_addr *ifa, uint16_t port)
-{
-	struct dlist *p;
-
-	assert(port >= EPHEMERAL_MIN);
-	assert(port <= EPHEMERAL_MAX);
-	p = ifa->ifa_ports + (port - EPHEMERAL_MIN);
-	assert(p->dls_next == NULL);
-	dlist_insert_tail(&ifa->ifa_port_head, p);
+	return NULL;
 }
 
 int
-alloc_ephemeral_port(uint32_t *laddr, uint16_t *lport)
+ip_connect(struct ip_socket *new, uint32_t *ph)
 {
 	int i;
-	static int ifai, ifan;
-	struct if_addr *ifa;
+	uint32_t h;
+	struct ip_socket *cache;
 
-	for (i = 0; i < current->t_n_addrs; ++i) {
-		if (ifan >= NEPHEMERAL) {
-			ifan = 0;
-			ifai++;
-			if (ifai == current->t_n_addrs) {
-				ifai = 0;
+	new->ipso_cache = NULL;
+	if (current->t_Lflag) {
+		h = SO_HASH(new->ipso_faddr, new->ipso_lport, new->ipso_fport);
+		if (ip_socket_get(new, h) != NULL) {
+			return -EADDRINUSE;
+		}
+	} else {
+		for (i = 0; i < current->t_dst_cache_size; ++i) {
+			cache = current->t_dst_cache + current->t_dst_cache_i;
+			current->t_dst_cache_i++;
+			if (current->t_dst_cache_i == current->t_dst_cache_size) {
+				current->t_dst_cache_i = 0;
+			}
+			h = cache->ipso_hash;
+			if (ip_socket_get(cache, h) == NULL) {
+				new->ipso_laddr = cache->ipso_laddr;
+				new->ipso_faddr = cache->ipso_faddr;
+				new->ipso_lport = cache->ipso_lport;
+				new->ipso_fport = cache->ipso_fport;
+				new->ipso_cache = cache;
+				goto out;
 			}
 		}
-		ifa = current->t_addrs + ifai;
-		ifan++;
-		*lport = ifaddr_alloc_ephemeral_port(ifa);
-		if (*lport) {
-			*laddr = current->t_ip_laddr_min + ifai;
-			return 0;
-		}
+		return -EADDRNOTAVAIL;
 	}
-	return -EADDRNOTAVAIL;
+out:
+	htable_add(&current->t_in_htable, &new->ipso_list, h);
+	current->t_n_conns++;
+	if (ph != NULL) {
+		*ph = h;
+	}
+	return 0;
 }
 
 void
-free_ephemeral_port(uint32_t laddr, uint16_t lport)
+ip_disconnect(struct ip_socket *so)
 {
-	int ifai;
-	struct if_addr *ifa;
-
-	assert(laddr >= current->t_ip_laddr_min);
-	ifai = laddr - current->t_ip_laddr_min;
-	assert(ifai < current->t_n_addrs);
-	ifa = current->t_addrs + ifai;
-	ifaddr_free_ephemeral_port(ifa, lport);
+//	if (so->ipso_cache != NULL) {
+//		DLIST_INSERT_TAIL(&current->t_dst_cache, so->ipso_cache, ipso_list);
+//		so->ipso_cache = NULL;
+//	}
+	assert(current->t_n_conns);
+	current->t_n_conns--;
+	htable_del(&current->t_in_htable, &so->ipso_list);
 }
-
-uint32_t
-select_faddr()
-{
-	static int fi;
-
-	if (fi + current->t_ip_faddr_min > current->t_ip_faddr_max) {
-		fi = 0;
-	}
-	return current->t_ip_faddr_min + fi++;
-}
-

@@ -33,8 +33,6 @@ void
 bsd_client_connect()
 {
 	int rc;
-	uint32_t faddr;
-	struct sockaddr_in addr;
 	struct socket *so;
 
 	rc = bsd_socket(IPPROTO_TCP, &so);
@@ -46,15 +44,10 @@ bsd_client_connect()
 	if (current->t_so_debug) {
 		sosetopt(so, SO_DEBUG);
 	}
-	faddr = select_faddr();
-	addr.sin_family = AF_INET;
-	addr.sin_addr.s_addr = htonl(faddr);
-	addr.sin_port = current->t_port;
-	rc = bsd_connect(so, &addr);
+	rc = bsd_connect(so);
 	if (rc < 0) {
 		panic(-rc, "bsd_connect() failed");
 	}
-	current->t_n_clients++;
 }
 
 static void
@@ -121,8 +114,7 @@ con_close()
 		}
 	}
 	if (!current->t_Lflag) {
-		current->t_n_clients--;
-		while (current->t_n_clients < current->t_concurrency) {
+		while (current->t_n_conns < current->t_concurrency) {
 			bsd_client_connect();
 		}
 	}

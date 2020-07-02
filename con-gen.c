@@ -140,16 +140,78 @@ set_affinity(int cpu_id)
 	return 0;
 }
 
+#ifdef __linux__
+int
+read_rss_key(const char *ifname, u_char *rss_key)
+{
+	int fd, rc, size, off;
+	struct ifreq ifr;
+	struct ethtool_rxfh rss, *rss2;
+
+	rc = socket(AF_INET, SOCK_DGRAM, 0);
+	if (rc < 0) {
+		return rc;
+	}
+	fd = rc;
+	memset(&rss, 0, sizeof(rss));
+	memset(&ifr, 0, sizeof(ifr));
+	strzcpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
+	rss.cmd = ETHTOOL_GRSSH;
+	ifr.ifr_data = (void *)&rss;
+	rc = ioctl(fd, SIOCETHTOOL, (uintptr_t)&ifr);
+	if (rc < 0) {
+		fprintf(stderr, "%s: ioctl(SIOCETHTOOL) failed\n", ifname);
+		goto out;
+	}
+	if (rss.key_size != RSS_KEY_SIZE) {
+		fprintf(stderr, "%s: invalid rss key_size; key_size=%d\n",
+			ifname, rss.key_size);
+		goto out;
+	}
+	size = (sizeof(rss) + rss.key_size +
+	       rss.indir_size * sizeof(rss.rss_config[0]));
+	rss2 = malloc(size);
+	if (rc) {
+		goto out;
+	}
+	memset(rss2, 0, size);
+	rss2->cmd = ETHTOOL_GRSSH;
+	rss2->indir_size = rss.indir_size;
+	rss2->key_size = rss.key_size;
+	ifr.ifr_data = (void *)rss2;
+	rc = ioctl(fd, SIOCETHTOOL, (uintptr_t)&ifr);
+	if (rc) {
+		fprintf(stderr, "%s: ioctl(SIOCETHTOOL, ) failed\n", ifname);
+		goto out2;
+	}
+	off = rss2->indir_size * sizeof(rss2->rss_config[0]);
+	memcpy(rss_key, (u_char *)rss2->rss_config + off, RSS_KEY_SIZE);
+out2:
+	free(rss2);
+out:
+	close(fd);
+	return rc;
+}
+#else // __linux__
+int
+read_rss_key(const char *ifname, u_char *rss_key)
+{
+	return 0;
+}
+#endif // __linux__
+
+
 static void
 print_report(struct timer *timer)
 {
-	static int n;
+	static int i, n;
 	uint64_t new_ipackets, new_ibytes;
 	uint64_t new_opackets, new_obytes;
 	uint64_t new_closed, new_sndrexmitpack;
 	static uint64_t old_ipackets, old_ibytes;
 	static uint64_t old_opackets, old_obytes;
 	static uint64_t old_closed, old_sndrexmitpack;
+	int conns;
 	double dt, ipps, ibps, opps, obps, cps, rxmtps;
 	char cps_b[40], ipps_b[40], ibps_b[40], opps_b[40], obps_b[40];
 	char rxmtps_b[40];
@@ -163,11 +225,16 @@ print_report(struct timer *timer)
 		if (report_bytes_flag) {
 			printf("%-10s","obps");
 		}
-		printf("%s\n", "rxmtps");
+		printf("%-10s", "rxmtps");
+		printf("%s\n", "conns");
 	}
 	n++;
 	if (n == 20) {
 		n = 0;
+	}
+	conns = 0;
+	for (i = 0; i < n_threads; ++i) {
+		conns += threads[i].t_n_conns;
 	}
 	dt = (double)(current->t_time - report_time) / NANOSECONDS_SECOND;
 	report_time = current->t_time;
@@ -206,7 +273,8 @@ print_report(struct timer *timer)
 	if (report_bytes_flag) {
 		printf("%-10s", obps_b);
 	}
-	printf("%s\n", rxmtps_b);
+	printf("%-10s", rxmtps_b);
+	printf("%d\n", conns);
 	timer_set(timer, NANOSECONDS_SECOND, print_report);
 }
 
@@ -218,6 +286,69 @@ sighandler(int signum)
 	for (i = 0; i < n_threads; ++i) {
 		threads[i].t_done = 1;
 	}
+}
+
+static int
+thread_init_dst_cache(struct thread *t)
+{
+	uint64_t i, n;
+	int dst_cache_size;
+	uint32_t h;
+	uint32_t ip_laddr_connect;
+	uint32_t ip_faddr_connect;
+	uint16_t ip_lport_connect;
+	be32_t laddr, faddr;
+	be16_t lport, fport;
+	struct ip_socket *so;
+
+	t->t_dst_cache = malloc(t->t_dst_cache_size * sizeof(struct ip_socket));
+	if (t->t_dst_cache == NULL) {
+		fprintf(stderr, "Not enough memory for dst cache\n");
+		return -ENOMEM;
+	}
+	ip_laddr_connect = t->t_ip_laddr_min;
+	ip_lport_connect = EPHEMERAL_MIN;
+	ip_faddr_connect = t->t_ip_faddr_min;
+	dst_cache_size = 0;
+	n = (t->t_ip_laddr_max - t->t_ip_laddr_min + 1) * 
+	    (t->t_ip_faddr_max - t->t_ip_faddr_min + 1) *
+	    NEPHEMERAL;
+	for (i = 0; i < n; ++i) {
+		laddr = htonl(ip_laddr_connect);
+		faddr = htonl(ip_faddr_connect);
+		lport = htons(ip_lport_connect);
+		fport = t->t_port;
+		ip_faddr_connect++;
+		if (ip_faddr_connect == t->t_ip_faddr_max + 1) {
+			ip_faddr_connect = t->t_ip_faddr_min;
+			ip_lport_connect++;
+			if (ip_lport_connect == EPHEMERAL_MAX + 1) {
+				ip_lport_connect = EPHEMERAL_MIN;
+				ip_laddr_connect++;
+				if (ip_laddr_connect == t->t_ip_laddr_max + 1) {
+					ip_laddr_connect = t->t_ip_laddr_min;
+				}
+			}
+		}
+		if (t->t_rss_qid != RSS_QID_NONE) {
+			h = rss_hash4(laddr, faddr, lport, fport, t->t_rss_key);
+			if ((h % t->t_n_rss_q) != t->t_rss_qid) {
+				continue;
+			}
+		}
+		so = t->t_dst_cache + dst_cache_size;
+		so->ipso_laddr = laddr;
+		so->ipso_faddr = faddr;
+		so->ipso_lport = lport;
+		so->ipso_fport = fport;
+		so->ipso_hash = SO_HASH(faddr, lport, fport);
+		dst_cache_size++;
+		if (dst_cache_size == t->t_dst_cache_size) {
+			break;
+		}
+	}
+	t->t_dst_cache_size = dst_cache_size;
+	return 0;
 }
 
 static void
@@ -273,14 +404,14 @@ thread_process()
 	poll(pfds, n_pfds, 10);
 	t = rdtsc();
 	if (t > current->t_tsc) {
-		current->t_tsc = t;
-		current->t_time = 1000llu * current->t_tsc / tsc_mhz;
+		current->t_time = 1000llu * t / tsc_mhz;
 		age = current->t_tcp_nowage + NANOSECONDS_SECOND/PR_SLOWHZ;
 		if (current->t_time >= age) {
 			current->t_tcp_now++;
 			current->t_tcp_nowage += NANOSECONDS_SECOND/PR_SLOWHZ;
 		}
 	}
+	current->t_tsc = t;
 	if (pfds[0].revents & POLLIN) {
 		thread_process_rx();
 	}
@@ -311,11 +442,20 @@ thread_process()
 static void *
 thread_routine(void *udata)
 {
-	int ipproto;
+	int rc, ipproto;
 
 	current = udata;
 	if (current->t_affinity >= 0) {
 		set_affinity(current->t_affinity);
+	}
+	if (!current->t_Lflag) {
+		if (current->t_dst_cache_size < 2 * current->t_concurrency) {
+			current->t_dst_cache_size = 2 * current->t_concurrency;
+		}
+		rc = thread_init_dst_cache(current);
+		if (rc) {
+			return NULL;
+		}
 	}
 	current->t_tsc = rdtsc();
 	current->t_time = 1000 * current->t_tsc / tsc_mhz;
@@ -370,6 +510,7 @@ usage()
 	"\t--so-debug: Enable SO_DEBUG option\n"
 	"\t--udp: Use UDP instead of TCP\n"
 	"\t--toy: Use top tcp/ip stack instead of bsd4.4 (it is a bit faster)\n"
+	"\t--dst-cache: Number of precomputed connect tuples (default: 100000)\n"
 	"\t--ip-in-cksum: On/Off IP input checksum calculation\n"
 	"\t--ip-out-cksum: On/Off IP output checksum calculation\n"
 	"\t--tcp-in-cksum: On/Off TCP input checksum calculation\n"
@@ -386,6 +527,7 @@ static struct option long_options[] = {
 	{ "verbose", no_argument, 0, 'v' },
 	{ "udp", no_argument, 0, 0 },
 	{ "toy", no_argument, 0, 0 },
+	{ "dst-cache", required_argument, 0, 0 },
 	{ "so-debug", no_argument, 0, 0 },
 	{ "ip-in-cksum", optional_argument, 0, 0 },
 	{ "ip-out-cksum", optional_argument, 0, 0 },
@@ -402,11 +544,48 @@ static struct option long_options[] = {
 };
 
 static int
+thread_init_if(struct thread *t, const char *ifname)
+{
+	int rc;
+	char buf[IFNAMSIZ + 7];
+
+	snprintf(buf, sizeof(buf), "netmap:%s", ifname);
+	t->t_nmd = nm_open(buf, NULL, 0, NULL);
+	if (t->t_nmd == NULL) {
+		rc = -errno;
+		fprintf(stderr, "nm_open('%s') failed (%s)\n",
+			buf, strerror(-rc));
+		return rc;
+	}
+	if (t->t_nmd->req.nr_rx_rings != t->t_nmd->req.nr_tx_rings) {
+		rc = -EINVAL;
+		fprintf(stderr, "%s: nr_rx_rings != nr_tx_rings\n", buf);
+		goto err;
+	}
+	t->t_n_rss_q = t->t_nmd->req.nr_rx_rings;
+	t->t_rss_qid = RSS_QID_NONE;	
+	if ((t->t_nmd->req.nr_flags & NR_REG_MASK) == NR_REG_ONE_NIC) {
+		t->t_rss_qid = t->t_nmd->first_rx_ring;
+		rc = read_rss_key(t->t_nmd->req.nr_name, t->t_rss_key);
+		if (rc) {
+			fprintf(stderr, "%s: cant read rss key\n",
+				t->t_nmd->req.nr_name);
+			goto err;
+		}
+	}
+	return 0;
+err:
+	nm_close(t->t_nmd);
+	t->t_nmd = NULL;
+	return rc;
+}
+
+static int
 thread_init(struct thread *t, struct thread *pt, int argc, char **argv)
 {
-	int i, rc, opt, option_index;
+	int rc, opt, option_index;
 	const char *optname;
-	char ifname[IFNAMSIZ + 7];
+	const char *ifname;
 	long long optval;
 
 	t->t_id = t - threads;
@@ -415,6 +594,7 @@ thread_init(struct thread *t, struct thread *pt, int argc, char **argv)
 	dlist_init(&t->t_so_pool);
 	dlist_init(&t->t_sob_pool);
 	if (pt == NULL) {
+		t->t_dst_cache_size = 100000;
 		t->t_ip_do_incksum = 2;
 		t->t_ip_do_outcksum = 2;
 		t->t_tcp_do_incksum = 2;
@@ -435,6 +615,7 @@ thread_init(struct thread *t, struct thread *pt, int argc, char **argv)
 		t->t_affinity = -1;
 	} else {
 		t->t_toy = pt->t_toy;
+		t->t_dst_cache_size = pt->t_dst_cache_size;
 		t->t_Lflag = pt->t_Lflag;
 		t->t_so_debug = pt->t_so_debug;
 		t->t_ip_do_incksum = pt->t_ip_do_incksum;
@@ -459,7 +640,7 @@ thread_init(struct thread *t, struct thread *pt, int argc, char **argv)
 		t->t_udp = pt->t_udp;
 		t->t_affinity = pt->t_affinity;
 	}
-	ifname[0] = '\0';
+	ifname = NULL;
 	while ((opt = getopt_long(argc, argv,
 	                          "hvi:s:d:S:D:a:n:b:c:p:NL",
 	                          long_options, &option_index)) != -1) {
@@ -471,6 +652,8 @@ thread_init(struct thread *t, struct thread *pt, int argc, char **argv)
 				t->t_udp = 1;
 			} else if (!strcmp(optname, "toy")) {
 				t->t_toy = 1;
+			} else if (!strcmp(optname, "dst-cache")) {
+				t->t_dst_cache_size = optval;
 			} else if (!strcmp(optname, "so-debug")) {
 				t->t_so_debug = 1;
 			} else if (!strcmp(optname, "ip-in-cksum")) {
@@ -545,7 +728,7 @@ thread_init(struct thread *t, struct thread *pt, int argc, char **argv)
 			verbose++;
 			break;
 		case 'i':
-			snprintf(ifname, sizeof(ifname), "netmap:%s", optarg);
+			ifname = optarg;
 			break;
 		case 's':
 			rc = scan_ip_range(&t->t_ip_laddr_min,
@@ -607,24 +790,13 @@ err:
 			return -EINVAL;
 		}
 	}
-	if (ifname[0] == '\0') {
+	if (ifname == NULL) {
 		usage();
 		return -EINVAL;
 	}
-	t->t_nmd = nm_open(ifname, NULL, 0, NULL);
-	if (t->t_nmd == NULL) {
-		rc = -errno;
-		fprintf(stderr, "nm_open('%s') failed (%s)\n",
-			ifname, strerror(-rc));
+	rc = thread_init_if(t, ifname);
+	if (rc) {
 		return rc;
-	}
-	t->t_n_addrs = t->t_ip_laddr_max - t->t_ip_laddr_min + 1;
-	if (t->t_n_addrs > 100) {
-		t->t_n_addrs = 100;
-	}
-	t->t_addrs = xmalloc(t->t_n_addrs * sizeof(struct if_addr));
-	for (i = 0; i < t->t_n_addrs; ++i) {
-		ifaddr_init(t->t_addrs + i);
 	}
 	htable_init(&t->t_in_htable, 65536,
 	            t->t_toy ? toy_socket_hash : bsd_socket_hash);

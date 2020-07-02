@@ -184,7 +184,7 @@ struct tcpcb *
 	 tcp_usrclosed(struct tcpcb *);
 void	 tcp_xmit_timer(struct tcpcb *, short);
 void tcp_template(struct tcpcb *, struct ip *, struct tcp_hdr *);
-int tcp_connect(struct socket *so, const struct sockaddr_in *);
+int tcp_connect(struct socket *so);
 int tcp_send(struct socket *so, const void *, int);
 int tcp_disconnect(struct socket *so);
 int tcp_listen(struct socket *so);
