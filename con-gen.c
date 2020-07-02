@@ -288,6 +288,69 @@ sighandler(int signum)
 	}
 }
 
+static int
+thread_init_dst_cache(struct thread *t)
+{
+	uint64_t i, n;
+	int dst_cache_size;
+	uint32_t h;
+	uint32_t ip_laddr_connect;
+	uint32_t ip_faddr_connect;
+	uint16_t ip_lport_connect;
+	be32_t laddr, faddr;
+	be16_t lport, fport;
+	struct ip_socket *so;
+
+	t->t_dst_cache = malloc(t->t_dst_cache_size * sizeof(struct ip_socket));
+	if (t->t_dst_cache == NULL) {
+		fprintf(stderr, "Not enough memory for dst cache\n");
+		return -ENOMEM;
+	}
+	ip_laddr_connect = t->t_ip_laddr_min;
+	ip_lport_connect = EPHEMERAL_MIN;
+	ip_faddr_connect = t->t_ip_faddr_min;
+	dst_cache_size = 0;
+	n = (t->t_ip_laddr_max - t->t_ip_laddr_min + 1) * 
+	    (t->t_ip_faddr_max - t->t_ip_faddr_min + 1) *
+	    NEPHEMERAL;
+	for (i = 0; i < n; ++i) {
+		laddr = htonl(ip_laddr_connect);
+		faddr = htonl(ip_faddr_connect);
+		lport = htons(ip_lport_connect);
+		fport = t->t_port;
+		ip_faddr_connect++;
+		if (ip_faddr_connect == t->t_ip_faddr_max + 1) {
+			ip_faddr_connect = t->t_ip_faddr_min;
+			ip_lport_connect++;
+			if (ip_lport_connect == EPHEMERAL_MAX + 1) {
+				ip_lport_connect = EPHEMERAL_MIN;
+				ip_laddr_connect++;
+				if (ip_laddr_connect == t->t_ip_laddr_max + 1) {
+					ip_laddr_connect = t->t_ip_laddr_min;
+				}
+			}
+		}
+		if (t->t_rss_qid != RSS_QID_NONE) {
+			h = rss_hash4(laddr, faddr, lport, fport, t->t_rss_key);
+			if ((h % t->t_n_rss_q) != t->t_rss_qid) {
+				continue;
+			}
+		}
+		so = t->t_dst_cache + dst_cache_size;
+		so->ipso_laddr = laddr;
+		so->ipso_faddr = faddr;
+		so->ipso_lport = lport;
+		so->ipso_fport = fport;
+		so->ipso_hash = SO_HASH(faddr, lport, fport);
+		dst_cache_size++;
+		if (dst_cache_size == t->t_dst_cache_size) {
+			break;
+		}
+	}
+	t->t_dst_cache_size = dst_cache_size;
+	return 0;
+}
+
 static void
 thread_process_rx()
 {
@@ -379,11 +442,20 @@ thread_process()
 static void *
 thread_routine(void *udata)
 {
-	int ipproto;
+	int rc, ipproto;
 
 	current = udata;
 	if (current->t_affinity >= 0) {
 		set_affinity(current->t_affinity);
+	}
+	if (!current->t_Lflag) {
+		if (current->t_dst_cache_size < 2 * current->t_concurrency) {
+			current->t_dst_cache_size = 2 * current->t_concurrency;
+		}
+		rc = thread_init_dst_cache(current);
+		if (rc) {
+			return NULL;
+		}
 	}
 	current->t_tsc = rdtsc();
 	current->t_time = 1000 * current->t_tsc / tsc_mhz;
@@ -506,69 +578,6 @@ err:
 	nm_close(t->t_nmd);
 	t->t_nmd = NULL;
 	return rc;
-}
-
-static void
-thread_init_dst_cache(struct thread *t)
-{
-	uint64_t i, n;
-	int dst_cache_progress;
-	uint32_t h;
-	uint32_t ip_laddr_connect;
-	uint32_t ip_faddr_connect;
-	uint16_t ip_lport_connect;
-	be32_t laddr, faddr;
-	be16_t lport, fport;
-	struct ip_socket *so;
-
-	dlist_init(&t->t_dst_cache);
-	ip_laddr_connect = t->t_ip_laddr_min;
-	ip_lport_connect = EPHEMERAL_MIN;
-	ip_faddr_connect = t->t_ip_faddr_min;
-	dst_cache_progress = 0;
-	n = (t->t_ip_laddr_max - t->t_ip_laddr_min + 1) * 
-	    (t->t_ip_faddr_max - t->t_ip_faddr_min + 1) *
-	    NEPHEMERAL;
-	for (i = 0; i < n; ++i) {
-		laddr = htonl(ip_laddr_connect);
-		faddr = htonl(ip_faddr_connect);
-		lport = htons(ip_lport_connect);
-		fport = t->t_port;
-		ip_faddr_connect++;
-		if (ip_faddr_connect == t->t_ip_faddr_max + 1) {
-			ip_faddr_connect = t->t_ip_faddr_min;
-			ip_lport_connect++;
-			if (ip_lport_connect == EPHEMERAL_MAX + 1) {
-				ip_lport_connect = EPHEMERAL_MIN;
-				ip_laddr_connect++;
-				if (ip_laddr_connect == t->t_ip_laddr_max + 1) {
-					ip_laddr_connect = t->t_ip_laddr_min;
-				}
-			}
-		}
-		if (t->t_rss_qid != RSS_QID_NONE) {
-			h = rss_hash4(laddr, faddr, lport, fport, t->t_rss_key);
-			if ((h % t->t_n_rss_q) != t->t_rss_qid) {
-				continue;
-			}
-		}
-		so = malloc(sizeof(*so));
-		if (so == NULL) {
-			fprintf(stderr, "Not enough memory for dst cache\n");
-			return;
-		}
-		so->ipso_laddr = laddr;
-		so->ipso_faddr = faddr;
-		so->ipso_lport = lport;
-		so->ipso_fport = fport;
-		so->ipso_hash = SO_HASH(faddr, lport, fport);
-		DLIST_INSERT_TAIL(&t->t_dst_cache, so, ipso_list);
-		dst_cache_progress++;
-		if (dst_cache_progress == t->t_dst_cache_size) {
-			break;
-		}
-	}
-	dbg("progress %u", dst_cache_progress);
 }
 
 static int
@@ -788,12 +797,6 @@ err:
 	rc = thread_init_if(t, ifname);
 	if (rc) {
 		return rc;
-	}
-	if (!t->t_Lflag) {
-		if (t->t_dst_cache_size < t->t_concurrency) {
-			t->t_dst_cache_size = t->t_concurrency;
-		}
-		thread_init_dst_cache(t);
 	}
 	htable_init(&t->t_in_htable, 65536,
 	            t->t_toy ? toy_socket_hash : bsd_socket_hash);

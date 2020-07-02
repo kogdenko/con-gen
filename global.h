@@ -30,7 +30,9 @@ struct thread {
 	u_char t_rss_qid;
 	u_char t_rss_key[RSS_KEY_SIZE];
 	struct nm_desc *t_nmd;
-	struct dlist t_dst_cache;
+	struct ip_socket *t_dst_cache;
+	int t_dst_cache_size;
+	int t_dst_cache_i;
 	struct dlist t_so_pool;
 	struct dlist t_so_txq;
 	struct dlist t_sob_pool;
@@ -58,7 +60,6 @@ struct thread {
 	void *t_in_binded[EPHEMERAL_MIN];
 	u_char t_udp;
 	int t_affinity;
-	int t_dst_cache_size;
 	pthread_t t_pthread;
 	uint64_t *t_counters;
 };

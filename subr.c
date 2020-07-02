@@ -295,38 +295,57 @@ counter64_get(counter64_t *c)
 	return accum;
 }
 
+static struct ip_socket *
+ip_socket_get(struct ip_socket *x, uint32_t h)
+{
+	struct dlist *b;
+	struct ip_socket *so;
+
+	b = htable_bucket_get(&current->t_in_htable, h);
+	DLIST_FOREACH(so, b, ipso_list) {
+		if (so->ipso_laddr == x->ipso_laddr &&
+		    so->ipso_faddr == x->ipso_faddr &&
+		    so->ipso_lport == x->ipso_lport &&
+		    so->ipso_fport == x->ipso_fport) {
+			return so;
+		}
+	}
+	return NULL;
+}
+
 int
 ip_connect(struct ip_socket *new, uint32_t *ph)
 {
+	int i;
 	uint32_t h;
-	struct dlist *b;
-	struct ip_socket *so, *cache;
+	struct ip_socket *cache;
 
 	new->ipso_cache = NULL;
 	if (current->t_Lflag) {
 		h = SO_HASH(new->ipso_faddr, new->ipso_lport, new->ipso_fport);
-		b = htable_bucket_get(&current->t_in_htable, h);
-		DLIST_FOREACH(so, b, ipso_list) {
-			if (so->ipso_laddr == new->ipso_laddr &&
-			    so->ipso_faddr == new->ipso_faddr &&
-			    so->ipso_lport == new->ipso_lport &&
-			    so->ipso_fport == new->ipso_fport) {
-				return -EADDRINUSE;
-			}
+		if (ip_socket_get(new, h) != NULL) {
+			return -EADDRINUSE;
 		}
 	} else {
-		if (dlist_is_empty(&current->t_dst_cache)) {
-			return -EADDRNOTAVAIL;
+		for (i = 0; i < current->t_dst_cache_size; ++i) {
+			cache = current->t_dst_cache + current->t_dst_cache_i;
+			current->t_dst_cache_i++;
+			if (current->t_dst_cache_i == current->t_dst_cache_size) {
+				current->t_dst_cache_i = 0;
+			}
+			h = cache->ipso_hash;
+			if (ip_socket_get(cache, h) == NULL) {
+				new->ipso_laddr = cache->ipso_laddr;
+				new->ipso_faddr = cache->ipso_faddr;
+				new->ipso_lport = cache->ipso_lport;
+				new->ipso_fport = cache->ipso_fport;
+				new->ipso_cache = cache;
+				goto out;
+			}
 		}
-		cache = DLIST_FIRST(&current->t_dst_cache, struct ip_socket, ipso_list);
-		DLIST_REMOVE(cache, ipso_list);
-		new->ipso_laddr = cache->ipso_laddr;
-		new->ipso_faddr = cache->ipso_faddr;
-		new->ipso_lport = cache->ipso_lport;
-		new->ipso_fport = cache->ipso_fport;
-		new->ipso_cache = cache;
-		h = cache->ipso_hash;
+		return -EADDRNOTAVAIL;
 	}
+out:
 	htable_add(&current->t_in_htable, &new->ipso_list, h);
 	current->t_n_conns++;
 	if (ph != NULL) {
@@ -338,10 +357,10 @@ ip_connect(struct ip_socket *new, uint32_t *ph)
 void
 ip_disconnect(struct ip_socket *so)
 {
-	if (so->ipso_cache != NULL) {
-		DLIST_INSERT_TAIL(&current->t_dst_cache, so->ipso_cache, ipso_list);
-		so->ipso_cache = NULL;
-	}
+//	if (so->ipso_cache != NULL) {
+//		DLIST_INSERT_TAIL(&current->t_dst_cache, so->ipso_cache, ipso_list);
+//		so->ipso_cache = NULL;
+//	}
 	assert(current->t_n_conns);
 	current->t_n_conns--;
 	htable_del(&current->t_in_htable, &so->ipso_list);
