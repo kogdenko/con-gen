@@ -59,6 +59,10 @@ struct sockbuf {
  */
 struct socket {
 	struct dlist inp_list;
+	be32_t inp_laddr;
+	be32_t inp_faddr;
+	be16_t inp_lport;
+	be16_t inp_fport;
 
 	uint32_t so_options;		/* from socket call, see socket.h */
 	u_char	so_proto;
@@ -71,10 +75,6 @@ struct socket {
 	struct	dlist so_q[2];		/* queue of partial/incoming connections */
 #define so_ql so_q[0]
 
-	be32_t inp_laddr;
-	be32_t inp_faddr;
-	be16_t inp_lport;
-	be16_t inp_fport;
 
 	struct sockbuf so_snd;
 	int so_rcv_hiwat;
@@ -166,7 +166,7 @@ void soisconnected(struct socket *so);
 void somodopt(struct socket *, int, int);
 
 int bsd_socket(int, struct socket **);
-int bsd_connect(struct socket *, const struct sockaddr_in *);
+int bsd_connect(struct socket *);
 int bsd_sendto(struct socket *, const void *, int, int,
 	const struct sockaddr_in *);
 int bsd_bind(struct socket *so, be16_t port);

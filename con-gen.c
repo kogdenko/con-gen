@@ -140,6 +140,67 @@ set_affinity(int cpu_id)
 	return 0;
 }
 
+#ifdef __linux__
+int
+read_rss_key(const char *ifname, u_char *rss_key)
+{
+	int fd, rc, size, off;
+	struct ifreq ifr;
+	struct ethtool_rxfh rss, *rss2;
+
+	rc = socket(AF_INET, SOCK_DGRAM, 0);
+	if (rc < 0) {
+		return rc;
+	}
+	fd = rc;
+	memset(&rss, 0, sizeof(rss));
+	memset(&ifr, 0, sizeof(ifr));
+	strzcpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
+	rss.cmd = ETHTOOL_GRSSH;
+	ifr.ifr_data = (void *)&rss;
+	rc = ioctl(fd, SIOCETHTOOL, (uintptr_t)&ifr);
+	if (rc < 0) {
+		fprintf(stderr, "%s: ioctl(SIOCETHTOOL) failed\n", ifname);
+		goto out;
+	}
+	if (rss.key_size != RSS_KEY_SIZE) {
+		fprintf(stderr, "%s: invalid rss key_size; key_size=%d\n",
+			ifname, rss.key_size);
+		goto out;
+	}
+	size = (sizeof(rss) + rss.key_size +
+	       rss.indir_size * sizeof(rss.rss_config[0]));
+	rss2 = malloc(size);
+	if (rc) {
+		goto out;
+	}
+	memset(rss2, 0, size);
+	rss2->cmd = ETHTOOL_GRSSH;
+	rss2->indir_size = rss.indir_size;
+	rss2->key_size = rss.key_size;
+	ifr.ifr_data = (void *)rss2;
+	rc = ioctl(fd, SIOCETHTOOL, (uintptr_t)&ifr);
+	if (rc) {
+		fprintf(stderr, "%s: ioctl(SIOCETHTOOL, ) failed\n", ifname);
+		goto out2;
+	}
+	off = rss2->indir_size * sizeof(rss2->rss_config[0]);
+	memcpy(rss_key, (u_char *)rss2->rss_config + off, RSS_KEY_SIZE);
+out2:
+	free(rss2);
+out:
+	close(fd);
+	return rc;
+}
+#else // __linux__
+int
+read_rss_key(const char *ifname, u_char *rss_key)
+{
+	return 0;
+}
+#endif // __linux__
+
+
 static void
 print_report(struct timer *timer)
 {
@@ -273,14 +334,14 @@ thread_process()
 	poll(pfds, n_pfds, 10);
 	t = rdtsc();
 	if (t > current->t_tsc) {
-		current->t_tsc = t;
-		current->t_time = 1000llu * current->t_tsc / tsc_mhz;
+		current->t_time = 1000llu * t / tsc_mhz;
 		age = current->t_tcp_nowage + NANOSECONDS_SECOND/PR_SLOWHZ;
 		if (current->t_time >= age) {
 			current->t_tcp_now++;
 			current->t_tcp_nowage += NANOSECONDS_SECOND/PR_SLOWHZ;
 		}
 	}
+	current->t_tsc = t;
 	if (pfds[0].revents & POLLIN) {
 		thread_process_rx();
 	}
@@ -402,11 +463,48 @@ static struct option long_options[] = {
 };
 
 static int
+thread_init_if(struct thread *t, const char *ifname)
+{
+	int rc;
+	char buf[IFNAMSIZ + 7];
+
+	snprintf(buf, sizeof(buf), "netmap:%s", ifname);
+	t->t_nmd = nm_open(buf, NULL, 0, NULL);
+	if (t->t_nmd == NULL) {
+		rc = -errno;
+		fprintf(stderr, "nm_open('%s') failed (%s)\n",
+			buf, strerror(-rc));
+		return rc;
+	}
+	if (t->t_nmd->req.nr_rx_rings != t->t_nmd->req.nr_tx_rings) {
+		rc = -EINVAL;
+		fprintf(stderr, "%s: nr_rx_rings != nr_tx_rings\n", buf);
+		goto err;
+	}
+	t->t_n_rss_q = t->t_nmd->req.nr_rx_rings;
+	t->t_rss_qid = RSS_QID_NONE;	
+	if ((t->t_nmd->req.nr_flags & NR_REG_MASK) == NR_REG_ONE_NIC) {
+		t->t_rss_qid = t->t_nmd->first_rx_ring;
+		rc = read_rss_key(t->t_nmd->req.nr_name, t->t_rss_key);
+		if (rc) {
+			fprintf(stderr, "%s: cant read rss key\n",
+				t->t_nmd->req.nr_name);
+			goto err;
+		}
+	}
+	return 0;
+err:
+	nm_close(t->t_nmd);
+	t->t_nmd = NULL;
+	return rc;
+}
+
+static int
 thread_init(struct thread *t, struct thread *pt, int argc, char **argv)
 {
-	int i, rc, opt, option_index;
+	int rc, opt, option_index;
 	const char *optname;
-	char ifname[IFNAMSIZ + 7];
+	const char *ifname;
 	long long optval;
 
 	t->t_id = t - threads;
@@ -459,7 +557,7 @@ thread_init(struct thread *t, struct thread *pt, int argc, char **argv)
 		t->t_udp = pt->t_udp;
 		t->t_affinity = pt->t_affinity;
 	}
-	ifname[0] = '\0';
+	ifname = NULL;
 	while ((opt = getopt_long(argc, argv,
 	                          "hvi:s:d:S:D:a:n:b:c:p:NL",
 	                          long_options, &option_index)) != -1) {
@@ -545,7 +643,7 @@ thread_init(struct thread *t, struct thread *pt, int argc, char **argv)
 			verbose++;
 			break;
 		case 'i':
-			snprintf(ifname, sizeof(ifname), "netmap:%s", optarg);
+			ifname = optarg;
 			break;
 		case 's':
 			rc = scan_ip_range(&t->t_ip_laddr_min,
@@ -607,25 +705,17 @@ err:
 			return -EINVAL;
 		}
 	}
-	if (ifname[0] == '\0') {
+	if (ifname == NULL) {
 		usage();
 		return -EINVAL;
 	}
-	t->t_nmd = nm_open(ifname, NULL, 0, NULL);
-	if (t->t_nmd == NULL) {
-		rc = -errno;
-		fprintf(stderr, "nm_open('%s') failed (%s)\n",
-			ifname, strerror(-rc));
+	rc = thread_init_if(t, ifname);
+	if (rc) {
 		return rc;
 	}
-	t->t_n_addrs = t->t_ip_laddr_max - t->t_ip_laddr_min + 1;
-	if (t->t_n_addrs > 100) {
-		t->t_n_addrs = 100;
-	}
-	t->t_addrs = xmalloc(t->t_n_addrs * sizeof(struct if_addr));
-	for (i = 0; i < t->t_n_addrs; ++i) {
-		ifaddr_init(t->t_addrs + i);
-	}
+	t->t_ip_laddr_connect = t->t_ip_laddr_min;
+	t->t_ip_lport_connect = EPHEMERAL_MIN;
+	t->t_ip_faddr_connect = t->t_ip_faddr_min;
 	htable_init(&t->t_in_htable, 65536,
 	            t->t_toy ? toy_socket_hash : bsd_socket_hash);
 	if (t->t_Lflag) {

@@ -5,6 +5,9 @@
 #include "netstat.h"
 #include "gbtcp/htable.h"
 
+#define RSS_QID_NONE 255
+#define RSS_KEY_SIZE 40
+
 struct thread {
 	u_char t_id;
 	u_char t_toy;
@@ -23,6 +26,9 @@ struct thread {
 	u_short t_mtu;
 	u_short t_burst_size;
 	u_char t_tx_throttled;
+	u_char t_n_rss_q;
+	u_char t_rss_qid;
+	u_char t_rss_key[RSS_KEY_SIZE];
 	struct nm_desc *t_nmd;
 	struct dlist t_so_pool;
 	struct dlist t_so_txq;
@@ -42,8 +48,11 @@ struct thread {
 	uint32_t t_ip_laddr_max;
 	uint32_t t_ip_faddr_min;
 	uint32_t t_ip_faddr_max;
-	struct if_addr *t_addrs;
-	int t_n_addrs;
+	uint32_t t_ip_laddr_connect;
+	uint32_t t_ip_faddr_connect;
+	uint16_t t_ip_lport_connect;
+//	struct if_addr *t_addrs;
+//	int t_n_addrs;
 	char *t_http;
 	int t_http_len;
 	htable_t t_in_htable;

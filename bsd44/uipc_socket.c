@@ -228,7 +228,7 @@ soaccept(struct socket *so)
 }
 
 int
-bsd_connect(struct socket *so, const struct sockaddr_in* nam)
+bsd_connect(struct socket *so)
 {
 	int rc;
 
@@ -247,9 +247,9 @@ bsd_connect(struct socket *so, const struct sockaddr_in* nam)
 		rc = -EISCONN;
 	} else {
 		if (so->so_proto == IPPROTO_TCP) {
-			rc = tcp_connect(so, nam);
+			rc = tcp_connect(so);
 		} else {
-			rc = udp_connect(so, nam);
+			rc = udp_connect(so);
 		}
 	}
 	return rc;

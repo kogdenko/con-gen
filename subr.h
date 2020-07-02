@@ -28,9 +28,12 @@
 #include <sys/types.h>
 #include <sys/fcntl.h>
 #include <pthread.h>
-#ifndef __linux__
+#ifdef __linux__
+#include <linux/ethtool.h>
+#include <linux/sockios.h>
+#else // __linux__
 #include <pthread_np.h>
-#endif
+#endif // __linux__
 
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h>
@@ -106,7 +109,7 @@ void dbg5(const char *, u_int, const char *, int, const char *, ...)
 #define panic(errnum, fmt, ...) \
 	panic3(__FILE__, __LINE__, errnum, fmt, ##__VA_ARGS__)
 
-#define dbg(format, ...) \
+#define dbg(fmt, ...) \
 	dbg5(__FILE__, __LINE__, __func__, 0, fmt, ##__VA_ARGS__)
 
 #define dbg_rl(period, fmt, ...) \
@@ -152,6 +155,10 @@ void panic3(const char *, int, int, const char *, ...)
 struct netmap_ring *not_empty_txr(struct netmap_slot **);
 void ether_output(struct netmap_ring *, struct netmap_slot *);
 
+char *strzcpy(char *, const char *, size_t);
+uint32_t toeplitz_hash(const u_char *, int, const u_char *);
+uint32_t rss_hash4(be32_t, be32_t, be16_t, be16_t, u_char *);
+
 int parse_http(const char *, int, u_char *);
 
 typedef int counter64_t;
@@ -174,6 +181,8 @@ struct if_addr {
 	struct dlist *ifa_ports;
 	struct dlist ifa_port_head;
 };
+
+int ip_connect(void *, uint32_t *);
 
 void ifaddr_init(struct if_addr *);
 uint16_t ifaddr_alloc_ephemeral_port(struct if_addr *);
