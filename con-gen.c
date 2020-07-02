@@ -204,13 +204,14 @@ read_rss_key(const char *ifname, u_char *rss_key)
 static void
 print_report(struct timer *timer)
 {
-	static int n;
+	static int i, n;
 	uint64_t new_ipackets, new_ibytes;
 	uint64_t new_opackets, new_obytes;
 	uint64_t new_closed, new_sndrexmitpack;
 	static uint64_t old_ipackets, old_ibytes;
 	static uint64_t old_opackets, old_obytes;
 	static uint64_t old_closed, old_sndrexmitpack;
+	int conns;
 	double dt, ipps, ibps, opps, obps, cps, rxmtps;
 	char cps_b[40], ipps_b[40], ibps_b[40], opps_b[40], obps_b[40];
 	char rxmtps_b[40];
@@ -224,11 +225,16 @@ print_report(struct timer *timer)
 		if (report_bytes_flag) {
 			printf("%-10s","obps");
 		}
-		printf("%s\n", "rxmtps");
+		printf("%-10s", "rxmtps");
+		printf("%s\n", "conns");
 	}
 	n++;
 	if (n == 20) {
 		n = 0;
+	}
+	conns = 0;
+	for (i = 0; i < n_threads; ++i) {
+		conns += threads[i].t_n_conns;
 	}
 	dt = (double)(current->t_time - report_time) / NANOSECONDS_SECOND;
 	report_time = current->t_time;
@@ -267,7 +273,8 @@ print_report(struct timer *timer)
 	if (report_bytes_flag) {
 		printf("%-10s", obps_b);
 	}
-	printf("%s\n", rxmtps_b);
+	printf("%-10s", rxmtps_b);
+	printf("%d\n", conns);
 	timer_set(timer, NANOSECONDS_SECOND, print_report);
 }
 
@@ -431,6 +438,7 @@ usage()
 	"\t--so-debug: Enable SO_DEBUG option\n"
 	"\t--udp: Use UDP instead of TCP\n"
 	"\t--toy: Use top tcp/ip stack instead of bsd4.4 (it is a bit faster)\n"
+	"\t--dst-cache: Number of precomputed connect tuples (default: 100000)\n"
 	"\t--ip-in-cksum: On/Off IP input checksum calculation\n"
 	"\t--ip-out-cksum: On/Off IP output checksum calculation\n"
 	"\t--tcp-in-cksum: On/Off TCP input checksum calculation\n"
@@ -447,6 +455,7 @@ static struct option long_options[] = {
 	{ "verbose", no_argument, 0, 'v' },
 	{ "udp", no_argument, 0, 0 },
 	{ "toy", no_argument, 0, 0 },
+	{ "dst-cache", required_argument, 0, 0 },
 	{ "so-debug", no_argument, 0, 0 },
 	{ "ip-in-cksum", optional_argument, 0, 0 },
 	{ "ip-out-cksum", optional_argument, 0, 0 },
@@ -499,6 +508,69 @@ err:
 	return rc;
 }
 
+static void
+thread_init_dst_cache(struct thread *t)
+{
+	uint64_t i, n;
+	int dst_cache_progress;
+	uint32_t h;
+	uint32_t ip_laddr_connect;
+	uint32_t ip_faddr_connect;
+	uint16_t ip_lport_connect;
+	be32_t laddr, faddr;
+	be16_t lport, fport;
+	struct ip_socket *so;
+
+	dlist_init(&t->t_dst_cache);
+	ip_laddr_connect = t->t_ip_laddr_min;
+	ip_lport_connect = EPHEMERAL_MIN;
+	ip_faddr_connect = t->t_ip_faddr_min;
+	dst_cache_progress = 0;
+	n = (t->t_ip_laddr_max - t->t_ip_laddr_min + 1) * 
+	    (t->t_ip_faddr_max - t->t_ip_faddr_min + 1) *
+	    NEPHEMERAL;
+	for (i = 0; i < n; ++i) {
+		laddr = htonl(ip_laddr_connect);
+		faddr = htonl(ip_faddr_connect);
+		lport = htons(ip_lport_connect);
+		fport = t->t_port;
+		ip_faddr_connect++;
+		if (ip_faddr_connect == t->t_ip_faddr_max + 1) {
+			ip_faddr_connect = t->t_ip_faddr_min;
+			ip_lport_connect++;
+			if (ip_lport_connect == EPHEMERAL_MAX + 1) {
+				ip_lport_connect = EPHEMERAL_MIN;
+				ip_laddr_connect++;
+				if (ip_laddr_connect == t->t_ip_laddr_max + 1) {
+					ip_laddr_connect = t->t_ip_laddr_min;
+				}
+			}
+		}
+		if (t->t_rss_qid != RSS_QID_NONE) {
+			h = rss_hash4(laddr, faddr, lport, fport, t->t_rss_key);
+			if ((h % t->t_n_rss_q) != t->t_rss_qid) {
+				continue;
+			}
+		}
+		so = malloc(sizeof(*so));
+		if (so == NULL) {
+			fprintf(stderr, "Not enough memory for dst cache\n");
+			return;
+		}
+		so->ipso_laddr = laddr;
+		so->ipso_faddr = faddr;
+		so->ipso_lport = lport;
+		so->ipso_fport = fport;
+		so->ipso_hash = SO_HASH(faddr, lport, fport);
+		DLIST_INSERT_TAIL(&t->t_dst_cache, so, ipso_list);
+		dst_cache_progress++;
+		if (dst_cache_progress == t->t_dst_cache_size) {
+			break;
+		}
+	}
+	dbg("progress %u", dst_cache_progress);
+}
+
 static int
 thread_init(struct thread *t, struct thread *pt, int argc, char **argv)
 {
@@ -513,6 +585,7 @@ thread_init(struct thread *t, struct thread *pt, int argc, char **argv)
 	dlist_init(&t->t_so_pool);
 	dlist_init(&t->t_sob_pool);
 	if (pt == NULL) {
+		t->t_dst_cache_size = 100000;
 		t->t_ip_do_incksum = 2;
 		t->t_ip_do_outcksum = 2;
 		t->t_tcp_do_incksum = 2;
@@ -533,6 +606,7 @@ thread_init(struct thread *t, struct thread *pt, int argc, char **argv)
 		t->t_affinity = -1;
 	} else {
 		t->t_toy = pt->t_toy;
+		t->t_dst_cache_size = pt->t_dst_cache_size;
 		t->t_Lflag = pt->t_Lflag;
 		t->t_so_debug = pt->t_so_debug;
 		t->t_ip_do_incksum = pt->t_ip_do_incksum;
@@ -569,6 +643,8 @@ thread_init(struct thread *t, struct thread *pt, int argc, char **argv)
 				t->t_udp = 1;
 			} else if (!strcmp(optname, "toy")) {
 				t->t_toy = 1;
+			} else if (!strcmp(optname, "dst-cache")) {
+				t->t_dst_cache_size = optval;
 			} else if (!strcmp(optname, "so-debug")) {
 				t->t_so_debug = 1;
 			} else if (!strcmp(optname, "ip-in-cksum")) {
@@ -713,9 +789,12 @@ err:
 	if (rc) {
 		return rc;
 	}
-	t->t_ip_laddr_connect = t->t_ip_laddr_min;
-	t->t_ip_lport_connect = EPHEMERAL_MIN;
-	t->t_ip_faddr_connect = t->t_ip_faddr_min;
+	if (!t->t_Lflag) {
+		if (t->t_dst_cache_size < t->t_concurrency) {
+			t->t_dst_cache_size = t->t_concurrency;
+		}
+		thread_init_dst_cache(t);
+	}
 	htable_init(&t->t_in_htable, 65536,
 	            t->t_toy ? toy_socket_hash : bsd_socket_hash);
 	if (t->t_Lflag) {

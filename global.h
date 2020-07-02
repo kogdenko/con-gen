@@ -30,10 +30,11 @@ struct thread {
 	u_char t_rss_qid;
 	u_char t_rss_key[RSS_KEY_SIZE];
 	struct nm_desc *t_nmd;
+	struct dlist t_dst_cache;
 	struct dlist t_so_pool;
 	struct dlist t_so_txq;
 	struct dlist t_sob_pool;
-	int t_n_clients;
+	int t_n_conns;
 	int t_n_requests;
 	int t_concurrency;
 	uint64_t t_tsc;
@@ -51,14 +52,13 @@ struct thread {
 	uint32_t t_ip_laddr_connect;
 	uint32_t t_ip_faddr_connect;
 	uint16_t t_ip_lport_connect;
-//	struct if_addr *t_addrs;
-//	int t_n_addrs;
 	char *t_http;
 	int t_http_len;
 	htable_t t_in_htable;
 	void *t_in_binded[EPHEMERAL_MIN];
 	u_char t_udp;
 	int t_affinity;
+	int t_dst_cache_size;
 	pthread_t t_pthread;
 	uint64_t *t_counters;
 };

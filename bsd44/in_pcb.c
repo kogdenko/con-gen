@@ -76,29 +76,16 @@ in_pcbbind(struct socket *so, be16_t lport)
 int
 in_pcbattach(struct socket *so, uint32_t *ph)
 {
-	uint32_t h;
-	struct dlist *b;
-	struct socket *it;
+	int rc;
 
 	if (so->so_state & SS_ISATTACHED) {
 		return -EALREADY;
 	}
-	h = bsd_socket_hash(&so->inp_list);
-	b = htable_bucket_get(&current->t_in_htable, h);
-	DLIST_FOREACH(it, b, inp_list) {
-		assert(it != so);
-		if (it->so_proto == so->so_proto &&
-		    it->inp_laddr == so->inp_laddr &&
-		    it->inp_lport == so->inp_lport &&
-		    it->inp_faddr == so->inp_faddr &&
-		    it->inp_fport == so->inp_fport) {
-			return EADDRINUSE;
-		}
+	rc = ip_connect(&so->so_base, ph);
+	if (rc == 0) {
+		so->so_state |= SS_ISATTACHED;
 	}
-	so->so_state |= SS_ISATTACHED;
-	htable_add(&current->t_in_htable, &so->inp_list, h);
-	*ph = h;
-	return 0;
+	return rc;
 }
 
 int
@@ -142,11 +129,7 @@ in_pcbdetach(struct socket *so)
 	}
 	if (so->so_state & SS_ISATTACHED) {
 		so->so_state &= ~SS_ISATTACHED;
-		htable_del(&current->t_in_htable, &so->inp_list);
-//		if (lport >= EPHEMERAL_MIN) {
-//			laddr = ntohl(so->inp_laddr);
-			//free_ephemeral_port(laddr, lport);
-//		}
+		ip_disconnect(&so->so_base);
 		sofree(so);
 	}
 	return 0;

@@ -51,6 +51,7 @@ somalloc()
 		DLIST_REMOVE(so, inp_list);
 	}
 	so->so_head = 0;
+	so->so_base.ipso_cache = NULL;
 	dlist_init(so->so_q + 0);
 	dlist_init(so->so_q + 1);
 	so->so_events = 0;

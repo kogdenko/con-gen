@@ -192,8 +192,8 @@ tcp_open()
 		so = DLIST_FIRST(&current->t_so_pool, struct sock, so_list);
 		DLIST_REMOVE(so, so_list);
 	}
-	current->t_n_clients++;
 	assert(so->used == 0);
+	so->so_base.ipso_cache = NULL;
 	so->flags = 0;
 	so->used = 1;
 	so->nagle = 1;
@@ -272,6 +272,7 @@ tcp_connect()
 	counter64_inc(&tcpstat.tcps_connattempt);
 	rc = ip_connect(&so->so_base, &h);
 	if (rc) {
+		panic(-rc, "toy_connect() failed");
 		return rc;
 	}
 	set_isn(so, h);
@@ -301,20 +302,23 @@ toy_server_listen(int ipproto)
 }
 
 static void
+so_free(struct sock *so)
+{
+	so->used = 0;
+	DLIST_INSERT_HEAD(&current->t_so_pool, so, so_list);
+}
+
+static void
 tcp_close(struct sock *so)
 {
-	int rc;
-
 	if (so->in_txq) {
 		so->closed = 1;
 		return;
 	}
 	timer_cancel(&so->timer);
 	timer_cancel(&so->timer_delack);
-	htable_del(&current->t_in_htable, &so->so_list);
-	so->used = 0;
-	DLIST_INSERT_HEAD(&current->t_so_pool, so, so_list);
-	current->t_n_clients--;
+	ip_disconnect(&so->so_base);
+	so_free(so);
 	current->t_n_requests++;
 	counter64_inc(&tcpstat.tcps_closed);
 	if (current->t_done == 0) {
@@ -322,11 +326,8 @@ tcp_close(struct sock *so)
 		    current->t_n_requests >= current->t_nflag) {
 			current->t_done = 1;
 		} else if (current->t_Lflag == 0) {
-			while (current->t_n_clients < current->t_concurrency) {
-				rc = tcp_connect();
-				if (rc) {
-					break;
-				}
+			while (current->t_n_conns < current->t_concurrency) {
+				tcp_connect();
 			}
 		}
 	}
@@ -891,6 +892,7 @@ static void
 tcp_rcv_syn(be32_t laddr, be32_t faddr, be16_t lport, be16_t fport,
 	struct tcb *tcb)
 {
+	int rc;
 	uint32_t h;
 	struct sock *so;
 
@@ -902,12 +904,15 @@ tcp_rcv_syn(be32_t laddr, be32_t faddr, be16_t lport, be16_t fport,
 	so->so_faddr = faddr;
 	so->so_lport = lport;
 	so->so_fport = fport;
-	h = SO_HASH(so->so_faddr, so->so_lport, so->so_fport);
-	htable_add(&current->t_in_htable, &so->so_list, h);
-	set_isn(so, h);
-	tcp_set_risn(so, tcb->tcb_seq);
-	tcp_set_state(so, TCPS_SYN_RECEIVED);
-	tcp_into_sndq(so);
+	rc = ip_connect(&so->so_base, &h);
+	if (rc == 0) {
+		set_isn(so, h);
+		tcp_set_risn(so, tcb->tcb_seq);
+		tcp_set_state(so, TCPS_SYN_RECEIVED);
+		tcp_into_sndq(so);
+	} else {
+		so_free(so);	
+	}
 }
 
 static int

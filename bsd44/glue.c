@@ -48,7 +48,6 @@ bsd_client_connect()
 	if (rc < 0) {
 		panic(-rc, "bsd_connect() failed");
 	}
-	current->t_n_clients++;
 }
 
 static void
@@ -115,8 +114,7 @@ con_close()
 		}
 	}
 	if (!current->t_Lflag) {
-		current->t_n_clients--;
-		while (current->t_n_clients < current->t_concurrency) {
+		while (current->t_n_conns < current->t_concurrency) {
 			bsd_client_connect();
 		}
 	}

@@ -298,147 +298,51 @@ counter64_get(counter64_t *c)
 int
 ip_connect(struct ip_socket *new, uint32_t *ph)
 {
-	int i, n;
-	uint32_t h, rss_h;
-	be32_t laddr, faddr;
-	be16_t lport, fport;
+	uint32_t h;
 	struct dlist *b;
-	struct ip_socket *so;
+	struct ip_socket *so, *cache;
 
-	n = (current->t_ip_laddr_max - current->t_ip_laddr_min + 1) << 13;
-	for (i = 0; i < n; ++i) {
-		laddr = htonl(current->t_ip_laddr_connect);
-		faddr = htonl(current->t_ip_faddr_connect);
-		lport = htons(current->t_ip_lport_connect);
-		fport = current->t_port;	
-		current->t_ip_lport_connect++;
-		if (current->t_ip_lport_connect == EPHEMERAL_MAX + 1) {
-			current->t_ip_lport_connect = EPHEMERAL_MIN;
-			current->t_ip_laddr_connect++;
-			if (current->t_ip_laddr_connect == current->t_ip_laddr_max + 1) {
-				current->t_ip_laddr_connect = current->t_ip_laddr_min;
-			}
-		}
-		current->t_ip_faddr_connect++;
-		if (current->t_ip_faddr_connect == current->t_ip_faddr_max + 1) {
-			current->t_ip_faddr_connect = current->t_ip_faddr_min;
-		}
-		h = SO_HASH(faddr, lport, fport);
+	new->ipso_cache = NULL;
+	if (current->t_Lflag) {
+		h = SO_HASH(new->ipso_faddr, new->ipso_lport, new->ipso_fport);
 		b = htable_bucket_get(&current->t_in_htable, h);
 		DLIST_FOREACH(so, b, ipso_list) {
-			if (so->ipso_laddr == laddr &&
-			    so->ipso_faddr == faddr &&
-			    so->ipso_lport == lport &&
-			    so->ipso_fport == fport) {
-				goto next;
+			if (so->ipso_laddr == new->ipso_laddr &&
+			    so->ipso_faddr == new->ipso_faddr &&
+			    so->ipso_lport == new->ipso_lport &&
+			    so->ipso_fport == new->ipso_fport) {
+				return -EADDRINUSE;
 			}
 		}
-		if (current->t_rss_qid != RSS_QID_NONE) {
-			rss_h = rss_hash4(laddr, faddr, lport, fport, current->t_rss_key);
-			if ((rss_h % current->t_n_rss_q) != current->t_rss_qid) {
-				goto next;
-			}
+	} else {
+		if (dlist_is_empty(&current->t_dst_cache)) {
+			return -EADDRNOTAVAIL;
 		}
-		new->ipso_laddr = laddr;
-		new->ipso_faddr = faddr;
-		new->ipso_lport = lport;
-		new->ipso_fport = fport;
-		htable_add(&current->t_in_htable, &new->ipso_list, h);
-		if (ph != NULL) {
-			*ph = h;
-		}
-		return 0;
-next:
-		;
+		cache = DLIST_FIRST(&current->t_dst_cache, struct ip_socket, ipso_list);
+		DLIST_REMOVE(cache, ipso_list);
+		new->ipso_laddr = cache->ipso_laddr;
+		new->ipso_faddr = cache->ipso_faddr;
+		new->ipso_lport = cache->ipso_lport;
+		new->ipso_fport = cache->ipso_fport;
+		new->ipso_cache = cache;
+		h = cache->ipso_hash;
 	}
-	return -EADDRNOTAVAIL;
-}
-#if 0
-void
-ifaddr_init(struct if_addr *ifa)
-{
-	int i;
-
-	ifa->ifa_ports = xmalloc(NEPHEMERAL * sizeof(struct dlist));
-	dlist_init(&ifa->ifa_port_head);
-	for (i = 0; i < NEPHEMERAL; ++i) {
-		dlist_insert_tail(&ifa->ifa_port_head, ifa->ifa_ports + i);
+	htable_add(&current->t_in_htable, &new->ipso_list, h);
+	current->t_n_conns++;
+	if (ph != NULL) {
+		*ph = h;
 	}
-}
-
-uint16_t
-ifaddr_alloc_ephemeral_port(struct if_addr *ifa)
-{
-	struct dlist *p;
-
-	if (dlist_is_empty(&ifa->ifa_port_head)) {
-		return 0;
-	}
-	p = dlist_first(&ifa->ifa_port_head);
-	dlist_remove(p);
-	p->dls_next = NULL;
-	return EPHEMERAL_MIN + (p - ifa->ifa_ports);
+	return 0;
 }
 
 void
-ifaddr_free_ephemeral_port(struct if_addr *ifa, uint16_t port)
+ip_disconnect(struct ip_socket *so)
 {
-	struct dlist *p;
-
-	assert(port >= EPHEMERAL_MIN);
-	assert(port <= EPHEMERAL_MAX);
-	p = ifa->ifa_ports + (port - EPHEMERAL_MIN);
-	assert(p->dls_next == NULL);
-	dlist_insert_tail(&ifa->ifa_port_head, p);
-}
-
-int
-alloc_ephemeral_port(uint32_t *laddr, uint16_t *lport)
-{
-	int i;
-	static int ifai, ifan;
-	struct if_addr *ifa;
-
-	for (i = 0; i < current->t_n_addrs; ++i) {
-		if (ifan >= NEPHEMERAL) {
-			ifan = 0;
-			ifai++;
-			if (ifai == current->t_n_addrs) {
-				ifai = 0;
-			}
-		}
-		ifa = current->t_addrs + ifai;
-		ifan++;
-		*lport = ifaddr_alloc_ephemeral_port(ifa);
-		if (*lport) {
-			*laddr = current->t_ip_laddr_min + ifai;
-			return 0;
-		}
+	if (so->ipso_cache != NULL) {
+		DLIST_INSERT_TAIL(&current->t_dst_cache, so->ipso_cache, ipso_list);
+		so->ipso_cache = NULL;
 	}
-	return -EADDRNOTAVAIL;
+	assert(current->t_n_conns);
+	current->t_n_conns--;
+	htable_del(&current->t_in_htable, &so->ipso_list);
 }
-
-void
-free_ephemeral_port(uint32_t laddr, uint16_t lport)
-{
-	int ifai;
-	struct if_addr *ifa;
-
-	assert(laddr >= current->t_ip_laddr_min);
-	ifai = laddr - current->t_ip_laddr_min;
-	assert(ifai < current->t_n_addrs);
-	ifa = current->t_addrs + ifai;
-	ifaddr_free_ephemeral_port(ifa, lport);
-}
-
-uint32_t
-select_faddr()
-{
-	static int fi;
-
-	if (fi + current->t_ip_faddr_min > current->t_ip_faddr_max) {
-		fi = 0;
-	}
-	return current->t_ip_faddr_min + fi++;
-}
-#endif

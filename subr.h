@@ -184,6 +184,10 @@ struct if_addr {
 
 struct ip_socket {
 	struct dlist ipso_list;
+	union {
+		struct ip_socket *ipso_cache;
+		uint32_t ipso_hash;
+	};
 	be32_t ipso_laddr;
 	be32_t ipso_faddr;
 	be16_t ipso_lport;
@@ -191,6 +195,7 @@ struct ip_socket {
 };
 
 int ip_connect(struct ip_socket *, uint32_t *);
+void ip_disconnect(struct ip_socket *);
 
 void ifaddr_init(struct if_addr *);
 uint16_t ifaddr_alloc_ephemeral_port(struct if_addr *);
