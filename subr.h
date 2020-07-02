@@ -106,7 +106,7 @@ void dbg5(const char *, u_int, const char *, int, const char *, ...)
 #define panic(errnum, fmt, ...) \
 	panic3(__FILE__, __LINE__, errnum, fmt, ##__VA_ARGS__)
 
-#define dbg(format, ...) \
+#define dbg(fmt, ...) \
 	dbg5(__FILE__, __LINE__, __func__, 0, fmt, ##__VA_ARGS__)
 
 #define dbg_rl(period, fmt, ...) \

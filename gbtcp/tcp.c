@@ -278,7 +278,6 @@ tcp_connect()
 	so->param.fport = current->t_port;
 	so->param.lport = htons(lport);
 	so->param.laddr = htonl(laddr);
-	//dbg("connect %x:%hu->%x:%hu", laddr, lport, faddr, ntohs(so->param.fport)); 
 	tcp_add(so);
 	tcp_set_state(so, TCPS_SYN_SENT);
 	tcp_into_sndq(so);

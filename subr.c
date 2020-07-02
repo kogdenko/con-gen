@@ -230,7 +230,8 @@ counter64_get(counter64_t *c)
 
 	accum = 0;
 	for (i = 0; i < n_threads; ++i) {
-		accum += current->t_counters[*c];
+		assert(*c != 0);
+		accum += threads[i].t_counters[*c];
 	}
 	return accum;
 }
