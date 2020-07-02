@@ -57,12 +57,19 @@ struct sockbuf {
  * handle on protocol and pointer to protocol
  * private data and error information.
  */
+#define inp_list so_base.ipso_list
+#define inp_laddr so_base.ipso_laddr
+#define inp_faddr so_base.ipso_faddr
+#define inp_lport so_base.ipso_lport
+#define inp_fport so_base.ipso_fport
+
 struct socket {
-	struct dlist inp_list;
-	be32_t inp_laddr;
-	be32_t inp_faddr;
-	be16_t inp_lport;
-	be16_t inp_fport;
+	struct ip_socket so_base;
+//	struct dlist inp_list;
+//	be32_t inp_laddr;
+//	be32_t inp_faddr;
+//	be16_t inp_lport;
+//	be16_t inp_fport;
 
 	uint32_t so_options;		/* from socket call, see socket.h */
 	u_char	so_proto;

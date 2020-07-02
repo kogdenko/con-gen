@@ -3,13 +3,14 @@
 
 #define MSS (current->t_mtu - 40)
 
-struct sock {
-	struct dlist list;
-	be32_t laddr;
-	be32_t faddr;
-	be16_t lport;
-	be16_t fport;
+#define so_list so_base.ipso_list
+#define so_laddr so_base.ipso_laddr
+#define so_faddr so_base.ipso_faddr
+#define so_lport so_base.ipso_lport
+#define so_fport so_base.ipso_fport
 
+struct sock {
+	struct ip_socket so_base;
 	struct dlist tx_list;
 	union {
 		uint32_t flags;
@@ -188,8 +189,8 @@ tcp_open()
 	if (dlist_is_empty(&current->t_so_pool)) {
 		so = xmalloc(sizeof(*so));
 	} else {
-		so = DLIST_FIRST(&current->t_so_pool, struct sock, list);
-		DLIST_REMOVE(so, list);
+		so = DLIST_FIRST(&current->t_so_pool, struct sock, so_list);
+		DLIST_REMOVE(so, so_list);
 	}
 	current->t_n_clients++;
 	assert(so->used == 0);
@@ -215,8 +216,8 @@ toy_socket_hash(struct dlist *p)
 	uint32_t h;
 	struct sock *so;
 
-	so = container_of(p, struct sock, list);
-	h = SO_HASH(so->faddr, so->lport, so->fport);
+	so = container_of(p, struct sock, so_list);
+	h = SO_HASH(so->so_faddr, so->so_lport, so->so_fport);
 	return h;
 }
 
@@ -235,11 +236,11 @@ tcp_get(be32_t laddr, be32_t faddr, be16_t lport, be16_t fport)
 
 	h = SO_HASH(faddr, lport, fport);
 	b = htable_bucket_get(&current->t_in_htable, h);
-	DLIST_FOREACH(so, b, list) {
-		if (so->laddr == laddr &&
-			so->faddr == faddr &&
-			so->lport == lport &&
-			so->fport == fport) {
+	DLIST_FOREACH(so, b, so_list) {
+		if (so->so_laddr == laddr &&
+		    so->so_faddr == faddr &&
+		    so->so_lport == lport &&
+		    so->so_fport == fport) {
 			return so;
 		}
 	}
@@ -251,11 +252,11 @@ toy_get_so_info(void *p, struct socket_info *x)
 {
 	struct sock *so;
 
-	so = container_of(p, struct sock, list);
-	x->soi_laddr = so->laddr;
-	x->soi_faddr = so->faddr;
-	x->soi_lport = so->lport;
-	x->soi_fport = so->fport;
+	so = container_of(p, struct sock, so_list);
+	x->soi_laddr = so->so_laddr;
+	x->soi_faddr = so->so_faddr;
+	x->soi_lport = so->so_lport;
+	x->soi_fport = so->so_fport;
 	x->soi_ipproto = IPPROTO_TCP;
 	x->soi_state = so->state;
 }
@@ -269,14 +270,13 @@ tcp_connect()
 
 	so = tcp_open();
 	counter64_inc(&tcpstat.tcps_connattempt);
-	rc = ip_connect(so, &h);
+	rc = ip_connect(&so->so_base, &h);
 	if (rc) {
 		return rc;
 	}
 	set_isn(so, h);
 	tcp_set_state(so, TCPS_SYN_SENT);
 	tcp_into_sndq(so);
-	dbg("connect");
 	return 0;
 }
 
@@ -304,8 +304,6 @@ static void
 tcp_close(struct sock *so)
 {
 	int rc;
-//	uint16_t lport;
-//	uint32_t laddr;
 
 	if (so->in_txq) {
 		so->closed = 1;
@@ -313,14 +311,9 @@ tcp_close(struct sock *so)
 	}
 	timer_cancel(&so->timer);
 	timer_cancel(&so->timer_delack);
-	//lport = ntohs(so->lport);
-//	if (lport > EPHEMERAL_MIN) {
-//		laddr = ntohl(so->laddr);
-//		free_ephemeral_port(laddr, lport);
-//	}
-	DLIST_REMOVE(so, list);
+	htable_del(&current->t_in_htable, &so->so_list);
 	so->used = 0;
-	DLIST_INSERT_HEAD(&current->t_so_pool, so, list);
+	DLIST_INSERT_HEAD(&current->t_so_pool, so, so_list);
 	current->t_n_clients--;
 	current->t_n_requests++;
 	counter64_inc(&tcpstat.tcps_closed);
@@ -439,10 +432,10 @@ tcp_fill(struct sock *so, void *buf, struct tcb *tcb, int len_max)
 	ih->ih_ttl = 64;
 	ih->ih_proto = IPPROTO_TCP;
 	ih->ih_cksum = 0;
-	ih->ih_saddr = so->laddr;
-	ih->ih_daddr = so->faddr;
-	th->th_sport = so->lport;
-	th->th_dport = so->fport;
+	ih->ih_saddr = so->so_laddr;
+	ih->ih_daddr = so->so_faddr;
+	th->th_sport = so->so_lport;
+	th->th_dport = so->so_fport;
 	th->th_seq = htonl(tcb->tcb_seq);
 	th->th_ack = htonl(tcb->tcb_ack);
 	th->th_data_off = th_len << 2;
@@ -905,12 +898,12 @@ tcp_rcv_syn(be32_t laddr, be32_t faddr, be16_t lport, be16_t fport,
 	if (so == NULL) {
 		return;
 	}
-	so->laddr = laddr;
-	so->faddr = faddr;
-	so->lport = lport;
-	so->fport = fport;
-	h = SO_HASH(so->faddr, so->lport, so->fport);
-	htable_add(&current->t_in_htable, &so->list, h);
+	so->so_laddr = laddr;
+	so->so_faddr = faddr;
+	so->so_lport = lport;
+	so->so_fport = fport;
+	h = SO_HASH(so->so_faddr, so->so_lport, so->so_fport);
+	htable_add(&current->t_in_htable, &so->so_list, h);
 	set_isn(so, h);
 	tcp_set_risn(so, tcb->tcb_seq);
 	tcp_set_state(so, TCPS_SYN_RECEIVED);

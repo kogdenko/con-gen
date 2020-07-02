@@ -122,7 +122,7 @@ in_pcbconnect(struct socket *so, uint32_t *ph)
 	if (so->so_state & SS_ISATTACHED) {
 		return -EISCONN;
 	}
-	rc = ip_connect(so, ph);
+	rc = ip_connect(&so->so_base, ph);
 	if (rc == 0) {
 		so->so_state |= SS_ISATTACHED;
 	}

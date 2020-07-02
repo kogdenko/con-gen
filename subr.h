@@ -182,7 +182,15 @@ struct if_addr {
 	struct dlist ifa_port_head;
 };
 
-int ip_connect(void *, uint32_t *);
+struct ip_socket {
+	struct dlist ipso_list;
+	be32_t ipso_laddr;
+	be32_t ipso_faddr;
+	be16_t ipso_lport;
+	be16_t ipso_fport;
+};
+
+int ip_connect(struct ip_socket *, uint32_t *);
 
 void ifaddr_init(struct if_addr *);
 uint16_t ifaddr_alloc_ephemeral_port(struct if_addr *);

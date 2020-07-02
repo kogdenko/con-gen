@@ -289,30 +289,22 @@ counter64_get(counter64_t *c)
 
 	accum = 0;
 	for (i = 0; i < n_threads; ++i) {
-		accum += current->t_counters[*c];
+		assert(*c != 0);
+		accum += threads[i].t_counters[*c];
 	}
 	return accum;
 }
 
-struct ip_socket {
-	struct dlist ipso_list;
-	be32_t ipso_laddr;
-	be32_t ipso_faddr;
-	be16_t ipso_lport;
-	be16_t ipso_fport;
-};
-
 int
-ip_connect(void *so_ptr, uint32_t *ph)
+ip_connect(struct ip_socket *new, uint32_t *ph)
 {
 	int i, n;
 	uint32_t h, rss_h;
 	be32_t laddr, faddr;
 	be16_t lport, fport;
 	struct dlist *b;
-	struct ip_socket *so, *new;
+	struct ip_socket *so;
 
-	new = so_ptr;
 	n = (current->t_ip_laddr_max - current->t_ip_laddr_min + 1) << 13;
 	for (i = 0; i < n; ++i) {
 		laddr = htonl(current->t_ip_laddr_connect);
@@ -343,9 +335,7 @@ ip_connect(void *so_ptr, uint32_t *ph)
 		}
 		if (current->t_rss_qid != RSS_QID_NONE) {
 			rss_h = rss_hash4(laddr, faddr, lport, fport, current->t_rss_key);
-			dbg("%u %d", rss_h, current->t_rss_qid);
 			if ((rss_h % current->t_n_rss_q) != current->t_rss_qid) {
-				dbg("skip");
 				goto next;
 			}
 		}
@@ -353,7 +343,7 @@ ip_connect(void *so_ptr, uint32_t *ph)
 		new->ipso_faddr = faddr;
 		new->ipso_lport = lport;
 		new->ipso_fport = fport;
-		htable_add(&current->t_in_htable, &so->ipso_list, h);
+		htable_add(&current->t_in_htable, &new->ipso_list, h);
 		if (ph != NULL) {
 			*ph = h;
 		}
