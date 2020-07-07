@@ -38,17 +38,6 @@
 #include "udp_var.h"
 #include "../gbtcp/htable.h"
 
-uint32_t
-bsd_socket_hash(struct dlist *l)
-{
-	uint32_t h;
-	struct socket *so;
-
-	so = container_of(l, struct socket, inp_list);
-	h = SO_HASH(so->inp_faddr, so->inp_lport, so->inp_fport);
-	return h;
-}
-
 int
 in_pcbbind(struct socket *so, be16_t lport)
 {
@@ -169,6 +158,7 @@ bsd_get_so_info(void *e, struct socket_info *x)
 	if (so->so_proto == IPPROTO_TCP) {
 		tp = &so->inp_ppcb;
 		x->soi_state = tp->t_state;
+		x->soi_idle = tp->t_idle;
 	}
 	snprintf(x->soi_debug, sizeof(x->soi_debug), "0x%x", so->so_state);
 }
@@ -179,13 +169,9 @@ in_pcblookup(int proto, be32_t laddr, be16_t lport, be32_t faddr, be16_t fport)
 	int i;
 	uint32_t h;
 	struct dlist *b;
-	struct socket *so, tmp;
+	struct socket *so;
 
-	tmp.inp_laddr = laddr;
-	tmp.inp_lport = lport;
-	tmp.inp_faddr = faddr;
-	tmp.inp_fport = fport;
-	h = bsd_socket_hash(&tmp.inp_list);
+	h = SO_HASH(faddr, lport, fport);
 	b = htable_bucket_get(&current->t_in_htable, h);
 	DLIST_FOREACH(so, b, inp_list) {	
 		if (so->so_proto == proto &&

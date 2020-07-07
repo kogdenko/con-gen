@@ -48,6 +48,7 @@ struct sock {
 	uint16_t rwnd;
 	uint16_t rwnd_max;
 	uint16_t ip_id;
+	uint32_t so_idle;
 };
 
 static int in_length = -1;
@@ -205,20 +206,10 @@ tcp_open()
 	so->rwnd_max = 0;
 	so->ip_id = 1;
 	so->ip = NULL;
+	so->so_idle = current->t_tcp_now;
 	timer_init(&so->timer);
 	timer_init(&so->timer_delack);
 	return so;
-}
-
-uint32_t
-toy_socket_hash(struct dlist *p)
-{
-	uint32_t h;
-	struct sock *so;
-
-	so = container_of(p, struct sock, so_list);
-	h = SO_HASH(so->so_faddr, so->so_lport, so->so_fport);
-	return h;
 }
 
 static void
@@ -259,6 +250,7 @@ toy_get_so_info(void *p, struct socket_info *x)
 	x->soi_fport = so->so_fport;
 	x->soi_ipproto = IPPROTO_TCP;
 	x->soi_state = so->state;
+	x->soi_idle = so->so_idle;
 }
 
 static int
@@ -844,6 +836,7 @@ tcp_rcv_established(struct sock *so, struct tcb *tcb, void *payload)
 static void
 tcp_rcv_open(struct sock *so, struct tcb *tcb, void *payload)
 {
+	so->so_idle = current->t_tcp_now;
 	if (tcb->tcb_flags & TCP_FLAG_RST) {
 		// TODO: check seq
 		if (so->state < TCPS_ESTABLISHED) {

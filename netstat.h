@@ -153,7 +153,7 @@ struct	icmpstat {
 	counter64_t icps_inhist[ICMP_MAXTYPE + 1];
 };
 
-void print_sockets();
-void print_stats();
+void print_sockets(FILE *);
+void print_stats(FILE *, int);
 
 #endif // CON_GEN__NETSTAT_H

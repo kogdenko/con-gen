@@ -6,9 +6,9 @@
 #include "netstat.h"
 #include <getopt.h>
 
+static int m_done;
 static int Nflag;
-static struct timer report_timer;
-static uint64_t report_time;
+static struct timeval report_tv;
 static int report_bytes_flag;
 static char http_request[1500];
 static char http_reply[1500];
@@ -33,13 +33,11 @@ void bsd_eth_in(void *, int);
 void bsd_flush();
 void bsd_server_listen(int);
 void bsd_client_connect();
-uint32_t bsd_socket_hash(struct dlist *);
 
 void toy_eth_in(void *, int);
 void toy_flush();
 void toy_server_listen(int);
 void toy_client_connect();
-uint32_t toy_socket_hash(struct dlist *);
 
 static const char *
 norm2(char *buf, double val, char *fmt, int normalize)
@@ -200,9 +198,19 @@ read_rss_key(const char *ifname, u_char *rss_key)
 }
 #endif // __linux__
 
+uint32_t
+ip_socket_hash(struct dlist *p)
+{
+	uint32_t h;
+	struct ip_socket *so;
+
+	so = container_of(p, struct ip_socket, ipso_list);
+	h = SO_HASH(so->ipso_faddr, so->ipso_lport, so->ipso_fport);
+	return h;
+}
 
 static void
-print_report(struct timer *timer)
+print_report()
 {
 	static int i, n;
 	uint64_t new_ipackets, new_ibytes;
@@ -211,11 +219,16 @@ print_report(struct timer *timer)
 	static uint64_t old_ipackets, old_ibytes;
 	static uint64_t old_opackets, old_obytes;
 	static uint64_t old_closed, old_sndrexmitpack;
+	struct timeval tv;
 	int conns;
 	double dt, ipps, ibps, opps, obps, cps, rxmtps;
 	char cps_b[40], ipps_b[40], ibps_b[40], opps_b[40], obps_b[40];
 	char rxmtps_b[40];
 
+	gettimeofday(&tv, NULL);
+	dt = (tv.tv_sec - report_tv.tv_sec) +
+		(tv.tv_usec - report_tv.tv_usec) / 1000000.0f;
+	report_tv = tv;
 	if (n == 0) {
 		printf("%-10s%-10s", "cps", "ipps");
 		if (report_bytes_flag) {
@@ -236,8 +249,6 @@ print_report(struct timer *timer)
 	for (i = 0; i < n_threads; ++i) {
 		conns += threads[i].t_n_conns;
 	}
-	dt = (double)(current->t_time - report_time) / NANOSECONDS_SECOND;
-	report_time = current->t_time;
 	new_ipackets = counter64_get(&if_ipackets);
 	new_opackets = counter64_get(&if_opackets);
 	new_ibytes = counter64_get(&if_ibytes);
@@ -275,7 +286,6 @@ print_report(struct timer *timer)
 	}
 	printf("%-10s", rxmtps_b);
 	printf("%d\n", conns);
-	timer_set(timer, NANOSECONDS_SECOND, print_report);
 }
 
 static void
@@ -283,8 +293,17 @@ sighandler(int signum)
 {
 	int i;
 
-	for (i = 0; i < n_threads; ++i) {
-		threads[i].t_done = 1;
+	switch (signum) {
+	case SIGINT:
+		m_done = 1;
+		for (i = 0; i < n_threads; ++i) {
+			threads[i].t_done = 1;
+		}
+		break;
+	case SIGALRM:
+		print_report();
+		alarm(1);
+		break;
 	}
 }
 
@@ -382,26 +401,91 @@ thread_process_rx()
 	}
 }
 
+static void
+main_process_req(int fd, FILE *out)
+{
+	int rc;
+	char buf[32];
+
+	rc = read(fd, buf, sizeof(buf));
+	if (rc > 1) {
+		switch (buf[0]) {
+		case 's':
+			print_stats(out, verbose);
+			break;
+		case 'c':
+			printf("!\n");
+			print_sockets(out);
+			break;
+		}
+	}
+}
+
+static void
+main_routine()
+{
+	int rc, fd, fd2, pid, n_pfds;
+	FILE *file;
+	struct sockaddr_un a;
+	struct pollfd pfds[2];
+
+	pfds[0].fd = STDIN_FILENO;
+	pfds[0].events = POLLIN;
+	n_pfds = 1;
+	pid = getpid();
+	a.sun_family = AF_UNIX;
+	sprintf(a.sun_path, "/var/run/con-gen.%d.sock", pid);
+	unlink(a.sun_path);
+	fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (fd >= 0) {
+		rc = bind(fd, (struct sockaddr *)&a, sizeof(a));
+		if (rc == 0) {
+			rc = listen(fd, 5);
+			if (rc == 0) {
+				pfds[n_pfds].fd = fd;
+				pfds[n_pfds].events = POLLIN;
+				n_pfds++;
+			}
+		}
+	}
+	gettimeofday(&report_tv, NULL);
+	signal(SIGINT, sighandler);
+	signal(SIGALRM, sighandler);
+	alarm(1);
+	while (!m_done) {
+		poll(pfds, n_pfds, -1);
+		if (pfds[0].revents & POLLIN) {
+			main_process_req(STDIN_FILENO, stdout);
+		}
+		if (n_pfds > 1 && (pfds[1].revents & POLLIN)) {
+			fd2 = accept(fd, NULL, NULL);
+			if (fd2 >= 0) {
+				file = fdopen(fd2, "r+b");
+				if (file != NULL) {
+					main_process_req(fd2, file);
+					fflush(file);
+					fclose(file);
+				} else {
+					close(fd2);
+				}
+			}
+		}
+	}
+	unlink(a.sun_path);	
+}
+
 void
 thread_process()
 {
-	int rc, n_pfds;
 	uint64_t t, age;
-	char buf[32];
-	struct pollfd pfds[2];
+	struct pollfd pfd;
 
-	pfds[0].fd = current->t_nmd->fd;
-	pfds[0].events = POLLIN;
+	pfd.fd = current->t_nmd->fd;
+	pfd.events = POLLIN;
 	if (current->t_tx_throttled) {
-		pfds[0].events |= POLLOUT;
+		pfd.events |= POLLOUT;
 	}
-	n_pfds = 1;
-	if (current->t_id == 0) {
-		pfds[1].fd = STDIN_FILENO;
-		pfds[1].events = POLLIN;
-		n_pfds = 2;
-	}
-	poll(pfds, n_pfds, 10);
+	poll(&pfd, 1, 10);
 	t = rdtsc();
 	if (t > current->t_tsc) {
 		current->t_time = 1000llu * t / tsc_mhz;
@@ -412,30 +496,19 @@ thread_process()
 		}
 	}
 	current->t_tsc = t;
-	if (pfds[0].revents & POLLIN) {
+	if (pfd.revents & POLLIN) {
+		spinlock_lock(&current->t_lock);
 		thread_process_rx();
+		spinlock_unlock(&current->t_lock);
 	}
 	check_timers();
-	if (pfds[0].revents & POLLOUT) {
+	if (pfd.revents & POLLOUT) {
 		current->t_tx_throttled = 0;
 	}
 	if (current->t_toy) {
 		toy_flush();
 	} else {
 		bsd_flush();
-	}
-	if (current->t_id == 0 && pfds[1].revents & POLLIN) {
-		rc = read(STDOUT_FILENO, buf, sizeof(buf));
-		if (rc > 1) {
-			switch (buf[0]) {
-			case 's':
-				print_stats(verbose);
-				break;
-			case 'c':
-				print_sockets();
-				break;
-			}
-		}
 	}
 }
 
@@ -462,11 +535,6 @@ thread_routine(void *udata)
 	current->t_tcp_now = 1;
 	current->t_tcp_nowage = current->t_time;
 	init_timers();
-	if (current->t_id == 0) {
-		report_time = current->t_time;
-		timer_init(&report_timer);
-		timer_set(&report_timer, NANOSECONDS_SECOND, print_report);
-	}
 	if (current->t_Lflag || current->t_udp) {
 		ipproto = current->t_udp ? IPPROTO_UDP: IPPROTO_TCP;
 		if (current->t_toy) {
@@ -588,6 +656,7 @@ thread_init(struct thread *t, struct thread *pt, int argc, char **argv)
 	const char *ifname;
 	long long optval;
 
+	spinlock_init(&t->t_lock);
 	t->t_id = t - threads;
 	t->t_tcp_rttdflt = TCPTV_SRTTDFLT / PR_SLOWHZ;
 	dlist_init(&t->t_so_txq);
@@ -798,8 +867,7 @@ err:
 	if (rc) {
 		return rc;
 	}
-	htable_init(&t->t_in_htable, 65536,
-	            t->t_toy ? toy_socket_hash : bsd_socket_hash);
+	htable_init(&t->t_in_htable, 4096, ip_socket_hash);
 	if (t->t_Lflag) {
 		t->t_http = http_reply;
 		t->t_http_len = http_reply_len;
@@ -893,8 +961,7 @@ main(int argc, char **argv)
 		usage();
 		return EXIT_FAILURE;
 	}
-	signal(SIGINT, sighandler);
-	for (i = 1; i < n_threads; ++i) {
+	for (i = 0; i < n_threads; ++i) {
 		t = threads + i;
 		rc = pthread_create(&t->t_pthread, NULL, thread_routine, t);
 		if (rc) {
@@ -903,11 +970,11 @@ main(int argc, char **argv)
 			return EXIT_FAILURE;
 		}
 	}
-	thread_routine(threads + 0);
-	for (i = 1; i < n_threads; ++i) {
+	main_routine();	
+	for (i = 0; i < n_threads; ++i) {
 		t = threads + i;
 		pthread_join(t->t_pthread, NULL);
 	}
-	print_stats(verbose);
+	print_stats(stdout, verbose);
 	return 0;
 }

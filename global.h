@@ -9,6 +9,7 @@
 #define RSS_KEY_SIZE 40
 
 struct thread {
+	struct spinlock t_lock;
 	u_char t_id;
 	u_char t_toy;
 	u_char t_done;
