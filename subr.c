@@ -295,6 +295,34 @@ counter64_get(counter64_t *c)
 	return accum;
 }
 
+void
+spinlock_init(struct spinlock *sl)
+{
+	sl->spinlock_locked = 0;
+}
+
+void
+spinlock_lock(struct spinlock *sl)
+{
+	while (__sync_lock_test_and_set(&sl->spinlock_locked, 1)) {
+		while (sl->spinlock_locked) {
+			_mm_pause();
+		}
+	}
+}
+
+int
+spinlock_trylock(struct spinlock *sl)
+{
+	return __sync_lock_test_and_set(&sl->spinlock_locked, 1) == 0;
+}
+
+void
+spinlock_unlock(struct spinlock *sl)
+{
+	__sync_lock_release(&sl->spinlock_locked);
+}
+
 static struct ip_socket *
 ip_socket_get(struct ip_socket *x, uint32_t h)
 {

@@ -27,7 +27,9 @@
 #include <netinet/ip_icmp.h>
 #include <sys/types.h>
 #include <sys/fcntl.h>
+#include <sys/un.h>
 #include <pthread.h>
+#include <emmintrin.h>
 #ifdef __linux__
 #include <linux/ethtool.h>
 #include <linux/sockios.h>
@@ -133,7 +135,6 @@ uint16_t in_cksum(void *, int);
 uint16_t udp_cksum(struct ip *, int);
 #define tcp_cksum udp_cksum
 
-
 struct socket_info {
 	be32_t soi_laddr;
 	be32_t soi_faddr;
@@ -141,6 +142,7 @@ struct socket_info {
 	be16_t soi_fport;
 	int soi_ipproto;
 	int soi_state;
+	int soi_idle;
 	char soi_debug[64];
 };
 
@@ -160,6 +162,15 @@ uint32_t toeplitz_hash(const u_char *, int, const u_char *);
 uint32_t rss_hash4(be32_t, be32_t, be16_t, be16_t, u_char *);
 
 int parse_http(const char *, int, u_char *);
+
+struct spinlock {
+	volatile int spinlock_locked;
+};
+
+void spinlock_init(struct spinlock *);
+void spinlock_lock(struct spinlock *);
+int spinlock_trylock(struct spinlock *);
+void spinlock_unlock(struct spinlock *);
 
 typedef int counter64_t;
 
