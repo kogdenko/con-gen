@@ -359,14 +359,17 @@ thread_init_dst_cache(struct thread *t)
 		faddr = htonl(ip_faddr_connect);
 		lport = htons(ip_lport_connect);
 		fport = t->t_port;
-		ip_faddr_connect++;
-		if (ip_faddr_connect == t->t_ip_faddr_max + 1) {
+		if (ip_faddr_connect < t->t_ip_faddr_max) {
+			ip_faddr_connect++;
+		} else {
 			ip_faddr_connect = t->t_ip_faddr_min;
-			ip_lport_connect++;
-			if (ip_lport_connect == EPHEMERAL_MAX + 1) {
+			if (ip_lport_connect < EPHEMERAL_MAX) {
+				ip_lport_connect++;
+			} else {
 				ip_lport_connect = EPHEMERAL_MIN;
-				ip_laddr_connect++;
-				if (ip_laddr_connect == t->t_ip_laddr_max + 1) {
+				if (ip_laddr_connect < t->t_ip_laddr_max) {
+					ip_laddr_connect++;
+				} else {
 					ip_laddr_connect = t->t_ip_laddr_min;
 				}
 			}
