@@ -6,6 +6,16 @@
 #include "netstat.h"
 #include <getopt.h>
 
+struct report_data {
+	uint64_t rd_ipackets;
+	uint64_t rd_ibytes;
+	uint64_t rd_opackets;
+	uint64_t rd_obytes;
+	uint64_t rd_closed;
+	uint64_t rd_sndrexmitpack;
+	struct timeval rd_tv;
+};
+
 static int m_done;
 static int Nflag;
 static struct timeval report_tv;
@@ -14,6 +24,7 @@ static char http_request[1500];
 static char http_reply[1500];
 static int http_request_len;
 static int http_reply_len;
+static struct report_data report01, report20;
 
 counter64_t if_ibytes;
 counter64_t if_ipackets;
@@ -210,72 +221,32 @@ ip_socket_hash(struct dlist *p)
 }
 
 static void
-print_report()
+print_report_diffs(struct report_data *new, struct report_data *old)
 {
-	static int i, n;
-	uint64_t new_ipackets, new_ibytes;
-	uint64_t new_opackets, new_obytes;
-	uint64_t new_closed, new_sndrexmitpack;
-	static uint64_t old_ipackets, old_ibytes;
-	static uint64_t old_opackets, old_obytes;
-	static uint64_t old_closed, old_sndrexmitpack;
-	struct timeval tv;
-
-	int conns;
-	double dt, ipps, ibps, opps, obps, cps, rxmtps;
-	char cps_b[40], ipps_b[40], ibps_b[40], opps_b[40], obps_b[40];
+	double dt, ipps, ibps, opps, obps, pps, bps, cps, rxmtps;
+	char ipps_b[40], ibps_b[40];
+	char opps_b[40], obps_b[40];
+	char pps_b[40], bps_b[40];
+	char cps_b[40];
 	char rxmtps_b[40];
 
-	gettimeofday(&tv, NULL);
-	dt = (tv.tv_sec - report_tv.tv_sec) +
-		(tv.tv_usec - report_tv.tv_usec) / 1000000.0f;
-	report_tv = tv;
-	if (n == 0) {
-		printf("%-10s%-10s", "cps", "ipps");
-		if (report_bytes_flag) {
-			printf("%-10s", "ibps");
-		}
-		printf("%-10s", "opps");
-		if (report_bytes_flag) {
-			printf("%-10s","obps");
-		}
-		printf("%-10s", "rxmtps");
-		printf("%s\n", "conns");
-	}
-	n++;
-	if (n == 20) {
-		n = 0;
-	}
-	conns = 0;
-	for (i = 0; i < n_threads; ++i) {
-		conns += threads[i].t_n_conns;
-	}
-	new_ipackets = counter64_get(&if_ipackets);
-	new_opackets = counter64_get(&if_opackets);
-	new_ibytes = counter64_get(&if_ibytes);
-	new_obytes = counter64_get(&if_obytes);
-	new_closed = counter64_get(&tcpstat.tcps_closed);
-	//dbg("closed: 0=%"PRIu64", 1=%"PRIu64,
-	//	tcpstat.tcps_closed.cnt_per_thread[0],
-	//	tcpstat.tcps_closed.cnt_per_thread[1]);
-	new_sndrexmitpack = counter64_get(&tcpstat.tcps_sndrexmitpack);
-	ipps = (new_ipackets - old_ipackets) / dt;
-	opps = (new_opackets - old_opackets) / dt;
-	ibps = (new_ibytes - old_ibytes) / dt;
-	obps = (new_obytes - old_obytes) / dt;
-	cps = (new_closed - old_closed) / dt;
-	rxmtps = (new_sndrexmitpack - old_sndrexmitpack) / dt;
-	old_ipackets = new_ipackets;
-	old_ibytes = new_ibytes;
-	old_opackets = new_opackets;
-	old_obytes = new_obytes;
-	old_closed = new_closed;
-	old_sndrexmitpack = new_sndrexmitpack;
+	dt = (new->rd_tv.tv_sec - old->rd_tv.tv_sec) +
+		(new->rd_tv.tv_usec - old->rd_tv.tv_usec) / 1000000.0f;
+	ipps = (new->rd_ipackets - old->rd_ipackets) / dt;
+	opps = (new->rd_opackets - old->rd_opackets) / dt;
+	ibps = (new->rd_ibytes - old->rd_ibytes) / dt;
+	obps = (new->rd_obytes - old->rd_obytes) / dt;
+	pps = ipps + opps;
+	bps = ibps + obps;
+	cps = (new->rd_closed - old->rd_closed) / dt;
+	rxmtps = (new->rd_sndrexmitpack - old->rd_sndrexmitpack) / dt;
 	norm(cps_b, cps, Nflag);
 	norm(ipps_b, ipps, Nflag);
 	norm(ibps_b, ibps, Nflag);
 	norm(opps_b, opps, Nflag);
 	norm(obps_b, obps, Nflag);
+	norm(pps_b, pps, Nflag);
+	norm(bps_b, bps, Nflag);
 	norm(rxmtps_b, rxmtps, Nflag);
 	printf("%-10s%-10s", cps_b, ipps_b);
 	if (report_bytes_flag) {
@@ -285,8 +256,58 @@ print_report()
 	if (report_bytes_flag) {
 		printf("%-10s", obps_b);
 	}
+	printf("%-10s", pps_b);
+	if (report_bytes_flag) {
+		printf("%-10s", bps_b);
+	}
 	printf("%-10s", rxmtps_b);
+	*old = *new;
+}
+
+static void
+print_report()
+{
+	int i;
+	static int n;
+	struct report_data new;
+	int conns;
+
+	if (n == 0) {
+		printf("%-10s%-10s", "cps", "ipps");
+		if (report_bytes_flag) {
+			printf("%-10s", "ibps");
+		}
+		printf("%-10s", "opps");
+		if (report_bytes_flag) {
+			printf("%-10s", "obps");
+		}
+		printf("%-10s", "pps");
+		if (report_bytes_flag) {
+			printf("%-10s", "bps");
+		}
+		printf("%-10s", "rxmtps");
+		printf("%s\n", "conns");
+	}
+	conns = 0;
+	for (i = 0; i < n_threads; ++i) {
+		conns += threads[i].t_n_conns;
+	}
+	gettimeofday(&new.rd_tv, NULL);
+	new.rd_ipackets = counter64_get(&if_ipackets);
+	new.rd_opackets = counter64_get(&if_opackets);
+	new.rd_ibytes = counter64_get(&if_ibytes);
+	new.rd_obytes = counter64_get(&if_obytes);
+	new.rd_closed = counter64_get(&tcpstat.tcps_closed);
+	new.rd_sndrexmitpack = counter64_get(&tcpstat.tcps_sndrexmitpack);
+	print_report_diffs(&new, &report01);
 	printf("%d\n", conns);
+	n++;
+	if (n == 20) {
+		printf("-------\n");
+		print_report_diffs(&new, &report20);
+		printf("\n");
+		n = 0;
+	}
 }
 
 static void
@@ -415,7 +436,6 @@ main_process_req(int fd, FILE *out)
 			print_stats(out, verbose);
 			break;
 		case 'c':
-			printf("!\n");
 			print_sockets(out);
 			break;
 		}
@@ -452,6 +472,8 @@ main_routine()
 	gettimeofday(&report_tv, NULL);
 	signal(SIGINT, sighandler);
 	signal(SIGALRM, sighandler);
+	gettimeofday(&report01.rd_tv, NULL);
+	report20 = report01;
 	alarm(1);
 	while (!m_done) {
 		poll(pfds, n_pfds, -1);
