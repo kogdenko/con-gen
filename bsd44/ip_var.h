@@ -37,7 +37,6 @@
 #include "types.h"
 
 struct ip;
-u_short	ip_id;				/* ip packet ctr, for ids */
 
 void	 ip_drain(void);
 void	 ip_init(void);

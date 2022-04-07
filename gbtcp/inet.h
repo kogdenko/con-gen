@@ -67,7 +67,7 @@ struct ip4_hdr {
 	uint16_t ih_cksum;
 	be32_t ih_saddr;
 	be32_t ih_daddr;
-} __attribute__((packed));
+} __attribute__((packed, aligned(4)));
 
 struct udp_hdr {
 	be16_t uh_sport;
