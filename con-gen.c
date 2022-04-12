@@ -608,6 +608,10 @@ usage()
 	"\t--ip-in-cksum: On/Off IP input checksum calculation\n"
 	"\t--ip-out-cksum: On/Off IP output checksum calculation\n"
 	"\t--tcp-in-cksum: On/Off TCP input checksum calculation\n"
+	"\t--tcp-out-cksum: On/Off TCP output checksum calculation\n"
+	"\t--in-cksum: On/Off input checksum calculation\n"
+	"\t--out-cksum: On/Off output checksum calculation\n"
+	"\t--cksum: On/Off checksum calculation\n"
 	"\t--tcp-wscale: On/Off wscale TCP option\n"
 	"\t--tcp-timestamps: On/Off timestamp TCP option\n"
 	"\t--tcp-fin-timeout {seconds}: Specify FIN timeout\n"
@@ -623,17 +627,18 @@ static struct option long_options[] = {
 	{ "toy", no_argument, 0, 0 },
 	{ "dst-cache", required_argument, 0, 0 },
 	{ "so-debug", no_argument, 0, 0 },
-	{ "ip-in-cksum", optional_argument, 0, 0 },
-	{ "ip-out-cksum", optional_argument, 0, 0 },
-	{ "tcp-in-cksum", optional_argument, 0, 0 },
-	{ "tcp-out-cksum", optional_argument, 0, 0 },
-	{ "in-cksum", optional_argument, 0, 0 },
-	{ "out-cksum", optional_argument, 0, 0 },
-	{ "tcp-wscale", optional_argument, 0, 0 },
-	{ "tcp-timestamps", optional_argument, 0, 0 },
+	{ "ip-in-cksum", required_argument, 0, 0 },
+	{ "ip-out-cksum", required_argument, 0, 0 },
+	{ "tcp-in-cksum", required_argument, 0, 0 },
+	{ "tcp-out-cksum", required_argument, 0, 0 },
+	{ "in-cksum", required_argument, 0, 0 },
+	{ "out-cksum", required_argument, 0, 0 },
+	{ "cksum", required_argument, 0, 0 },
+	{ "tcp-wscale", required_argument, 0, 0 },
+	{ "tcp-timestamps", required_argument, 0, 0 },
 	{ "tcp-fin-timeout", required_argument, 0, 0 },
 	{ "tcp-timewait-timeout", required_argument, 0, 0 },
-	{ "report-bytes", optional_argument, 0, 0 },
+	{ "report-bytes", required_argument, 0, 0 },
 	{ 0, 0, 0, 0 }
 };
 
@@ -675,7 +680,7 @@ err:
 }
 
 static int
-thread_init(struct thread *t, struct thread *pt, int argc, char **argv)
+thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char **argv)
 {
 	int rc, opt, option_index;
 	const char *optname;
@@ -704,9 +709,9 @@ thread_init(struct thread *t, struct thread *pt, int argc, char **argv)
 		ether_scanf(t->t_eth_laddr, "00:00:00:00:00:00");
 		ether_scanf(t->t_eth_faddr, "ff:ff:ff:ff:ff:ff");
 		scan_ip_range(&t->t_ip_laddr_min,
-		              &t->t_ip_laddr_max, "10.0.0.1");
+			&t->t_ip_laddr_max, "10.0.0.1");
 		scan_ip_range(&t->t_ip_faddr_min,
-		              &t->t_ip_faddr_max, "10.1.0.1");
+			&t->t_ip_faddr_max, "10.1.0.1");
 		t->t_affinity = -1;
 	} else {
 		t->t_toy = pt->t_toy;
@@ -737,8 +742,8 @@ thread_init(struct thread *t, struct thread *pt, int argc, char **argv)
 	}
 	ifname = NULL;
 	while ((opt = getopt_long(argc, argv,
-	                          "hvi:s:d:S:D:a:n:b:c:p:NL",
-	                          long_options, &option_index)) != -1) {
+			"hvi:s:d:S:D:a:n:b:c:p:NL",
+			long_options, &option_index)) != -1) {
 		optval = optarg ? strtoll(optarg, NULL, 10) : 0;
 		switch (opt) {
 		case 0:
@@ -752,73 +757,42 @@ thread_init(struct thread *t, struct thread *pt, int argc, char **argv)
 			} else if (!strcmp(optname, "so-debug")) {
 				t->t_so_debug = 1;
 			} else if (!strcmp(optname, "ip-in-cksum")) {
-				if (optarg == NULL) {
-					t->t_ip_do_incksum = 2;
-				} else {
-					t->t_ip_do_incksum = optval;
-				}
+				t->t_ip_do_incksum = optval;
 			} else if (!strcmp(optname, "ip-out-cksum")) {
-				if (optarg == NULL) {
-					t->t_ip_do_outcksum = 1;
-				} else {
-					t->t_ip_do_outcksum = optval;
-				}
+				t->t_ip_do_outcksum = optval;
 			} else if (!strcmp(optname, "tcp-in-cksum")) {
-				if (optarg == NULL) {
-					t->t_tcp_do_incksum = 2;
-				} else {
-					t->t_tcp_do_incksum = optval;
-				}
+				t->t_tcp_do_incksum = optval;
 			} else if (!strcmp(optname, "tcp-out-cksum")) {
-				if (optarg == NULL) {
-					t->t_tcp_do_outcksum = 1;
-				} else {
-					t->t_tcp_do_outcksum = optval;
-				}
+				t->t_tcp_do_outcksum = optval;
 			} else if (!strcmp(optname, "in-cksum")) {
-				if (optarg == NULL) {
-					t->t_ip_do_incksum = 2;
-					t->t_tcp_do_incksum = 2;
-				} else {
-					t->t_ip_do_incksum = optval;
-					t->t_tcp_do_incksum = optval;
-				}
+				t->t_ip_do_incksum = optval;
+				t->t_tcp_do_incksum = optval;
 			} else if (!strcmp(optname, "out-cksum")) {
-				if (optarg == NULL) {
-					t->t_ip_do_outcksum = 1;
-					t->t_tcp_do_outcksum = 1;
-				} else {
-					t->t_ip_do_outcksum = optval;
-					t->t_tcp_do_outcksum = optval;
-				}
+				t->t_ip_do_outcksum = optval;
+				t->t_tcp_do_outcksum = optval;
+			} else if (!strcmp(optname, "cksum")) {
+				t->t_ip_do_incksum = optval;
+				t->t_tcp_do_incksum = optval;
+				t->t_ip_do_outcksum = optval;
+				t->t_tcp_do_outcksum = optval;
 			} else if (!strcmp(optname, "tcp-wscale")) {
-				if (optarg == NULL) {
-					t->t_tcp_do_wscale = 1;
-				} else {
-					t->t_tcp_do_wscale = optval;
-				}
+				t->t_tcp_do_wscale = optval;
 			} else if (!strcmp(optname, "tcp-timestamps")) {
-				if (optarg == NULL) {
-					t->t_tcp_do_timestamps = 1;
-				} else {
-					t->t_tcp_do_timestamps = optval;
-				}
+				t->t_tcp_do_timestamps = optval;
 			} else if (!strcmp(optname, "tcp-fin-timeout")) {
 				if (optval < 30) {
 					goto err;
 				}
 				t->t_tcp_fintimo = optval * NANOSECONDS_SECOND;
-				break;
 			} else if (!strcmp(optname, "tcp-timewait-timeout")) {
 				t->t_tcp_twtimo = optval * NANOSECONDS_SECOND;
-				break;
 			} else if (!strcmp(optname, "report-bytes")) {
 				report_bytes_flag = 1;
 			}
 			break;
 		case 'h':
 			usage();
-			break;
+			exit(0);
 		case 'v':
 			verbose++;
 			break;
@@ -827,14 +801,14 @@ thread_init(struct thread *t, struct thread *pt, int argc, char **argv)
 			break;
 		case 's':
 			rc = scan_ip_range(&t->t_ip_laddr_min,
-			                   &t->t_ip_laddr_max, optarg);
+				&t->t_ip_laddr_max, optarg);
 			if (rc) {
 				goto err;
 			}
 			break;
 		case 'd':
 			rc = scan_ip_range(&t->t_ip_faddr_min,
-			                   &t->t_ip_faddr_max, optarg);
+				&t->t_ip_faddr_max, optarg);
 			if (rc) {
 				goto err;
 			}
@@ -886,6 +860,7 @@ err:
 		}
 	}
 	if (ifname == NULL) {
+		fprintf(stderr, "Interface (-i) not specified for thread %d\n", thread_idx);
 		usage();
 		return -EINVAL;
 	}
@@ -974,7 +949,7 @@ main(int argc, char **argv)
 	opt_off = 0;
 	while (opt_off < argc - 1 && n_threads < N_THREADS_MAX) {
 		t = threads + n_threads;
-		rc = thread_init(t, pt, argc - opt_off, argv + opt_off);
+		rc = thread_init(t, pt, n_threads, argc - opt_off, argv + opt_off);
 		if (rc) {
 			return EXIT_FAILURE;
 		}
