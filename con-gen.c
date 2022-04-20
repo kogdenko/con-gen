@@ -17,14 +17,18 @@ struct report_data {
 };
 
 static int m_done;
-static int Nflag;
+static int Nflag = 1;
 static struct timeval report_tv;
 static int report_bytes_flag;
 static char http_request[1500];
 static char http_reply[1500];
 static int http_request_len;
 static int http_reply_len;
-static struct report_data report01, report20;
+static struct report_data report01;
+static int n_reports;
+static int n_reports_max;
+static int print_banner = 1;
+static int print_statistics = 1;
 
 counter64_t if_ibytes;
 counter64_t if_ipackets;
@@ -272,7 +276,7 @@ print_report()
 	struct report_data new;
 	int conns;
 
-	if (n == 0) {
+	if (n == 0 && print_banner) {
 		printf("%-10s%-10s", "cps", "ipps");
 		if (report_bytes_flag) {
 			printf("%-10s", "ibps");
@@ -303,28 +307,37 @@ print_report()
 	printf("%d\n", conns);
 	n++;
 	if (n == 20) {
-		printf("-------\n");
-		print_report_diffs(&new, &report20);
-		printf("\n");
 		n = 0;
+	}
+}
+
+static void
+quit()
+{
+	int i;
+
+	m_done = 1;
+	for (i = 0; i < n_threads; ++i) {
+		threads[i].t_done = 1;
 	}
 }
 
 static void
 sighandler(int signum)
 {
-	int i;
 
 	switch (signum) {
 	case SIGINT:
-		m_done = 1;
-		for (i = 0; i < n_threads; ++i) {
-			threads[i].t_done = 1;
-		}
+		quit();
 		break;
 	case SIGALRM:
 		print_report();
-		alarm(1);
+		n_reports++;
+		if (n_reports_max != 0 && n_reports == n_reports_max) {
+			quit();
+		} else {
+			alarm(1);
+		}
 		break;
 	}
 }
@@ -476,7 +489,6 @@ main_routine()
 	signal(SIGINT, sighandler);
 	signal(SIGALRM, sighandler);
 	gettimeofday(&report01.rd_tv, NULL);
-	report20 = report01;
 	alarm(1);
 	while (!m_done) {
 		poll(pfds, n_pfds, -1);
@@ -597,26 +609,30 @@ usage()
 	"\t-S {hwaddr}: Source ethernet address\n"
 	"\t-D {hwaddr}: Destination ethernet address\n"
 	"\t-c {num}: Number of parallel connections\n"
-	"\t-a {cpu-id}: Set affinity\n"
-	"\t-n {num}: Number of connections to perform\n"
+	"\t-a {cpu-id}: Set CPU affinity\n"
+	"\t-n {num}: Number of connections of con-gen (0 meaning infinite)\n"
 	"\t-b {num}: Burst size\n"
+	"\t-N: Do not normalize units (i.e., use bps, pps instead of Mbps, Kpps, etc.).\n"
 	"\t-L: Operate in server mode\n"
 	"\t--so-debug: Enable SO_DEBUG option\n"
 	"\t--udp: Use UDP instead of TCP\n"
-	"\t--toy: Use top tcp/ip stack instead of bsd4.4 (it is a bit faster)\n"
+	"\t--toy: Use toy tcp/ip stack instead of bsd4.4 (it is a bit faster)\n"
 	"\t--dst-cache: Number of precomputed connect tuples (default: 100000)\n"
-	"\t--ip-in-cksum: On/Off IP input checksum calculation\n"
-	"\t--ip-out-cksum: On/Off IP output checksum calculation\n"
-	"\t--tcp-in-cksum: On/Off TCP input checksum calculation\n"
-	"\t--tcp-out-cksum: On/Off TCP output checksum calculation\n"
-	"\t--in-cksum: On/Off input checksum calculation\n"
-	"\t--out-cksum: On/Off output checksum calculation\n"
-	"\t--cksum: On/Off checksum calculation\n"
-	"\t--tcp-wscale: On/Off wscale TCP option\n"
-	"\t--tcp-timestamps: On/Off timestamp TCP option\n"
+	"\t--ip-in-cksum {0|1}: On/Off IP input checksum calculation\n"
+	"\t--ip-out-cksum {0|1}: On/Off IP output checksum calculation\n"
+	"\t--tcp-in-cksum {0|1}: On/Off TCP input checksum calculation\n"
+	"\t--tcp-out-cksum {0|1}: On/Off TCP output checksum calculation\n"
+	"\t--in-cksum {0|1}: On/Off input checksum calculation\n"
+	"\t--out-cksum {0|1}: On/Off output checksum calculation\n"
+	"\t--cksum {0|1}: On/Off checksum calculation\n"
+	"\t--tcp-wscale {0|1}: On/Off wscale TCP option\n"
+	"\t--tcp-timestamps {0|1}: On/Off timestamp TCP option\n"
 	"\t--tcp-fin-timeout {seconds}: Specify FIN timeout\n"
 	"\t--tcp-timewait-timeout {seconds}: Specify TIME_WAIT timeout\n"
-	"\t--report-bytes: On/Off byte statistic in report\n"
+	"\t--report-bytes {0|1}: On/Off byte statistic in report\n"
+	"\t--reports {num}: Number of reports of con-gen (0 meaning infinite)\n"
+	"\t--print-banner {0|1}: On/Off printing report banner every 20 seconds\n"
+	"\t--print-statistics {0|1}: On/Off printing statistics at the end of execution\n"
 	);
 }
 
@@ -639,6 +655,9 @@ static struct option long_options[] = {
 	{ "tcp-fin-timeout", required_argument, 0, 0 },
 	{ "tcp-timewait-timeout", required_argument, 0, 0 },
 	{ "report-bytes", required_argument, 0, 0 },
+	{ "reports", required_argument, 0, 0 },
+	{ "print-banner", required_argument, 0, 0 },
+	{ "print-statistics", required_argument, 0, 0 },
 	{ 0, 0, 0, 0 }
 };
 
@@ -788,6 +807,12 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 				t->t_tcp_twtimo = optval * NANOSECONDS_SECOND;
 			} else if (!strcmp(optname, "report-bytes")) {
 				report_bytes_flag = 1;
+			} else if (!strcmp(optname, "reports")) {
+				n_reports_max = optval;
+			} else if (!strcmp(optname, "print-banner")) {
+				print_banner = optval;
+			} else if (!strcmp(optname, "print-statistics")) {
+				print_statistics = optval;
 			}
 			break;
 		case 'h':
@@ -847,7 +872,7 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 			t->t_port = htons(strtoul(optarg, NULL, 10));
 			break;
 		case 'N':
-			Nflag = 1;
+			Nflag = 0;
 			break;
 		case 'L':
 			t->t_Lflag = 1;
@@ -976,6 +1001,8 @@ main(int argc, char **argv)
 		t = threads + i;
 		pthread_join(t->t_pthread, NULL);
 	}
-	print_stats(stdout, verbose);
+	if (print_statistics) {
+		print_stats(stdout, verbose);
+	}
 	return 0;
 }
