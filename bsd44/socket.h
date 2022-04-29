@@ -65,11 +65,6 @@ struct sockbuf {
 
 struct socket {
 	struct ip_socket so_base;
-//	struct dlist inp_list;
-//	be32_t inp_laddr;
-//	be32_t inp_faddr;
-//	be16_t inp_lport;
-//	be16_t inp_fport;
 
 	uint32_t so_options;		/* from socket call, see socket.h */
 	u_char	so_proto;

@@ -124,15 +124,21 @@ static void
 conn_sendto(struct socket *so)
 {
 	int rc;
+	char lb[INET_ADDRSTRLEN];
+	char fb[INET_ADDRSTRLEN];
 
 	rc = bsd_sendto(so, current->t_http, current->t_http_len,
-	                MSG_NOSIGNAL, NULL);
-	if (rc < 0) {
-		panic(-rc, "bsd_sendto() failed");
-	} else if (rc != current->t_http_len) {
-		panic(0, "bsd_sendto() stalled");
+		MSG_NOSIGNAL, NULL);
+	if (rc == current->t_http_len) {
+		return;
+	} else if (rc > 0) {
+		rc = 0;
 	}
-
+	panic(-rc, "bsd_sendto() failed; %s:%hu->%s:%hu",
+		inet_ntop(AF_INET, &so->so_base.ipso_laddr, lb, sizeof(lb)),
+		ntohs(so->so_base.ipso_lport),
+		inet_ntop(AF_INET, &so->so_base.ipso_faddr, fb, sizeof(fb)),
+		ntohs(so->so_base.ipso_fport));
 }
 
 static void
@@ -140,6 +146,7 @@ client(struct socket *so, short events, struct sockaddr_in *addr,
 	void *dat, int len)
 {
 	int rc;
+	char fb[INET_ADDRSTRLEN];
 	struct conn *cp;
 
 	cp = (struct conn *)&so->so_user;
@@ -149,7 +156,10 @@ client(struct socket *so, short events, struct sockaddr_in *addr,
 	}
 	if (cp->cn_sent == 0) {
 		if (events & POLLERR) {
-			panic(so->so_error, "cant connect");
+			panic(so->so_error, "Could't connect to %s:%hu",
+				inet_ntop(AF_INET, &so->so_base.ipso_faddr,
+					fb, sizeof(fb)),
+				ntohs(so->so_base.ipso_fport));
 		}
 		if (events|POLLOUT) {
 			cp->cn_sent = 1;
@@ -197,5 +207,3 @@ server(struct socket *so, short events, struct sockaddr_in *addr,
 		bsd_close(so);
 	}
 }
-
-

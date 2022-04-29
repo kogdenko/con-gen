@@ -140,7 +140,11 @@ udp_cksum(struct ip *ip, int len)
 	ph_cksum = pseudo_cksum(ip, len);
 	sum = cksum_add(sum, ph_cksum);
 	reduced = reduce(sum);
-	return reduced;
+	if (reduced == 0) {
+		return 0xffff;
+	} else {
+		return reduced;
+	}
 }
 
 void *

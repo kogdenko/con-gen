@@ -879,7 +879,7 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 			break;
 		default:
 err:
-			fprintf(stderr, "invalid argument '-%c': %s\n",
+			fprintf(stderr, "Invalid argument '-%c': %s\n",
 			        opt, optarg);
 			return -EINVAL;
 		}
