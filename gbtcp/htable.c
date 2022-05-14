@@ -185,8 +185,8 @@ htable_dynamic_resize(struct htable_dynamic *t)
 		t->htd_new = tmp;
 		t->htd_resize_progress = 0;
 		if (htable_print) {
-			printf("htable resize; size=%d->%d, elements=%d\n",
-			        size, new_size, t->htd_nr_elems);
+			dbg("htable resize; size=%d->%d, elements=%d\n",
+				size, new_size, t->htd_nr_elems);
 		}
 	} else {
 		assert(t->htd_old->hts_size > t->htd_resize_progress);
@@ -202,8 +202,8 @@ htable_dynamic_resize(struct htable_dynamic *t)
 			htable_static_deinit(t->htd_old);
 			t->htd_old = NULL;
 			if (htable_print) {
-				printf("htable resize done; elements=%d\n",
-				       t->htd_nr_elems);
+				dbg("htable resize done; elements=%d\n",
+					t->htd_nr_elems);
 			}
 		}
 	}

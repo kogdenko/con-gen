@@ -513,7 +513,11 @@ soisconnected(struct socket *so)
 void
 soisdisconnecting(struct socket *so)
 {
-	sowakeup2(so, POLLIN|POLLOUT);
+	short events;
+
+	//events = POLLIN|POLLOUT;
+	events = soevents(so);
+	sowakeup2(so, events);
 	so->so_state &= ~SS_ISCONNECTING;
 	so->so_state |= (SS_ISDISCONNECTING|SS_CANTRCVMORE|SS_CANTSENDMORE);
 }
@@ -521,7 +525,11 @@ soisdisconnecting(struct socket *so)
 void
 soisdisconnected(struct socket *so)
 {
-	sowakeup2(so, POLLIN|POLLOUT);
+	short events;
+
+	//events = POLLIN|POLLOUT;
+	events = soevents(so);
+	sowakeup2(so, events);
 	so->so_state &= ~(SS_ISCONNECTING|SS_ISCONNECTED|SS_ISDISCONNECTING);
 	so->so_state |= (SS_CANTRCVMORE|SS_CANTSENDMORE);
 }

@@ -111,7 +111,6 @@ tcp_input(struct ip *ip,
 	if (current->t_tcp_do_incksum) {
 		th->th_sum = tcp_cksum(ip, ip->ip_len);
 		if (th_sum != th->th_sum) {
-			printf("%d %d\n", th_sum, th->th_sum  );
 			counter64_inc(&tcpstat.tcps_rcvbadsum);
 			if (current->t_tcp_do_incksum > 1) {
 				goto drop;

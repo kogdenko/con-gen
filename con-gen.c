@@ -147,7 +147,7 @@ set_affinity(int cpu_id)
 	CPU_SET(cpu_id, &x);
 	rc = pthread_setaffinity_np(pthread_self(), sizeof(x), &x);
 	if (rc) {
-		fprintf(stderr, "pthread_setaffinity_np(%d) failed", cpu_id);
+		dbg("pthread_setaffinity_np(%d) failed", cpu_id);
 		return -rc;
 	}
 	return 0;
@@ -173,12 +173,11 @@ read_rss_key(const char *ifname, u_char *rss_key)
 	ifr.ifr_data = (void *)&rss;
 	rc = ioctl(fd, SIOCETHTOOL, (uintptr_t)&ifr);
 	if (rc < 0) {
-		fprintf(stderr, "%s: ioctl(SIOCETHTOOL) failed\n", ifname);
+		dbg("%s: ioctl(SIOCETHTOOL) failed", ifname);
 		goto out;
 	}
 	if (rss.key_size != RSS_KEY_SIZE) {
-		fprintf(stderr, "%s: invalid rss key_size; key_size=%d\n",
-			ifname, rss.key_size);
+		dbg("%s: Invalid rss key_size (%d)", ifname, rss.key_size);
 		goto out;
 	}
 	size = (sizeof(rss) + rss.key_size +
@@ -194,7 +193,7 @@ read_rss_key(const char *ifname, u_char *rss_key)
 	ifr.ifr_data = (void *)rss2;
 	rc = ioctl(fd, SIOCETHTOOL, (uintptr_t)&ifr);
 	if (rc) {
-		fprintf(stderr, "%s: ioctl(SIOCETHTOOL, ) failed\n", ifname);
+		dbg("%s: ioctl(SIOCETHTOOL) failed", ifname);
 		goto out2;
 	}
 	off = rss2->indir_size * sizeof(rss2->rss_config[0]);
@@ -357,7 +356,7 @@ thread_init_dst_cache(struct thread *t)
 
 	t->t_dst_cache = malloc(t->t_dst_cache_size * sizeof(struct ip_socket));
 	if (t->t_dst_cache == NULL) {
-		fprintf(stderr, "Not enough memory for dst cache\n");
+		dbg("Not enough memory for dst cache");
 		return -ENOMEM;
 	}
 	ip_laddr_connect = t->t_ip_laddr_min;
@@ -671,13 +670,12 @@ thread_init_if(struct thread *t, const char *ifname)
 	t->t_nmd = nm_open(buf, NULL, 0, NULL);
 	if (t->t_nmd == NULL) {
 		rc = -errno;
-		fprintf(stderr, "nm_open('%s') failed (%s)\n",
-			buf, strerror(-rc));
+		dbg("nm_open('%s') failed (%s)", buf, strerror(-rc));
 		return rc;
 	}
 	if (t->t_nmd->req.nr_rx_rings != t->t_nmd->req.nr_tx_rings) {
 		rc = -EINVAL;
-		fprintf(stderr, "%s: nr_rx_rings != nr_tx_rings\n", buf);
+		dbg("%s: nr_rx_rings != nr_tx_rings", buf);
 		goto err;
 	}
 	t->t_n_rss_q = t->t_nmd->req.nr_rx_rings;
@@ -686,8 +684,7 @@ thread_init_if(struct thread *t, const char *ifname)
 		t->t_rss_qid = t->t_nmd->first_rx_ring;
 		rc = read_rss_key(t->t_nmd->req.nr_name, t->t_rss_key);
 		if (rc) {
-			fprintf(stderr, "%s: cant read rss key\n",
-				t->t_nmd->req.nr_name);
+			dbg("%s: Can't read rss key", t->t_nmd->req.nr_name);
 			goto err;
 		}
 	}
@@ -879,13 +876,12 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 			break;
 		default:
 err:
-			fprintf(stderr, "Invalid argument '-%c': %s\n",
-			        opt, optarg);
+			dbg("Invalid argument '-%c': %s", opt, optarg);
 			return -EINVAL;
 		}
 	}
 	if (ifname == NULL) {
-		fprintf(stderr, "Interface (-i) not specified for thread %d\n", thread_idx);
+		dbg("Interface (-i) not specified for thread %d", thread_idx);
 		usage();
 		return -EINVAL;
 	}
@@ -952,8 +948,7 @@ main(int argc, char **argv)
 	sleep_compute_hz();
 	rc = gethostname(hostname, sizeof(hostname));
 	if (rc == -1) {
-		fprintf(stderr, "gethostname() failed (%s)\n",
-		        strerror(errno));
+		dbg("gethostname() failed (%s)\n", strerror(errno));
 		strcpy(hostname, "127.0.0.1");
 	} else {
 		hostname[sizeof(hostname) - 1] = '\0';
@@ -991,8 +986,7 @@ main(int argc, char **argv)
 		t = threads + i;
 		rc = pthread_create(&t->t_pthread, NULL, thread_routine, t);
 		if (rc) {
-			fprintf(stderr, "pthread_create() failed (%s)\n",
-				strerror(rc));
+			dbg("pthread_create() failed (%s)", strerror(rc));
 			return EXIT_FAILURE;
 		}
 	}

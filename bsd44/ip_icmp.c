@@ -46,7 +46,7 @@
  * host table maintenance routines.
  */
 
-int	icmpprintfs = 1;
+int icmpprintfs = 0;
 
 static be32_t
 icmp_reflectsrc(be32_t dst)
@@ -73,7 +73,7 @@ icmp_send(struct netmap_ring *txr, struct netmap_slot *m, struct ip *ip)
 
 	if (icmpprintfs) {
 		printf("icmp_send dst %x src %x\n",
-		       ip->ip_dst.s_addr, ip->ip_src.s_addr);
+			ip->ip_dst.s_addr, ip->ip_src.s_addr);
 	}
 	icp = (struct icmp *)(ip + 1);
 	icp->icmp_cksum = 0;
@@ -98,10 +98,9 @@ icmp_error(struct ip *oip, int type, int code, be32_t dest)
 	struct netmap_ring *txr;
 	struct netmap_slot *m;
 
-#ifdef ICMPPRINTFS
 	if (icmpprintfs)
-		printf("icmp_error(%x, %d, %d)\n", oip, type, code);
-#endif
+		printf("icmp_error(%d, %d)\n", type, code);
+
 	if (type != ICMP_REDIRECT) {
 		counter64_inc(&icmpstat.icps_error);
 	}

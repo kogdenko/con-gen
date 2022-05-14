@@ -30,13 +30,13 @@ dbg5(const char *file, u_int line, const char *func, int suppressed,
 	va_list ap;
 
 	len = snprintf(buf, sizeof(buf), "%-6d: %-20s: %-4d: %-20s: ",
-	               getpid(), file, line, func);
+		getpid(), file, line, func);
 	va_start(ap, fmt);
 	len += vsnprintf(buf + len, sizeof(buf) - len, fmt, ap);
 	va_end(ap);
 	if (len < sizeof(buf) && suppressed) {
 		snprintf(buf + len, sizeof(buf) - len, " (suppressed %d)",
-		         suppressed);
+			suppressed);
 	}
 	printf("%s\n", buf);
 }
@@ -64,6 +64,7 @@ static uint16_t
 reduce(uint64_t sum)
 {
 	uint64_t mask;
+	uint16_t reduced;
 
 	mask = 0xffffffff00000000lu;
 	while (sum & mask) {
@@ -73,7 +74,11 @@ reduce(uint64_t sum)
 	while (sum & mask) {
 		sum = cksum_add(sum & ~mask, (sum >> 16) & ~mask);
 	}
-	return ~((uint16_t)sum);
+	reduced = ~((uint16_t)sum);
+	if (reduced == 0) {
+		reduced = 0xffff;
+	}
+	return reduced;
 }
 
 static uint64_t
@@ -140,11 +145,7 @@ udp_cksum(struct ip *ip, int len)
 	ph_cksum = pseudo_cksum(ip, len);
 	sum = cksum_add(sum, ph_cksum);
 	reduced = reduce(sum);
-	if (reduced == 0) {
-		return 0xffff;
-	} else {
-		return reduced;
-	}
+	return reduced;
 }
 
 void *
@@ -172,7 +173,7 @@ panic3(const char *file, int line, int errnum, const char *format, ...)
 		fprintf(stderr, " (%d:%s)", errnum, strerror(errnum));
 	}
 	fprintf(stderr, "\n");
-	abort();
+	exit(1);
 }
 
 struct netmap_ring *

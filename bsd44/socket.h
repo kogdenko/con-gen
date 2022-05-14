@@ -130,6 +130,8 @@ extern struct dlist so_txq;
 #define sosetopt(so, optname) ((so)->so_options |= SO_OPTION(optname))
 #define soclropt(so, optname) ((so)->so_options &= ~SO_OPTION(optname))
 
+short soevents(struct socket *so);
+
 /* can we read something from so? */
 int soreadable(struct socket *so);
 

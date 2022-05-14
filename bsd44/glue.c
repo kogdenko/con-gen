@@ -134,6 +134,7 @@ conn_sendto(struct socket *so)
 	} else if (rc > 0) {
 		rc = 0;
 	}
+//	print_stats(stdout, 1);
 	panic(-rc, "bsd_sendto() failed; %s:%hu->%s:%hu",
 		inet_ntop(AF_INET, &so->so_base.ipso_laddr, lb, sizeof(lb)),
 		ntohs(so->so_base.ipso_lport),
