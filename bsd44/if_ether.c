@@ -92,6 +92,10 @@ in:
 	op = ntohs(ea->arp_op);
 	memcpy(&isaddr, ea->arp_spa, sizeof(isaddr));
 	memcpy(&itaddr, ea->arp_tpa, sizeof(itaddr));
+	if (1) {
+		myaddr = itaddr;
+		goto reply; 	// Reply to all requetsts
+	}
 	for (ia = current->t_ip_laddr_min;
 	     ia <= current->t_ip_laddr_max; ++ia) {
 		ian = htonl(ia);

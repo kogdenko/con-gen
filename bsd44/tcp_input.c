@@ -72,11 +72,8 @@ tcp_timewait(struct tcpcb *tp)
  * TCP input routine, follows pages 65-76 of the
  * protocol specification dated September, 1981 very closely.
  */
-
 void
-tcp_input(struct ip *ip,
-               int iphlen,
-               int eth_flags)
+tcp_input(struct ip *ip, int iphlen, int eth_flags)
 {
 	struct ip save_ip;
 	struct tcp_hdr *th, save_th;
