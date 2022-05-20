@@ -357,7 +357,7 @@ trimthenstep6:
 		if (ip->ip_len > rcv_wnd) {
 			todrop = ip->ip_len - rcv_wnd;
 			ip->ip_len = rcv_wnd;
-			flags &= ~TH_FIN;
+			flags &= ~BSD_TH_FIN;
 			counter64_inc(&tcpstat.tcps_rcvpackafterwin);
 			counter64_add(&tcpstat.tcps_rcvbyteafterwin, todrop);
 		}
@@ -420,9 +420,9 @@ trimthenstep6:
 			 * In either case, send ACK to resynchronize,
 			 * but keep on processing for RST or ACK.
 			 */
-			if ((flags & TH_FIN) && todrop == ip->ip_len + 1) {
+			if ((flags & BSD_TH_FIN) && todrop == ip->ip_len + 1) {
 				todrop = ip->ip_len;
-				flags &= ~TH_FIN;
+				flags &= ~BSD_TH_FIN;
 				tp->t_flags |= TF_ACKNOW;
 			} else {
 				/*
@@ -493,7 +493,7 @@ trimthenstep6:
 			counter64_add(&tcpstat.tcps_rcvbyteafterwin, todrop);
 		}
 		ip->ip_len -= todrop;
-		flags &= ~(TH_PUSH|TH_FIN);
+		flags &= ~(TH_PUSH|BSD_TH_FIN);
 	}
 
 	/*
@@ -502,7 +502,7 @@ trimthenstep6:
 	 */
 	if (ts_present && SEQ_LEQ(th->th_seq, tp->last_ack_sent) &&
 	    SEQ_LT(tp->last_ack_sent, th->th_seq + ip->ip_len +
-		   ((flags & (TH_SYN|TH_FIN)) != 0))) {
+		   ((flags & (TH_SYN|BSD_TH_FIN)) != 0))) {
 		tp->ts_recent_age = current->t_tcp_now;
 		tp->ts_recent = ts_val;
 	}
@@ -601,7 +601,7 @@ close:
 	case TCPS_TIME_WAIT:
 		if (SEQ_LEQ(th->th_ack, tp->snd_una)) {
 			if (ip->ip_len == 0 &&
-			    (flags & TH_FIN) == 0 &&
+			    (flags & BSD_TH_FIN) == 0 &&
 			    tiwin == tp->snd_wnd) {
 				counter64_inc(&tcpstat.tcps_rcvdupack);
 				/*
@@ -818,7 +818,7 @@ step6:
 	 * If a FIN has already been received on this
 	 * connection then we just ignore the text.
 	 */
-	if ((ip->ip_len || (flags & TH_FIN)) &&
+	if ((ip->ip_len || (flags & BSD_TH_FIN)) &&
 	    TCPS_HAVERCVDFIN(tp->t_state) == 0) {
 		if (th->th_seq == tp->rcv_nxt) {
 			if (tp->t_flags & TF_DELACK) {
@@ -829,7 +829,7 @@ step6:
 				tp->t_flags |= TF_ACKNOW;
 			}
 			tp->rcv_nxt += ip->ip_len;
-			flags = flags & TH_FIN;
+			flags = flags & BSD_TH_FIN;
 			counter64_inc(&tcpstat.tcps_rcvpack);
 			counter64_add(&tcpstat.tcps_rcvbyte, ip->ip_len);
 			if (ip->ip_len) {
@@ -842,14 +842,14 @@ step6:
 			tp->t_flags |= TF_ACKNOW;
 		}
 	} else {
-		flags &= ~TH_FIN;
+		flags &= ~BSD_TH_FIN;
 	}
 
 	/*
 	 * If FIN is received ACK the FIN and let the user know
 	 * that the connection is closing.
 	 */
-	if (flags & TH_FIN) {
+	if (flags & BSD_TH_FIN) {
 		if (TCPS_HAVERCVDFIN(tp->t_state) == 0) {
 			socantrcvmore(so);
 			tp->t_flags |= TF_ACKNOW;

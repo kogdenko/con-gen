@@ -10,6 +10,14 @@
 
 struct thread {
 	struct spinlock t_lock;
+	struct dlist t_pkt_head;
+	struct dlist t_pkt_pending_head;
+	void (*t_rx_op)(void *, int);
+	int (*t_io_init_op)(struct thread *, const char *);
+	bool (*t_io_is_tx_buffer_full_op)();
+	struct packet *(*t_io_alloc_tx_packet_op)();
+	void (*t_io_tx_packet_op)(struct packet *);
+	void (*t_io_rx_op)();
 	u_char t_id;
 	u_char t_toy;
 	u_char t_done;
@@ -30,7 +38,13 @@ struct thread {
 	u_char t_n_rss_q;
 	u_char t_rss_qid;
 	u_char t_rss_key[RSS_KEY_SIZE];
+	int t_fd;
+#ifdef HAVE_NETMAP
 	struct nm_desc *t_nmd;
+#endif
+#ifdef HAVE_PCAP
+	pcap_t *t_pcap;
+#endif
 	struct ip_socket *t_dst_cache;
 	int t_dst_cache_size;
 	int t_dst_cache_i;
@@ -60,6 +74,7 @@ struct thread {
 	htable_t t_in_htable;
 	void *t_in_binded[EPHEMERAL_MIN];
 	u_char t_udp;
+	u_char t_transport;
 	int t_affinity;
 	pthread_t t_pthread;
 	uint64_t *t_counters;

@@ -418,7 +418,7 @@ tcp_fill(struct sock *so, void *buf, struct tcb *tcb, int len_max)
 	th_len = sizeof(*th);
 	total_len = sizeof(*ih) + th_len + tcb->tcb_len;
 	ih->ih_ver_ihl = IP4_VER_IHL;
-	ih->ih_type_of_svc = 0;
+	ih->ih_tos = 0;
 	ih->ih_total_len = htons(total_len);
 	ih->ih_id = htons(so->ip_id);
 	ih->ih_frag_off = 0;
@@ -451,21 +451,21 @@ tcp_fill(struct sock *so, void *buf, struct tcb *tcb, int len_max)
 }
 
 static void
-tcp_xmit_out(struct netmap_ring *txr, struct netmap_slot *m, struct sock *so,
+tcp_xmit_out(struct packet *pkt, struct sock *so,
 	uint8_t tcp_flags, int len_max, int len)
 {
 	int total_len;
 	struct eth_hdr *eh;
 	struct tcb tcb;
 
-	eh = (struct eth_hdr *)NETMAP_BUF(txr, m->buf_idx);
+	eh = (struct eth_hdr *)pkt->pkt_buf;
 	memcpy(eh->eh_saddr, current->t_eth_laddr, sizeof(eh->eh_saddr));
 	memcpy(eh->eh_daddr, current->t_eth_faddr, sizeof(eh->eh_daddr));
 	eh->eh_type = ETH_TYPE_IP4_BE;
 	tcb.tcb_flags = tcp_flags;
 	tcb.tcb_len = len;
 	total_len = tcp_fill(so, eh + 1, &tcb, len_max);
-	m->len = sizeof(*eh) + total_len;
+	pkt->pkt_len = sizeof(*eh) + total_len;
 	counter64_inc(&tcpstat.tcps_sndtotal);
 	if (tcb.tcb_len) {
 		counter64_inc(&tcpstat.tcps_sndpack);
@@ -480,7 +480,7 @@ tcp_xmit_out(struct netmap_ring *txr, struct netmap_slot *m, struct sock *so,
 	if (tcb.tcb_flags == TCP_FLAG_ACK) {
 		counter64_inc(&tcpstat.tcps_sndacks);
 	}
-	ether_output(txr, m);
+	io_tx_packet(pkt);
 }
 
 static int
@@ -519,7 +519,7 @@ tcp_timer_set_probe(struct sock *so)
 }
 
 static int
-tcp_xmit_established(struct netmap_ring *txr, struct netmap_slot *m, struct sock *so)
+tcp_xmit_established(struct packet *pkt, struct sock *so)
 {
 	int len_max, len;
 	uint8_t tcp_flags;
@@ -564,7 +564,7 @@ tcp_xmit_established(struct netmap_ring *txr, struct netmap_slot *m, struct sock
 		tcp_flags |= TCP_FLAG_FIN;
 	}
 	if (tcp_flags) {
-		tcp_xmit_out(txr, m, so, tcp_flags, len_max, len);
+		tcp_xmit_out(pkt, so, tcp_flags, len_max, len);
 		return 1;
 	} else {
 		return 0;
@@ -574,12 +574,12 @@ tcp_xmit_established(struct netmap_ring *txr, struct netmap_slot *m, struct sock
 //  0 - can send more
 //  1 - sent all
 static int
-tcp_xmit(struct netmap_ring *txr, struct netmap_slot *m, struct sock *so)
+tcp_xmit(struct packet *pkt, struct sock *so)
 {
 	int rc;
 
 	if (so->rst) {
-		tcp_xmit_out(txr, m, so, TCP_FLAG_RST, 0, 0);
+		tcp_xmit_out(pkt, so, TCP_FLAG_RST, 0, 0);
 		return 1;
 	}
 	switch (so->state) {
@@ -590,17 +590,17 @@ tcp_xmit(struct netmap_ring *txr, struct netmap_slot *m, struct sock *so)
 		assert(0);
 		return 1;
 	case TCPS_SYN_SENT:
-		tcp_xmit_out(txr, m, so, TCP_FLAG_SYN, 0, 0);
+		tcp_xmit_out(pkt, so, TCP_FLAG_SYN, 0, 0);
 		return 1;
 	case TCPS_SYN_RECEIVED:
-		tcp_xmit_out(txr, m, so, TCP_FLAG_SYN|TCP_FLAG_ACK, 0, 0);
+		tcp_xmit_out(pkt, so, TCP_FLAG_SYN|TCP_FLAG_ACK, 0, 0);
 		return 1;
 	default:
-		rc = tcp_xmit_established(txr, m, so);
+		rc = tcp_xmit_established(pkt, so);
 		if (rc == 0) {
 			if (so->ack) {
 				so->ack = 0;
-				tcp_xmit_out(txr, m, so, TCP_FLAG_ACK, 0, 0);
+				tcp_xmit_out(pkt, so, TCP_FLAG_ACK, 0, 0);
 			}
 			return 1;
 		} else {
@@ -614,19 +614,20 @@ void
 toy_flush()
 {
 	int rc;
-	struct netmap_ring *txr;
-	struct netmap_slot *m;
+	struct packet *pkt;
 	struct sock *so;
 
 	while (!dlist_is_empty(&current->t_so_txq)) {
 		so = DLIST_FIRST(&current->t_so_txq, struct sock, tx_list);
 		while (1) {
-			txr = not_empty_txr(&m);
-			if (txr == NULL) {
+			if (io_is_tx_buffer_full()) {
 				return;
 			}
-			DEV_PREFETCH(txr);
-			rc = tcp_xmit(txr, m, so);
+			pkt = io_alloc_tx_packet();
+			if (pkt == NULL) {
+				return;
+			}
+			rc = tcp_xmit(pkt, so);
 			if (rc) {
 				break;
 			}

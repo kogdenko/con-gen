@@ -159,17 +159,13 @@ udp_ctlinput(int err, be32_t dst, struct ip *ip)
 }
 
 int
-udp_output(struct socket *so,
-           const void *dat,
-           int len,
-           const struct sockaddr_in *addr)
+udp_output(struct socket *so, const void *dat, int len,
+	const struct sockaddr_in *addr)
 {
 	int rc;
-	u_char *buf;
 	struct ip *ip;
 	struct udp_hdr *uh;
-	struct netmap_ring *txr;
-	struct netmap_slot *m;
+	struct packet *pkt;
 
 	if (sizeof(*ip) + sizeof(*uh) + len > current->t_mtu) {
 		return -EMSGSIZE;
@@ -189,12 +185,11 @@ udp_output(struct socket *so,
 			}
 		}
 //	}
-	txr = not_empty_txr(&m);
-	if (txr == NULL) {
+	pkt = io_alloc_tx_packet();
+	if (pkt == NULL) {
 		return -ENOBUFS;
 	}
-	buf = (u_char *)NETMAP_BUF(txr, m->buf_idx);
-	ip = (struct ip *)(buf + sizeof(struct ether_header));
+	ip = (struct ip *)(pkt->pkt_buf + sizeof(struct ether_header));
 	uh = (struct udp_hdr *)(ip + 1);
 
 	ip->ip_len = sizeof(*ip) + sizeof(*uh) + len;
@@ -217,7 +212,7 @@ udp_output(struct socket *so,
 		uh->uh_sum = udp_cksum(ip, sizeof(*uh) + len);
 	}
 	counter64_inc(&udpstat.udps_opackets);
-	ip_output(txr, m, ip);
+	ip_output(pkt, ip);
 	if (addr) {
 		in_pcbdisconnect(so);
 	}

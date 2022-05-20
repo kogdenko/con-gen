@@ -73,19 +73,26 @@ static const char *tcptimers[] = {
  * Tcp debug routines
  */
 void
-tcp_trace(int act,
-          int ostate,
-          struct tcpcb *tp,
-          struct ip *ip,
-          struct tcp_hdr *th,
-          int req)
+tcp_trace(int act, int ostate, struct tcpcb *tp, struct ip *ip,
+	struct tcp_hdr *th, int req)
 {
+	char lb[INET_ADDRSTRLEN];
+	char fb[INET_ADDRSTRLEN];
 	tcp_seq seq, ack;
 	int len, flags;
+	struct socket *so;
 
 	printf("%s ", tanames[act]);
 	if (tp) {
-		printf("[%p %s] ", tp, tcpstates[ostate]);
+		so = tcpcbtoso(tp);
+		printf("[%s:%hu > %s:%hu %s] ",
+			inet_ntop(AF_INET, &so->so_base.ipso_laddr, lb, sizeof(lb)),
+			ntohs(so->so_base.ipso_lport),
+			inet_ntop(AF_INET, &so->so_base.ipso_faddr, fb, sizeof(fb)),
+			ntohs(so->so_base.ipso_fport),
+			tcpstates[ostate]);
+		if (th != NULL)
+			printf("{%u} ", ntohs(th->th_sport));
 	} else {
 		printf("[?] ");
 	}
@@ -132,9 +139,9 @@ tcp_trace(int act,
 		break;
 
 	case TA_USER:
-		printf("%s", prurequests[req&0xff]);
+		printf("%s", prurequests[req & 0xff]);
 		if ((req & 0xff) == PRU_SLOWTIMO) {
-			printf("<%s>", tcptimers[req>>8]);
+			printf("<%s>", tcptimers[req >> 8]);
 		}
 		break;
 	}
@@ -147,7 +154,7 @@ tcp_trace(int act,
 		return;
 	}
 	printf("\trcv_(nxt)=(%u) snd_(una,nxt,max)=(%u,%u,%u)\n",
-	       tp->rcv_nxt, tp->snd_una, tp->snd_nxt, tp->snd_max);
+		tp->rcv_nxt, tp->snd_una, tp->snd_nxt, tp->snd_max);
 	printf("\tsnd_(wl1,wl2,wnd) (%u,%u,%lu)\n",
-	       tp->snd_wl1, tp->snd_wl2, tp->snd_wnd);
+		tp->snd_wl1, tp->snd_wl2, tp->snd_wnd);
 }

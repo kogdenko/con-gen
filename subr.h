@@ -9,6 +9,7 @@
 #include <strings.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <assert.h>
 #include <limits.h>
 #include <stdint.h>
@@ -37,8 +38,14 @@
 #include <pthread_np.h>
 #endif // __linux__
 
+#ifdef HAVE_NETMAP
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h>
+#endif
+
+#ifdef HAVE_PCAP
+#include <pcap/pcap.h>
+#endif
 
 #include "gbtcp/list.h"
 
@@ -80,6 +87,18 @@ typedef uint32_t be32_t;
 #define NANOSECONDS_MILLISECOND 1000000llu
 #define NANOSECONDS_MICROSECOND 1000llu
 
+enum {
+#ifdef HAVE_NETMAP
+	TRANSPORT_NETMAP,
+#endif
+#ifdef HAVE_PCAP
+	TRANSPORT_PCAP,
+#endif
+#ifdef HAVE_XDP
+	TRANSPORT_XDP,
+#endif
+};
+
 #define	roundup(x, y)	((((x)+((y)-1))/(y))*(y))
 #define powerof2(x)	((((x)-1)&(x))==0)
 
@@ -101,9 +120,13 @@ typedef uint32_t be32_t;
 #define MEM_PREFETCH(ptr) \
 	__builtin_prefetch(ptr)
 
+#if 0
+#define DEV_PREFETCH(ring)
+#else
 #define DEV_PREFETCH(ring) \
 	MEM_PREFETCH(NETMAP_BUF((ring), \
 		((ring)->slot + nm_ring_next(ring, (ring)->cur))->buf_idx))
+#endif
 
 void dbg5(const char *, u_int, const char *, int, const char *, ...)
 	__attribute__((format(printf, 5, 6)));
@@ -154,10 +177,10 @@ void panic3(const char *, int, int, const char *, ...)
 #define SO_HASH(faddr, lport, fport) \
 	((faddr) ^ ((faddr) >> 16) ^ ntohs((lport) ^ (fport)))
 
-struct netmap_ring *not_empty_txr(struct netmap_slot **);
-void ether_output(struct netmap_ring *, struct netmap_slot *);
-
 char *strzcpy(char *, const char *, size_t);
+#ifdef HAVE_NETMAP
+int read_rss_key(const char *, u_char *);
+#endif
 uint32_t toeplitz_hash(const u_char *, int, const u_char *);
 uint32_t rss_hash4(be32_t, be32_t, be16_t, be16_t, u_char *);
 
@@ -205,6 +228,25 @@ struct ip_socket {
 	be16_t ipso_fport;
 };
 
+struct packet {
+	struct dlist pkt_list;
+	u_char *pkt_buf;
+	int pkt_len;
+#ifdef HAVE_NETMAP
+	struct netmap_ring *pkt_txr;
+	struct netmap_slot *pkt_slot;
+#endif
+};
+
+// not_empty_txr
+struct thread;
+void set_transport(struct thread *, int);
+int io_init(struct thread *, const char *);
+struct packet *io_alloc_tx_packet();
+bool io_is_tx_buffer_full();
+void io_tx_packet(struct packet *);
+void io_rx();
+
 int ip_connect(struct ip_socket *, uint32_t *);
 void ip_disconnect(struct ip_socket *);
 
@@ -215,5 +257,7 @@ int alloc_ephemeral_port(uint32_t *, uint16_t *);
 void free_ephemeral_port(uint32_t, uint16_t);
 
 uint32_t select_faddr();
+
+void ether_output(struct packet *);
 
 #endif // CON_GEN__SUBR_H
