@@ -5,15 +5,28 @@
 #include "netstat.h"
 #include "gbtcp/htable.h"
 
-#define RSS_QID_NONE 255
+#define RSS_QUEUE_ID_NONE 255
 #define RSS_KEY_SIZE 40
+
+#ifdef HAVE_XDP
+struct xdp_queue {
+	struct xsk_ring_prod xq_fill;
+	struct xsk_ring_cons xq_comp;
+	struct xsk_ring_prod xq_tx;
+	struct xsk_ring_cons xq_rx;
+	int xq_tx_outstanding;
+	int xq_fd;
+	struct xsk_umem *xq_umem;
+	struct xsk_socket *xq_xsk;
+};
+#endif
 
 struct thread {
 	struct spinlock t_lock;
 	struct dlist t_pkt_head;
 	struct dlist t_pkt_pending_head;
 	void (*t_rx_op)(void *, int);
-	int (*t_io_init_op)(struct thread *, const char *);
+	void (*t_io_init_op)(struct thread *, const char *);
 	bool (*t_io_is_tx_buffer_full_op)();
 	void (*t_io_init_tx_packet_op)(struct packet *);
 	void (*t_io_deinit_tx_packet_op)(struct packet *);
@@ -37,8 +50,8 @@ struct thread {
 	u_short t_mtu;
 	u_short t_burst_size;
 	u_char t_tx_throttled;
-	u_char t_n_rss_q;
-	u_char t_rss_qid;
+	u_char t_rss_queue_num;
+	u_char t_rss_queue_id;
 	u_char t_rss_key[RSS_KEY_SIZE];
 	int t_fd;
 #ifdef HAVE_NETMAP
@@ -48,19 +61,16 @@ struct thread {
 	pcap_t *t_pcap;
 #endif
 #ifdef HAVE_XDP
-	struct xsk_ring_prod t_xdp_fillq;
-	struct xsk_ring_cons t_xdp_compq;
-	struct xsk_ring_prod t_xdp_txq;
-	struct xsk_ring_cons t_xdp_rxq;
-	struct xsk_umem *t_xdp_umem;
-	struct xsk_socket *t_xdp_xsk;
-	int t_xdp_tx_outstanding;
+	struct xdp_queue *t_xdp_queues;
+	int t_xdp_queue_num;
+	uint32_t t_xdp_prog_id;
+	uint64_t *t_xdp_frame;
+	int t_xdp_frame_free;
+	int t_xdp_frame_num;
 	void *t_xdp_tx_buf;
 	uint32_t t_xdp_tx_idx;
+	int t_xdp_tx_queue_idx;
 	void *t_xdp_buf;
-	uint32_t t_xdp_prog_id;
-	uint64_t t_xdp_frame[XDP_FRAME_NUM];
-	int t_xdp_frame_free;
 #endif
 	struct ip_socket *t_dst_cache;
 	int t_dst_cache_size;

@@ -283,7 +283,7 @@ sighandler(int signum)
 	}
 }
 
-static int
+static void
 thread_init_dst_cache(struct thread *t)
 {
 	uint64_t i, n;
@@ -298,8 +298,8 @@ thread_init_dst_cache(struct thread *t)
 
 	t->t_dst_cache = malloc(t->t_dst_cache_size * sizeof(struct ip_socket));
 	if (t->t_dst_cache == NULL) {
-		fprintf(stderr, "Not enough memory for dst cache\n");
-		return -ENOMEM;
+		panic(0, "Not enough memory (%zu) for dst cache",
+			t->t_dst_cache_size * sizeof(struct ip_socket));
 	}
 	ip_laddr_connect = t->t_ip_laddr_min;
 	ip_lport_connect = EPHEMERAL_MIN;
@@ -327,9 +327,9 @@ thread_init_dst_cache(struct thread *t)
 				}
 			}
 		}
-		if (t->t_rss_qid != RSS_QID_NONE && t->t_n_rss_q > 1) {
+		if (t->t_rss_queue_id != RSS_QUEUE_ID_NONE && t->t_rss_queue_num > 1) {
 			h = rss_hash4(laddr, faddr, lport, fport, t->t_rss_key);
-			if ((h % t->t_n_rss_q) != t->t_rss_qid) {
+			if ((h % t->t_rss_queue_num) != t->t_rss_queue_id) {
 				continue;
 			}
 		}
@@ -345,7 +345,6 @@ thread_init_dst_cache(struct thread *t)
 		}
 	}
 	t->t_dst_cache_size = dst_cache_size;
-	return 0;
 }
 
 static void
@@ -471,7 +470,7 @@ thread_process()
 static void *
 thread_routine(void *udata)
 {
-	int rc, ipproto;
+	int ipproto;
 
 	current = udata;
 	if (current->t_affinity >= 0) {
@@ -481,10 +480,7 @@ thread_routine(void *udata)
 		if (current->t_dst_cache_size < 2 * current->t_concurrency) {
 			current->t_dst_cache_size = 2 * current->t_concurrency;
 		}
-		rc = thread_init_dst_cache(current);
-		if (rc) {
-			return NULL;
-		}
+		thread_init_dst_cache(current);
 	}
 	current->t_tsc = rdtsc();
 	current->t_time = 1000 * current->t_tsc / tsc_mhz;
@@ -613,7 +609,7 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 	dlist_init(&t->t_so_txq);
 	dlist_init(&t->t_so_pool);
 	dlist_init(&t->t_sob_pool);
-	t->t_rss_qid = RSS_QID_NONE;
+	t->t_rss_queue_id = RSS_QUEUE_ID_NONE;
 	if (pt == NULL) {
 		t->t_toy = 0;
 		t->t_transport = 0;
@@ -806,10 +802,7 @@ err:
 		return -EINVAL;
 	}
 	set_transport(t, t->t_transport);
-	rc = io_init(t, ifname);
-	if (rc) {
-		return rc;
-	}
+	io_init(t, ifname);
 	htable_init(&t->t_in_htable, 4096, ip_socket_hash);
 	if (t->t_Lflag) {
 		t->t_http = http_reply;

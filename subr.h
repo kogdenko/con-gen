@@ -31,11 +31,13 @@
 #include <sys/fcntl.h>
 #include <sys/un.h>
 #include <sys/time.h>
+#include <sys/ioctl.h>
 #include <pthread.h>
 #include <emmintrin.h>
 #ifdef __linux__
 #include <linux/ethtool.h>
 #include <linux/sockios.h>
+#include <sys/epoll.h>
 #else // __linux__
 #include <pthread_np.h>
 #endif // __linux__
@@ -55,7 +57,6 @@
 #include <linux/bpf.h>
 #include <bpf/libbpf.h>
 #include <bpf/xsk.h>
-#define XDP_FRAME_NUM (2 * (XSK_RING_CONS__DEFAULT_NUM_DESCS + XSK_RING_PROD__DEFAULT_NUM_DESCS))
 #endif
 
 #include "gbtcp/list.h"
@@ -189,9 +190,6 @@ void panic3(const char *, int, int, const char *, ...)
 	((faddr) ^ ((faddr) >> 16) ^ ntohs((lport) ^ (fport)))
 
 char *strzcpy(char *, const char *, size_t);
-#ifdef HAVE_NETMAP
-int read_rss_key(const char *, u_char *);
-#endif
 uint32_t toeplitz_hash(const u_char *, int, const u_char *);
 uint32_t rss_hash4(be32_t, be32_t, be16_t, be16_t, u_char *);
 
@@ -252,7 +250,10 @@ struct packet {
 			};
 #endif
 #ifdef HAVE_XDP
-			uint32_t idx;
+			struct {
+				uint32_t idx;
+				int queue_idx;
+			};
 #endif
 		};
 	} pkt;
@@ -262,7 +263,7 @@ struct packet {
 // not_empty_txr
 struct thread;
 void set_transport(struct thread *, int);
-int io_init(struct thread *, const char *);
+void io_init(struct thread *, const char *);
 bool io_is_tx_buffer_full();
 void io_init_tx_packet(struct packet *);
 void io_deinit_tx_packet(struct packet *);

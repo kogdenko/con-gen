@@ -23,6 +23,8 @@ const char *tcpstates[TCP_NSTATES] = {
 	[TCPS_TIME_WAIT] = "TIME_WAIT",
 };
 
+static void read_rss_key(const char *, u_char *) __attribute__((unused));
+
 void
 dbg5(const char *file, u_int line, const char *func, int suppressed,
      const char *fmt, ...)
@@ -185,10 +187,7 @@ alloc_tx_packet()
 	struct packet *pkt;
 
 	if (dlist_is_empty(&current->t_pkt_head)) {
-		pkt = malloc(sizeof(*pkt));
-		if (pkt == NULL) {
-			return NULL;
-		}
+		pkt = xmalloc(sizeof(*pkt));
 	} else {
 		pkt = DLIST_FIRST(&current->t_pkt_head, struct packet, pkt.list);
 		DLIST_REMOVE(pkt, pkt.list);
@@ -202,9 +201,6 @@ add_pending_packet(struct packet *pkt)
 	struct packet *cp;
 
 	cp = alloc_tx_packet();
-	if (cp == NULL) {
-		return;
-	}
 	memcpy(cp->pkt_body, pkt->pkt.buf, pkt->pkt.len);
 	cp->pkt.len = pkt->pkt.len;
 	cp->pkt.buf = cp->pkt_body;
@@ -236,40 +232,24 @@ not_empty_txr(struct netmap_slot **pslot)
 	return NULL;
 }
 
-static int
+static void
 netmap_init(struct thread *t, const char *ifname)
 {
-	int rc;
 	char buf[IFNAMSIZ + 7];
 
 	snprintf(buf, sizeof(buf), "netmap:%s", ifname);
 	t->t_nmd = nm_open(buf, NULL, 0, NULL);
 	if (t->t_nmd == NULL) {
-		rc = -errno;
-		fprintf(stderr, "nm_open('%s') failed (%s)", buf, strerror(-rc));
-		return rc;
+		panic(errno, "nm_open('%s') failed", buf);
 	}
 	if (t->t_nmd->req.nr_rx_rings != t->t_nmd->req.nr_tx_rings) {
-		rc = -EINVAL;
-		fprintf(stderr, "%s: nr_rx_rings != nr_tx_rings", buf);
-		goto err;
+		panic(0, "%s: nr_rx_rings != nr_tx_rings", buf);
 	}
-	t->t_n_rss_q = t->t_nmd->req.nr_rx_rings;
-	if ((t->t_nmd->req.nr_flags & NR_REG_MASK) == NR_REG_ONE_NIC &&
-			t->t_n_rss_q > 1) {
-		t->t_rss_qid = t->t_nmd->first_rx_ring;
-		rc = read_rss_key(t->t_nmd->req.nr_name, t->t_rss_key);
-		if (rc) {
-			fprintf(stderr, "%s: Can't read rss key\n", t->t_nmd->req.nr_name);
-			goto err;
-		}
+	t->t_rss_queue_num = t->t_nmd->req.nr_rx_rings;
+	if ((t->t_nmd->req.nr_flags & NR_REG_MASK) == NR_REG_ONE_NIC) {
+		t->t_rss_queue_id = t->t_nmd->first_rx_ring;
 	}
 	t->t_fd = t->t_nmd->fd;
-	return 0;
-err:
-	nm_close(t->t_nmd);
-	t->t_nmd = NULL;
-	return rc;
 }
 
 bool
@@ -337,7 +317,7 @@ netmap_rx()
 #endif // HAVE_NETMAP
 
 #ifdef HAVE_PCAP
-int
+void
 cg_pcap_init(struct thread *t, const char *ifname)
 {
 	int i, rc, fd, *dlt_buf, snaplen;
@@ -347,36 +327,29 @@ cg_pcap_init(struct thread *t, const char *ifname)
 	snaplen = 1500;
 	pcap = pcap_create(ifname, errbuf);
 	if (pcap == NULL) {
-		fprintf(stderr, "pcap_create('%s') failed (%s)\n", ifname, errbuf);
-		return -EINVAL;
+		panic(0, "pcap_create('%s') failed (%s)", ifname, errbuf);
 	}
 	rc = pcap_set_immediate_mode(pcap, 1);
 	if (rc < 0) {
-		fprintf(stderr, "pcap_set_immediate_mode('%s', 1) failed (%s)\n",
+		panic(0, "pcap_set_immediate_mode('%s', 1) failed (%s)",
 			ifname, pcap_geterr(pcap));
-		goto err;
 	}
 	rc = pcap_set_promisc(pcap, 1);
 	if (rc < 0) {
-		fprintf(stderr, "pcap_set_promisc('%s', 1) failed (%s)\n",
-			ifname, pcap_geterr(pcap));
-		goto err;
+		panic(0, "pcap_set_promisc('%s', 1) failed (%s)", ifname, pcap_geterr(pcap));
 	}
 	rc = pcap_set_snaplen(pcap, snaplen);
 	if (rc < 0) {
-		fprintf(stderr, "pcap_set_snaplen('%s', %d) failed (%s)\n",
+		panic(0, "pcap_set_snaplen('%s', %d) failed (%s)",
 			ifname, snaplen, pcap_geterr(pcap));
-		goto err;
 	}
 	rc = pcap_activate(pcap);
 	if (rc != 0) {
-		fprintf(stderr, "pcap_activate('%s') failed (%s)\n", ifname, pcap_geterr(pcap));
-		goto err;
+		panic(0, "pcap_activate('%s') failed (%s)", ifname, pcap_geterr(pcap));
 	}
 	rc = pcap_list_datalinks(pcap, &dlt_buf);
 	if (rc < 0) {
-		fprintf(stderr, "pcap_list_datatlinks('%s') failed (%s)\n",
-			ifname, pcap_geterr(pcap));
+		panic(0, "pcap_list_datatlinks('%s') failed (%s)", ifname, pcap_geterr(pcap));
 		goto err;
 	}
 	for (i = 0; i < rc; ++i) {
@@ -385,28 +358,20 @@ cg_pcap_init(struct thread *t, const char *ifname)
 		}
 	}
 	if (i == rc) {
-		fprintf(stderr, "%s doesn't support DLT_EN10MB datalink type\n", ifname);
-		goto err;
+		panic(0, "%s doesn't support DLT_EN10MB datalink type", ifname);
 	}
 	pcap_free_datalinks(dlt_buf);
 	pcap_setdirection(pcap, PCAP_D_IN);
 	rc = pcap_setnonblock(pcap, 1, errbuf);
 	if (rc < 0) {
-		fprintf(stderr, "pcap_setnonblock('%s') failed (%s)\n", ifname, errbuf);
-		goto err;
+		panic(0, "pcap_setnonblock('%s') failed (%s)", ifname, errbuf);
 	}
 	fd = pcap_get_selectable_fd(pcap);
 	if (fd < 0) {
-		fprintf(stderr, "pcap_get_selectable_fd('%s') failed (%s)",
-			ifname, pcap_geterr(pcap));
-		goto err;
+		panic(0, "pcap_get_selectable_fd('%s') failed (%s)", ifname, pcap_geterr(pcap));
 	}
 	t->t_pcap = pcap;
 	t->t_fd = fd;
-	return 0;
-err:
-	pcap_close(pcap);
-	return -EINVAL;
 }
 
 bool
@@ -483,101 +448,173 @@ free_frame(struct thread *t, uint64_t frame)
 			assert(0);
 		}
 	}*/
-	assert(t->t_xdp_frame_free < XDP_FRAME_NUM);
+	assert(t->t_xdp_frame_free < t->t_xdp_frame_num);
 	t->t_xdp_frame[t->t_xdp_frame_free++] = frame;
 }
 
-static void
-xdp_configure_socket(struct thread *t, const char *ifname)
+static int
+get_interface_queue_num(const char *ifname)
 {
-	int rc, i, ifindex;
+	struct ifreq req;
+	int fd;
+	struct ethtool_channels cmd;
+
+	fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+	if (fd == -1) {
+		panic(errno, "Get interface (%s) channels error: socket() failed", ifname);
+	}
+	strzcpy(req.ifr_name, ifname, sizeof(req.ifr_name));
+	req.ifr_data = (void *)&cmd;
+	cmd.cmd = ETHTOOL_GCHANNELS;
+	if (ioctl(fd, SIOCETHTOOL, &req) == -1) {
+		panic(errno, "%s: ioctl(ETHTOOL_GCHANNELS) failed", ifname);
+	}
+	return cmd.combined_count + cmd.rx_count;
+}
+
+#define XDP_FRAME_NUM_PER_QUEUE \
+	(2 * (XSK_RING_CONS__DEFAULT_NUM_DESCS + XSK_RING_PROD__DEFAULT_NUM_DESCS))
+
+static void
+xdp_init_queue(struct thread *t, struct xdp_queue *q, const char *ifname, int queue_id)
+{
+	int i, rc, size;
 	uint32_t idx;
 	struct xsk_socket_config cfg;
 
+	memset(q, 0, sizeof(*q));
+	size = XDP_FRAME_NUM_PER_QUEUE * XDP_FRAME_SIZE;
+	rc = xsk_umem__create(&q->xq_umem, t->t_xdp_buf, size, &q->xq_fill, &q->xq_comp, NULL);
+	if (rc < 0) {
+		panic(-rc, "xsk_umem__create() failed");
+	}
 	memset(&cfg, 0, sizeof(cfg));
 	cfg.rx_size = XSK_RING_CONS__DEFAULT_NUM_DESCS;
 	cfg.tx_size = XSK_RING_PROD__DEFAULT_NUM_DESCS;
-	rc = xsk_socket__create(&t->t_xdp_xsk, ifname, 0/*qid*/, t->t_xdp_umem,
-		&t->t_xdp_rxq, &t->t_xdp_txq, &cfg);
+	rc = xsk_socket__create(&q->xq_xsk, ifname, queue_id, q->xq_umem,
+		&q->xq_rx, &q->xq_tx, &cfg);
 	if (rc < 0) {
 		panic(-rc, "xsk_socket__create() failed");
 	}
-	ifindex = if_nametoindex(ifname);
-	if (ifindex == 0) {
-		panic(errno, "if_nametoindex('%s') failed", ifname);
-	}
-	rc = bpf_get_link_xdp_id(ifindex, &t->t_xdp_prog_id, 0);
-	if (rc < 0) {
-		panic(-rc, "bpf_get_link_xdp_id() failed");
-	}
 	idx = UINT32_MAX;
-	rc = xsk_ring_prod__reserve(&t->t_xdp_fillq, XSK_RING_PROD__DEFAULT_NUM_DESCS, &idx);
+	rc = xsk_ring_prod__reserve(&q->xq_fill, XSK_RING_PROD__DEFAULT_NUM_DESCS, &idx);
 	if (rc != XSK_RING_PROD__DEFAULT_NUM_DESCS) {
 		panic(0, "xsk_ring_prod__reserve() failed");
 	}
 	assert(idx != UINT32_MAX);
 	for (i = 0; i < XSK_RING_PROD__DEFAULT_NUM_DESCS; i++, idx++) {
-		*xsk_ring_prod__fill_addr(&t->t_xdp_fillq, idx) = alloc_frame(t);
+		*xsk_ring_prod__fill_addr(&q->xq_fill, idx) = alloc_frame(t);
 	}
-	xsk_ring_prod__submit(&t->t_xdp_fillq, XSK_RING_PROD__DEFAULT_NUM_DESCS);
+	xsk_ring_prod__submit(&q->xq_fill, XSK_RING_PROD__DEFAULT_NUM_DESCS);
+	q->xq_fd = xsk_socket__fd(q->xq_xsk);
 }
 
-static int
-xdp_init(struct thread *t, const char *ifname)
+static void
+xdp_init(struct thread *t, const char *ifname_full)
 {
-	int i, rc, size;
+	int size;
+	int rc, i, ifindex, ifname_len;
+	char *sep, *endptr;
+	char ifname[IFNAMSIZ];
+	struct epoll_event ev;
 
-	struct rlimit rlim = {RLIM_INFINITY, RLIM_INFINITY};
-	setrlimit(RLIMIT_MEMLOCK, &rlim );
-
-	size = XDP_FRAME_NUM * XDP_FRAME_SIZE;
+	sep = strrchr(ifname_full, '-');
+	if (sep != NULL) {
+		ifname_len = sep -ifname_full;
+		t->t_rss_queue_id = strtoul(sep + 1, &endptr, 10);
+		if (*endptr != '\0') {
+			sep = NULL;
+		}
+	}
+	if (sep == NULL) {
+		t->t_rss_queue_id = RSS_QUEUE_ID_NONE;
+		strzcpy(ifname, ifname_full, sizeof(ifname));
+	} else {
+		memcpy(ifname, ifname_full, ifname_len);
+		ifname[ifname_len] = '\0';
+	}
+	ifindex = if_nametoindex(ifname);
+	if (ifindex == 0) {
+		panic(errno, "if_nametoindex('%s') failed", ifname);
+	}
+	t->t_rss_queue_num = get_interface_queue_num(ifname);
+	t->t_xdp_frame_num = t->t_rss_queue_num * XDP_FRAME_NUM_PER_QUEUE;
+	size = t->t_xdp_frame_num * XDP_FRAME_SIZE;
 	if (posix_memalign(&t->t_xdp_buf, getpagesize(), size)) {
 		panic(errno, "posix_memalign(%d) failed", size);
 	}
-	for (i = 0; i < XDP_FRAME_NUM; ++i) {
+	t->t_xdp_frame = xmalloc(t->t_xdp_frame_num * sizeof(uint64_t));
+	for (i = 0; i < t->t_xdp_frame_num; ++i) {
 		t->t_xdp_frame[i] = i * XDP_FRAME_SIZE;
 	}
-	t->t_xdp_frame_free = XDP_FRAME_NUM;
-	rc = xsk_umem__create(&t->t_xdp_umem, t->t_xdp_buf, size,
-		&t->t_xdp_fillq, &t->t_xdp_compq, NULL);
-	if (rc < 0) {
-		panic(-rc, "xsk_umem__create() failed");
+	t->t_xdp_frame_free = t->t_xdp_frame_num;
+	if (t->t_rss_queue_id != RSS_QUEUE_ID_NONE) {
+		t->t_xdp_queue_num = 1;
+	} else {
+		t->t_xdp_queue_num = t->t_rss_queue_num;
 	}
-	xdp_configure_socket(t, ifname);
-	t->t_fd = xsk_socket__fd(t->t_xdp_xsk);
-	return 0;
+	rc = bpf_get_link_xdp_id(ifindex, &t->t_xdp_prog_id, 0);
+	if (rc < 0) {
+		panic(-rc, "bpf_get_link_xdp_id() failed");
+	}
+	t->t_xdp_queues = xmalloc(t->t_xdp_queue_num * sizeof(struct xdp_queue));	
+	if (t->t_rss_queue_id != RSS_QUEUE_ID_NONE) {
+		xdp_init_queue(t, &t->t_xdp_queues[0], ifname, t->t_rss_queue_id);
+	} else {
+		for (i = 0; i < t->t_xdp_queue_num; ++i) {
+			xdp_init_queue(t, &t->t_xdp_queues[i], ifname, i);
+		}
+	}
+	if (t->t_xdp_queue_num == 1) {
+		t->t_fd = t->t_xdp_queues[0].xq_fd;
+	} else {
+		rc = epoll_create1(0);
+		if (rc == -1) {
+			panic(errno, "epoll_create1() failed");
+		}
+		t->t_fd = rc;
+		ev.events = EPOLLIN|EPOLLOUT|EPOLLET;
+		for (i = 0; i < t->t_xdp_queue_num; ++i) {
+			rc = epoll_ctl(t->t_fd, EPOLL_CTL_ADD, t->t_xdp_queues[i].xq_fd, &ev);
+			if (rc == -1) {
+				panic(errno, "epoll_ctl() failed");
+			}
+		}
+	}
 }
 
 static void *
-xdp_get_tx_buf(uint32_t *idx)
+xdp_get_tx_buf(struct packet *pkt)
 {
-	int rc;
+	int i, rc;
 	void *buf;
 	uint64_t addr;
+	struct xdp_queue *q;
 
 	if (current->t_tx_throttled == 1) {
 		return NULL;
 	}
+	if (current->t_xdp_tx_buf != NULL) {
+		buf = current->t_xdp_tx_buf;
+		pkt->pkt.idx = current->t_xdp_tx_idx;
+		pkt->pkt.queue_idx = current->t_xdp_tx_queue_idx;
+		current->t_xdp_tx_buf = NULL;
+		return buf;
+	}
 	if (current->t_xdp_frame_free == 0) {
 		goto throttled;
 	}
-	if (current->t_xdp_tx_buf != NULL) {
-		buf = current->t_xdp_tx_buf;
-		*idx = current->t_xdp_tx_idx;
-		current->t_xdp_tx_buf = NULL;
-		//dbg("Her!");
+	for (i = 0; i < current->t_xdp_queue_num; ++i) {
+		q = current->t_xdp_queues + i;
+		rc = xsk_ring_prod__reserve(&q->xq_tx, 1, &pkt->pkt.idx);
+		UNUSED(rc);
+		assert(rc <= 1);
+		addr = alloc_frame(current);
+		xsk_ring_prod__tx_desc(&q->xq_tx, pkt->pkt.idx)->addr = addr;
+		addr = xsk_umem__add_offset_to_addr(addr);
+		buf = xsk_umem__get_data(current->t_xdp_buf, addr);
 		return buf;
 	}
-	rc = xsk_ring_prod__reserve(&current->t_xdp_txq, 1, idx);
-	assert(rc <= 1);
-	if (rc == 0) {
-		goto throttled;
-	}
-	addr = alloc_frame(current);
-	xsk_ring_prod__tx_desc(&current->t_xdp_txq, *idx)->addr = addr;
-	addr = xsk_umem__add_offset_to_addr(addr);
-	buf = xsk_umem__get_data(current->t_xdp_buf, addr);
-	return buf;
 throttled:
 	current->t_tx_throttled = 1;
 	return NULL;
@@ -586,15 +623,20 @@ throttled:
 bool
 xdp_is_tx_buffer_full()
 {
+	int i;
+	struct xdp_queue *q;
+
 	if (current->t_tx_throttled == 1) {
 		return true;
 	}
-	if (xsk_prod_nb_free(&current->t_xdp_txq, 1) == 0) {
-		current->t_tx_throttled = 1;
-		return true;
-	} else {
-		return false;
+	for (i = 0; i < current->t_xdp_queue_num; ++i) {
+		q = current->t_xdp_queues + i;
+		if (xsk_prod_nb_free(&q->xq_tx, 1) > 0) {
+			return false;
+		}
 	}
+	current->t_tx_throttled = 1;
+	return true;
 }
 
 void
@@ -603,7 +645,7 @@ xdp_init_tx_packet(struct packet *pkt)
 	void *buf;
 
 	pkt->pkt.len = 0;
-	buf = xdp_get_tx_buf(&pkt->pkt.idx);
+	buf = xdp_get_tx_buf(pkt);
 	if (buf == NULL) {
 		pkt->pkt.buf = pkt->pkt_body;
 	} else {
@@ -615,10 +657,10 @@ void
 xdp_deinit_tx_packet(struct packet *pkt)
 {
 	if (pkt->pkt.buf != pkt->pkt_body && pkt->pkt.buf != NULL) {
-//		dbg("Not used TX buf");
 		assert(current->t_xdp_tx_buf == NULL);
 		current->t_xdp_tx_buf = pkt->pkt.buf;
 		current->t_xdp_tx_idx = pkt->pkt.idx;
+		current->t_xdp_tx_queue_idx = pkt->pkt.queue_idx;
 		pkt->pkt.buf = NULL;
 	}
 }
@@ -627,10 +669,11 @@ bool
 xdp_tx_packet(struct packet *pkt)
 {
 	void *buf;
+	struct xdp_queue *q;
 
 	assert(pkt->pkt.len);
 	if (pkt->pkt.buf == pkt->pkt_body) {
-		buf = xdp_get_tx_buf(&pkt->pkt.idx);
+		buf = xdp_get_tx_buf(pkt);
 		if (buf == NULL) {
 			add_pending_packet(pkt);
 			return false;
@@ -638,9 +681,10 @@ xdp_tx_packet(struct packet *pkt)
 		memcpy(buf, pkt->pkt.buf, pkt->pkt.len);
 		pkt->pkt.buf = buf;
 	}
-	xsk_ring_prod__tx_desc(&current->t_xdp_txq, pkt->pkt.idx)->len = pkt->pkt.len;
-	xsk_ring_prod__submit(&current->t_xdp_txq, 1);
-	current->t_xdp_tx_outstanding++;
+	q = current->t_xdp_queues + pkt->pkt.queue_idx;
+	xsk_ring_prod__tx_desc(&q->xq_tx, pkt->pkt.idx)->len = pkt->pkt.len;
+	xsk_ring_prod__submit(&q->xq_tx, 1);
+	q->xq_tx_outstanding++;
 	pkt->pkt.buf = NULL;
 	return true;
 }
@@ -651,63 +695,75 @@ xdp_tx()
 	int i, n;
 	uint32_t idx;
 	uint64_t addr;
+	struct xdp_queue *q;
 
-	if (current->t_xdp_tx_outstanding == 0) {
-		return;
+	for (i = 0; i < current->t_xdp_queue_num; ++i) {
+		q = current->t_xdp_queues + i;
+		if (q->xq_tx_outstanding == 0) {
+			continue;
+		}
+		sendto(q->xq_fd, NULL, 0, MSG_DONTWAIT, NULL, 0);
+		idx = UINT32_MAX;
+		n = xsk_ring_cons__peek(&q->xq_comp, XSK_RING_CONS__DEFAULT_NUM_DESCS, &idx);
+		if (n <= 0) {
+			continue;
+		}
+		assert(idx != UINT32_MAX);
+		for (i = 0; i < n; ++i, ++idx) {
+			addr = *xsk_ring_cons__comp_addr(&q->xq_comp, idx);
+			free_frame(current, addr);
+		}
+		xsk_ring_cons__release(&q->xq_comp, n);
+		assert(n <= q->xq_tx_outstanding);
+		q->xq_tx_outstanding -= n;
 	}
-	sendto(current->t_fd, NULL, 0, MSG_DONTWAIT, NULL, 0);
-	idx = UINT32_MAX;
-	n = xsk_ring_cons__peek(&current->t_xdp_compq, XSK_RING_CONS__DEFAULT_NUM_DESCS, &idx);
-	if (n <= 0) {
-		return;
-	}
-	assert(idx != UINT32_MAX);
-	for (i = 0; i < n; ++i, ++idx) {
-		addr = *xsk_ring_cons__comp_addr(&current->t_xdp_compq, idx);
-		free_frame(current, addr);
-	}
-	xsk_ring_cons__release(&current->t_xdp_compq, n);
-	assert(n <= current->t_xdp_tx_outstanding);
-	current->t_xdp_tx_outstanding -= n;
 }
 
-void
-xdp_rx()
+static void
+xdp_rx_queue(struct xdp_queue *q)
 {
 	int i, n, m, rc, len;
 	uint32_t idx_rx, idx_fill;
 	uint64_t addr, frame;
-	struct xsk_ring_prod *fillq;
 
-	n = xsk_ring_cons__peek(&current->t_xdp_rxq, current->t_burst_size, &idx_rx);
+	n = xsk_ring_cons__peek(&q->xq_rx, current->t_burst_size, &idx_rx);
 	if (n == 0) {
 		return;
 	}
 	for (i = 0; i < n; ++i, ++idx_rx) {
-		addr = xsk_ring_cons__rx_desc(&current->t_xdp_rxq, idx_rx)->addr;
+		addr = xsk_ring_cons__rx_desc(&q->xq_rx, idx_rx)->addr;
 		frame = xsk_umem__extract_addr(addr);
 
 		addr = xsk_umem__add_offset_to_addr(addr);
-		len = xsk_ring_cons__rx_desc(&current->t_xdp_rxq, idx_rx)->len;
+		len = xsk_ring_cons__rx_desc(&q->xq_rx, idx_rx)->len;
 		(*current->t_rx_op)(xsk_umem__get_data(current->t_xdp_buf, addr), len);
 		free_frame(current, frame);
 	}
-	xsk_ring_cons__release(&current->t_xdp_rxq, n);
+	xsk_ring_cons__release(&q->xq_rx, n);
 
-	fillq = &current->t_xdp_fillq;
-	m = xsk_prod_nb_free(fillq, current->t_xdp_frame_free);
+	m = xsk_prod_nb_free(&q->xq_fill, current->t_xdp_frame_free);
 	if (m > 0) {
 		m = MIN(m, current->t_xdp_frame_free);
 		idx_fill = UINT32_MAX;
-		rc = xsk_ring_prod__reserve(fillq, m, &idx_fill);
+		rc = xsk_ring_prod__reserve(&q->xq_fill, m, &idx_fill);
 		assert(rc == m);
 		assert(idx_fill != UINT32_MAX);
 		UNUSED(rc);
 		for (i = 0; i < m; ++i, ++idx_fill) {
 			frame = alloc_frame(current);
-			*xsk_ring_prod__fill_addr(fillq, idx_fill) = frame;
+			*xsk_ring_prod__fill_addr(&q->xq_fill, idx_fill) = frame;
 		}
-		xsk_ring_prod__submit(fillq, m);
+		xsk_ring_prod__submit(&q->xq_fill, m);
+	}
+}
+
+void
+xdp_rx()
+{
+	int i;
+
+	for (i = 0; i < current->t_xdp_queue_num; ++i) {
+		xdp_rx_queue(current->t_xdp_queues + i);
 	}
 }
 #endif // HAVE_XDP
@@ -751,10 +807,13 @@ set_transport(struct thread *t, int transport)
 	}
 }
 
-int
+void
 io_init(struct thread *t, const char *ifname)
 {
-	return (*t->t_io_init_op)(t, ifname);
+	(*t->t_io_init_op)(t, ifname);
+	if (t->t_rss_queue_num > 1 && t->t_rss_queue_id != RSS_QUEUE_ID_NONE) {
+		read_rss_key(ifname, t->t_rss_key);
+	}
 }
 
 void
@@ -842,9 +901,8 @@ strzcpy(char *dest, const char *src, size_t n)
 	return dest;
 }
 
-#ifdef HAVE_NETMAP
 #ifdef __linux__
-int
+static void
 read_rss_key(const char *ifname, u_char *rss_key)
 {
 	int fd, rc, size, off;
@@ -853,7 +911,7 @@ read_rss_key(const char *ifname, u_char *rss_key)
 
 	rc = socket(AF_INET, SOCK_DGRAM, 0);
 	if (rc < 0) {
-		return rc;
+		panic(errno, "Reading %s RSS key error: socket() failed", ifname);
 	}
 	fd = rc;
 	memset(&rss, 0, sizeof(rss));
@@ -863,19 +921,14 @@ read_rss_key(const char *ifname, u_char *rss_key)
 	ifr.ifr_data = (void *)&rss;
 	rc = ioctl(fd, SIOCETHTOOL, (uintptr_t)&ifr);
 	if (rc < 0) {
-		fprintf(stderr, "%s: ioctl(SIOCETHTOOL) failed\n", ifname);
-		goto out;
+		panic(errno, "Reading %s RSS key error: ioctl(SIOCETHTOOL) failed", ifname);
 	}
 	if (rss.key_size != RSS_KEY_SIZE) {
-		fprintf(stderr, "%s: Invalid rss key_size (%d)\n", ifname, rss.key_size);
-		goto out;
+		panic(errno, "%s: Invalid RSS key_size (%d)\n", ifname, rss.key_size);
 	}
 	size = (sizeof(rss) + rss.key_size +
 	       rss.indir_size * sizeof(rss.rss_config[0]));
-	rss2 = malloc(size);
-	if (rc) {
-		goto out;
-	}
+	rss2 = xmalloc(size);
 	memset(rss2, 0, size);
 	rss2->cmd = ETHTOOL_GRSSH;
 	rss2->indir_size = rss.indir_size;
@@ -883,19 +936,15 @@ read_rss_key(const char *ifname, u_char *rss_key)
 	ifr.ifr_data = (void *)rss2;
 	rc = ioctl(fd, SIOCETHTOOL, (uintptr_t)&ifr);
 	if (rc) {
-		fprintf(stderr, "%s: ioctl(SIOCETHTOOL) failed\n", ifname);
-		goto out2;
+		panic(errno, "Reading %s RSS key error: ioctl(SIOCETHTOOL) failed", ifname);
 	}
 	off = rss2->indir_size * sizeof(rss2->rss_config[0]);
 	memcpy(rss_key, (u_char *)rss2->rss_config + off, RSS_KEY_SIZE);
-out2:
 	free(rss2);
-out:
 	close(fd);
-	return rc;
 }
 #else // __linux__
-int
+void
 read_rss_key(const char *ifname, u_char *rss_key)
 {
 	static uint8_t freebsd_rss_key[RSS_KEY_SIZE] = {
@@ -906,10 +955,8 @@ read_rss_key(const char *ifname, u_char *rss_key)
 		0x6a, 0x42, 0xb7, 0x3b, 0xbe, 0xac, 0x01, 0xfa,
 	};
 	memcpy(rss_key, freebsd_rss_key, RSS_KEY_SIZE);
-	return 0;
 }
 #endif // __linux__
-#endif // HAVE_NETMAP
 
 uint32_t
 toeplitz_hash(const u_char *data, int cnt, const u_char *key)
