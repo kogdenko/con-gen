@@ -15,8 +15,10 @@ struct thread {
 	void (*t_rx_op)(void *, int);
 	int (*t_io_init_op)(struct thread *, const char *);
 	bool (*t_io_is_tx_buffer_full_op)();
-	struct packet *(*t_io_alloc_tx_packet_op)();
-	void (*t_io_tx_packet_op)(struct packet *);
+	void (*t_io_init_tx_packet_op)(struct packet *);
+	void (*t_io_deinit_tx_packet_op)(struct packet *);
+	bool (*t_io_tx_packet_op)(struct packet *);
+	void (*t_io_tx_op)();
 	void (*t_io_rx_op)();
 	u_char t_id;
 	u_char t_toy;
@@ -44,6 +46,21 @@ struct thread {
 #endif
 #ifdef HAVE_PCAP
 	pcap_t *t_pcap;
+#endif
+#ifdef HAVE_XDP
+	struct xsk_ring_prod t_xdp_fillq;
+	struct xsk_ring_cons t_xdp_compq;
+	struct xsk_ring_prod t_xdp_txq;
+	struct xsk_ring_cons t_xdp_rxq;
+	struct xsk_umem *t_xdp_umem;
+	struct xsk_socket *t_xdp_xsk;
+	int t_xdp_tx_outstanding;
+	void *t_xdp_tx_buf;
+	uint32_t t_xdp_tx_idx;
+	void *t_xdp_buf;
+	uint32_t t_xdp_prog_id;
+	uint64_t t_xdp_frame[XDP_FRAME_NUM];
+	int t_xdp_frame_free;
 #endif
 	struct ip_socket *t_dst_cache;
 	int t_dst_cache_size;

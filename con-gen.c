@@ -327,7 +327,7 @@ thread_init_dst_cache(struct thread *t)
 				}
 			}
 		}
-		if (t->t_rss_qid != RSS_QID_NONE) {
+		if (t->t_rss_qid != RSS_QID_NONE && t->t_n_rss_q > 1) {
 			h = rss_hash4(laddr, faddr, lport, fport, t->t_rss_key);
 			if ((h % t->t_n_rss_q) != t->t_rss_qid) {
 				continue;
@@ -433,6 +433,7 @@ thread_process()
 	if (current->t_tx_throttled) {
 		pfd.events |= POLLOUT;
 	}
+	io_tx();
 	poll(&pfd, 1, 10);
 	t = rdtsc();
 	if (t > current->t_tsc) {
@@ -454,10 +455,11 @@ thread_process()
 		current->t_tx_throttled = 0;
 	}
 	while (!io_is_tx_buffer_full() && !dlist_is_empty(&current->t_pkt_pending_head)) {
-		pkt = DLIST_FIRST(&current->t_pkt_pending_head,
-			struct packet, pkt_list);
-		DLIST_REMOVE(pkt, pkt_list);
-		io_tx_packet(pkt);
+		pkt = DLIST_FIRST(&current->t_pkt_pending_head,	struct packet, pkt.list);
+		DLIST_REMOVE(pkt, pkt.list);
+		if (!io_tx_packet(pkt)) {
+			DLIST_INSERT_HEAD(&current->t_pkt_head, pkt, pkt.list);	
+		}
 	}
 	if (current->t_toy) {
 		toy_flush();

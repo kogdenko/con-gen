@@ -458,14 +458,14 @@ tcp_xmit_out(struct packet *pkt, struct sock *so,
 	struct eth_hdr *eh;
 	struct tcb tcb;
 
-	eh = (struct eth_hdr *)pkt->pkt_buf;
+	eh = (struct eth_hdr *)pkt->pkt.buf;
 	memcpy(eh->eh_saddr, current->t_eth_laddr, sizeof(eh->eh_saddr));
 	memcpy(eh->eh_daddr, current->t_eth_faddr, sizeof(eh->eh_daddr));
 	eh->eh_type = ETH_TYPE_IP4_BE;
 	tcb.tcb_flags = tcp_flags;
 	tcb.tcb_len = len;
 	total_len = tcp_fill(so, eh + 1, &tcb, len_max);
-	pkt->pkt_len = sizeof(*eh) + total_len;
+	pkt->pkt.len = sizeof(*eh) + total_len;
 	counter64_inc(&tcpstat.tcps_sndtotal);
 	if (tcb.tcb_len) {
 		counter64_inc(&tcpstat.tcps_sndpack);
@@ -614,7 +614,7 @@ void
 toy_flush()
 {
 	int rc;
-	struct packet *pkt;
+	struct packet pkt;
 	struct sock *so;
 
 	while (!dlist_is_empty(&current->t_so_txq)) {
@@ -623,11 +623,9 @@ toy_flush()
 			if (io_is_tx_buffer_full()) {
 				return;
 			}
-			pkt = io_alloc_tx_packet();
-			if (pkt == NULL) {
-				return;
-			}
-			rc = tcp_xmit(pkt, so);
+			io_init_tx_packet(&pkt);
+			rc = tcp_xmit(&pkt, so);
+			io_deinit_tx_packet(&pkt);
 			if (rc) {
 				break;
 			}

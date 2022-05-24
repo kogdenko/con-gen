@@ -44,7 +44,7 @@ ip_output(struct packet *pkt, struct ip *ip)
 {
 	struct ether_header *eh;
 
-	pkt->pkt_len = sizeof(struct ether_header) + ip->ip_len;
+	pkt->pkt.len = sizeof(struct ether_header) + ip->ip_len;
 	/*
 	 * Fill in IP header.
 	 */

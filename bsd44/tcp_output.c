@@ -88,7 +88,7 @@ tcp_output_real(struct tcpcb *tp)
 	int idle, sendalot, t_force;
 	struct ip *ip;
 	struct tcp_hdr *th;
-	struct packet *pkt;
+	struct packet pkt;
 
 	so = tcpcbtoso(tp);
 	t_force = tp->t_force;
@@ -358,13 +358,13 @@ send:
 			counter64_inc(&tcpstat.tcps_sndpack);
 			counter64_add(&tcpstat.tcps_sndbyte, len);
 		}
-		pkt = io_alloc_tx_packet();
-		if (pkt == NULL) {
-			error = ENOBUFS;
-			goto err;
-		}
+		io_init_tx_packet(&pkt);
+		//if (pkt == NULL) {
+		//	error = ENOBUFS;
+		//	goto err;
+		//}
 		sbcopy(&so->so_snd, off, len,
-		       pkt->pkt_buf + sizeof(struct ether_header) + hdrlen);
+		       pkt.pkt.buf + sizeof(struct ether_header) + hdrlen);
 		/*
 		 * If we're sending everything we've got, set PUSH.
 		 * (This will keep happy those implementations which only
@@ -382,13 +382,13 @@ send:
 		} else {
 			counter64_inc(&tcpstat.tcps_sndwinup);
 		}
-		pkt = io_alloc_tx_packet();
-		if (pkt == NULL) {
-			error = ENOBUFS;
-			goto err;
-		}
+		io_init_tx_packet(&pkt);
+		//if (pkt == NULL) {
+		//	error = ENOBUFS;
+		//	goto err;
+		//}
 	}
-	ip = (struct ip *)(pkt->pkt_buf + sizeof(struct ether_header));
+	ip = (struct ip *)(pkt.pkt.buf + sizeof(struct ether_header));
 	th = (struct tcp_hdr *)(ip + 1);
 	tcp_template(tp, ip, th);
 	/*
@@ -508,7 +508,7 @@ send:
 		tcp_trace(TA_OUTPUT, tp->t_state, tp, ip, th, 0);
 	}
 	ip->ip_len = hdrlen + len;
-	ip_output(pkt, ip);
+	ip_output(&pkt, ip);
 	counter64_inc(&tcpstat.tcps_sndtotal);
 
 	/*
@@ -524,7 +524,7 @@ send:
 	tp->t_flags &= ~(TF_ACKNOW|TF_DELACK);
 	timer_cancel(&tp->t_timer_delack);
 	return sendalot;
-err:
+//err:
 	if (error == ENOBUFS) {
 		tcp_quench(so, 0);
 		return 0;

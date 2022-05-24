@@ -1,6 +1,8 @@
 #include "global.h"
 #include "subr.h"
 
+#include <sys/resource.h>
+
 int verbose;
 struct udpstat udpstat;
 struct tcpstat tcpstat;
@@ -177,6 +179,38 @@ panic3(const char *file, int line, int errnum, const char *format, ...)
 	exit(1);
 }
 
+static struct packet *
+alloc_tx_packet()
+{
+	struct packet *pkt;
+
+	if (dlist_is_empty(&current->t_pkt_head)) {
+		pkt = malloc(sizeof(*pkt));
+		if (pkt == NULL) {
+			return NULL;
+		}
+	} else {
+		pkt = DLIST_FIRST(&current->t_pkt_head, struct packet, pkt.list);
+		DLIST_REMOVE(pkt, pkt.list);
+	}
+	return pkt;
+}
+
+static void
+add_pending_packet(struct packet *pkt)
+{
+	struct packet *cp;
+
+	cp = alloc_tx_packet();
+	if (cp == NULL) {
+		return;
+	}
+	memcpy(cp->pkt_body, pkt->pkt.buf, pkt->pkt.len);
+	cp->pkt.len = pkt->pkt.len;
+	cp->pkt.buf = cp->pkt_body;
+	DLIST_INSERT_TAIL(&current->t_pkt_pending_head, cp, pkt.list);
+}
+
 #ifdef HAVE_NETMAP
 static struct netmap_ring *
 not_empty_txr(struct netmap_slot **pslot)
@@ -195,7 +229,6 @@ not_empty_txr(struct netmap_slot **pslot)
 				*pslot = txr->slot + txr->cur;
 				(*pslot)->len = 0;
 			}
-			current->t_tx_throttled = 0;
 			return txr;	
 		}
 	}
@@ -222,11 +255,12 @@ netmap_init(struct thread *t, const char *ifname)
 		goto err;
 	}
 	t->t_n_rss_q = t->t_nmd->req.nr_rx_rings;
-	if ((t->t_nmd->req.nr_flags & NR_REG_MASK) == NR_REG_ONE_NIC) {
+	if ((t->t_nmd->req.nr_flags & NR_REG_MASK) == NR_REG_ONE_NIC &&
+			t->t_n_rss_q > 1) {
 		t->t_rss_qid = t->t_nmd->first_rx_ring;
 		rc = read_rss_key(t->t_nmd->req.nr_name, t->t_rss_key);
 		if (rc) {
-			fprintf(stderr, "%s: Can't read rss key", t->t_nmd->req.nr_name);
+			fprintf(stderr, "%s: Can't read rss key\n", t->t_nmd->req.nr_name);
 			goto err;
 		}
 	}
@@ -244,65 +278,49 @@ netmap_is_tx_buffer_full()
 	return not_empty_txr(NULL) == NULL;
 }
 
-struct packet *
-netmap_alloc_tx_packet()
+void
+netmap_init_tx_packet(struct packet *pkt)
 {
-	struct packet *pkt;
-
-	if (dlist_is_empty(&current->t_pkt_head)) {
-		pkt = malloc(2048);
-		if (pkt == NULL) {
-			return NULL;
-		}
+	pkt->pkt.txr = not_empty_txr(&pkt->pkt.slot);
+	if (pkt->pkt.txr == NULL) {
+		pkt->pkt.buf = pkt->pkt_body;
 	} else {
-		pkt = DLIST_FIRST(&current->t_pkt_head, struct packet, pkt_list);
-		DLIST_REMOVE(pkt, pkt_list);
+		pkt->pkt.buf = (u_char *)NETMAP_BUF(pkt->pkt.txr, pkt->pkt.slot->buf_idx);
 	}
-	pkt->pkt_txr = not_empty_txr(&pkt->pkt_slot);
-	if (pkt->pkt_txr == NULL) {
-		pkt->pkt_buf = (u_char *)pkt + sizeof(*pkt);
-	} else {
-		pkt->pkt_buf = (u_char *)NETMAP_BUF(pkt->pkt_txr, pkt->pkt_slot->buf_idx);
-	}
-	pkt->pkt_len = 0;
-	return pkt;
+	pkt->pkt.len = 0;
 }
 
-void
+bool
 netmap_tx_packet(struct packet *pkt)
 {
 	u_char *buf;
 	struct netmap_ring *txr;
 
-	if (pkt->pkt_txr != NULL) {
-		pkt->pkt_txr = not_empty_txr(&pkt->pkt_slot);
-		if (pkt->pkt_txr == NULL) {
-			DLIST_INSERT_TAIL(&current->t_pkt_pending_head, pkt, pkt_list);
-			return;
+	if (pkt->pkt.txr == NULL) {
+		pkt->pkt.txr = not_empty_txr(&pkt->pkt.slot);
+		if (pkt->pkt.txr == NULL) {
+			add_pending_packet(pkt);
+			return false;
 		}
-		buf = (u_char *)NETMAP_BUF(pkt->pkt_txr,
-			pkt->pkt_slot->buf_idx);
-		memcpy(buf, pkt->pkt_buf, pkt->pkt_len);
+		buf = (u_char *)NETMAP_BUF(pkt->pkt.txr, pkt->pkt.slot->buf_idx);
+		memcpy(buf, pkt->pkt.buf, pkt->pkt.len);
+		pkt->pkt.buf = buf;
 	}
-	assert(pkt->pkt_len);
-	counter64_add(&if_obytes, pkt->pkt_len);
-	counter64_inc(&if_opackets);
-	pkt->pkt_slot->len = pkt->pkt_len;
-	txr = pkt->pkt_txr;
+	assert(pkt->pkt.len);
+	pkt->pkt.slot->len = pkt->pkt.len;
+	txr = pkt->pkt.txr;
 	txr->head = txr->cur = nm_ring_next(txr, txr->cur);
-	DLIST_INSERT_HEAD(&current->t_pkt_head, pkt, pkt_list);
+	return true;
 }
 
 void
 netmap_rx()
 {
 	int i, j, n;
-	void *buf;
 	struct netmap_slot *slot;
 	struct netmap_ring *rxr;
 
-	for (i = current->t_nmd->first_rx_ring;
-	     i <= current->t_nmd->last_rx_ring; ++i) {
+	for (i = current->t_nmd->first_rx_ring; i <= current->t_nmd->last_rx_ring; ++i) {
 		rxr = NETMAP_RXRING(current->t_nmd->nifp, i);
 		n = nm_ring_space(rxr);
 		if (n > current->t_burst_size) {
@@ -311,10 +329,7 @@ netmap_rx()
 		for (j = 0; j < n; ++j) {
 			DEV_PREFETCH(rxr);
 			slot = rxr->slot + rxr->cur;
-			buf = NETMAP_BUF(rxr, slot->buf_idx);
-			if (slot->len >= 14) {
-				(*current->t_rx_op)(buf, slot->len);
-			}
+			(*current->t_rx_op)(NETMAP_BUF(rxr, slot->buf_idx) , slot->len);
 			rxr->head = rxr->cur = nm_ring_next(rxr, rxr->cur);
 		}
 	}
@@ -400,59 +415,302 @@ pcap_is_tx_buffer_full()
 	return current->t_tx_throttled;
 }
 
-struct packet *
-pcap_alloc_tx_packet()
+void
+pcap_init_tx_packet(struct packet *pkt)
 {
-	struct packet *pkt;
-
-	if (dlist_is_empty(&current->t_pkt_head)) {
-		pkt = malloc(2048);
-		if (pkt == NULL) {
-			return NULL;
-		}
-	} else {
-		pkt = DLIST_FIRST(&current->t_pkt_head, struct packet, pkt_list);
-		DLIST_REMOVE(pkt, pkt_list);
-	}
-	pkt->pkt_buf = (u_char *)pkt + sizeof(*pkt);
-	pkt->pkt_len = 0;
-	return pkt;
+	pkt->pkt.buf = pkt->pkt_body;
+	pkt->pkt.len = 0;
 }
 
-void
+bool
 pcap_tx_packet(struct packet *pkt)
 {
 	assert(pkt->pkt_len);
 	if (pcap_inject(current->t_pcap, pkt->pkt_buf, pkt->pkt_len) <= 0) {
 		current->t_tx_throttled = 1;
-		DLIST_INSERT_TAIL(&current->t_pkt_pending_head, pkt, pkt_list);
+		add_pending_packet(pkt);
+		return false;
 	} else {
-		counter64_add(&if_obytes, pkt->pkt_len);
-		counter64_inc(&if_opackets);
-		DLIST_INSERT_HEAD(&current->t_pkt_head, pkt, pkt_list);
+		return true;
 	}
 }
 
 void
 pcap_rx()
 {
-	int i, rc, len;
+	int i, rc;
 	const u_char *pkt_dat;
 	struct pcap_pkthdr *pkt_hdr;
 
 	for (i = 0; i < current->t_burst_size; ++i) {
 		rc = pcap_next_ex(current->t_pcap, &pkt_hdr, &pkt_dat);
 		if (rc == 1) {
-			len = pkt_hdr->caplen;
-			if (len > 14) {
-				(*current->t_rx_op)((void *)pkt_dat, len);
-			}
+			(*current->t_rx_op)((void *)pkt_dat, pkt_hdr->caplen);
 		} else {
 			break;
 		}
 	}
 }
 #endif // HAVE_PCAP
+
+#ifdef HAVE_XDP
+
+#define XDP_FRAME_SIZE XSK_UMEM__DEFAULT_FRAME_SIZE
+#define FRAME_INVALID UINT64_MAX
+
+static uint64_t
+alloc_frame(struct thread *t)
+{
+	uint64_t frame;
+
+	if (t->t_xdp_frame_free == 0) {
+		return FRAME_INVALID;
+	}
+	frame = t->t_xdp_frame[--t->t_xdp_frame_free];
+	t->t_xdp_frame[t->t_xdp_frame_free] = FRAME_INVALID;
+	//printf("alloc %"PRIu64", rem=%u\n", frame, t->t_xdp_frame_free);
+	return frame;
+}
+
+static void
+free_frame(struct thread *t, uint64_t frame)
+{
+	/*int i;
+	printf("free %"PRIu64", rem=%u\n", frame, t->t_xdp_frame_free + 1);
+	for (i = 0; i < t->t_xdp_frame_free; ++i) {
+		if (t->t_xdp_frame[i] == frame) {
+			printf("Duplicate %"PRIu64"\n", frame);
+			assert(0);
+		}
+	}*/
+	assert(t->t_xdp_frame_free < XDP_FRAME_NUM);
+	t->t_xdp_frame[t->t_xdp_frame_free++] = frame;
+}
+
+static void
+xdp_configure_socket(struct thread *t, const char *ifname)
+{
+	int rc, i, ifindex;
+	uint32_t idx;
+	struct xsk_socket_config cfg;
+
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.rx_size = XSK_RING_CONS__DEFAULT_NUM_DESCS;
+	cfg.tx_size = XSK_RING_PROD__DEFAULT_NUM_DESCS;
+	rc = xsk_socket__create(&t->t_xdp_xsk, ifname, 0/*qid*/, t->t_xdp_umem,
+		&t->t_xdp_rxq, &t->t_xdp_txq, &cfg);
+	if (rc < 0) {
+		panic(-rc, "xsk_socket__create() failed");
+	}
+	ifindex = if_nametoindex(ifname);
+	if (ifindex == 0) {
+		panic(errno, "if_nametoindex('%s') failed", ifname);
+	}
+	rc = bpf_get_link_xdp_id(ifindex, &t->t_xdp_prog_id, 0);
+	if (rc < 0) {
+		panic(-rc, "bpf_get_link_xdp_id() failed");
+	}
+	idx = UINT32_MAX;
+	rc = xsk_ring_prod__reserve(&t->t_xdp_fillq, XSK_RING_PROD__DEFAULT_NUM_DESCS, &idx);
+	if (rc != XSK_RING_PROD__DEFAULT_NUM_DESCS) {
+		panic(0, "xsk_ring_prod__reserve() failed");
+	}
+	assert(idx != UINT32_MAX);
+	for (i = 0; i < XSK_RING_PROD__DEFAULT_NUM_DESCS; i++, idx++) {
+		*xsk_ring_prod__fill_addr(&t->t_xdp_fillq, idx) = alloc_frame(t);
+	}
+	xsk_ring_prod__submit(&t->t_xdp_fillq, XSK_RING_PROD__DEFAULT_NUM_DESCS);
+}
+
+static int
+xdp_init(struct thread *t, const char *ifname)
+{
+	int i, rc, size;
+
+	struct rlimit rlim = {RLIM_INFINITY, RLIM_INFINITY};
+	setrlimit(RLIMIT_MEMLOCK, &rlim );
+
+	size = XDP_FRAME_NUM * XDP_FRAME_SIZE;
+	if (posix_memalign(&t->t_xdp_buf, getpagesize(), size)) {
+		panic(errno, "posix_memalign(%d) failed", size);
+	}
+	for (i = 0; i < XDP_FRAME_NUM; ++i) {
+		t->t_xdp_frame[i] = i * XDP_FRAME_SIZE;
+	}
+	t->t_xdp_frame_free = XDP_FRAME_NUM;
+	rc = xsk_umem__create(&t->t_xdp_umem, t->t_xdp_buf, size,
+		&t->t_xdp_fillq, &t->t_xdp_compq, NULL);
+	if (rc < 0) {
+		panic(-rc, "xsk_umem__create() failed");
+	}
+	xdp_configure_socket(t, ifname);
+	t->t_fd = xsk_socket__fd(t->t_xdp_xsk);
+	return 0;
+}
+
+static void *
+xdp_get_tx_buf(uint32_t *idx)
+{
+	int rc;
+	void *buf;
+	uint64_t addr;
+
+	if (current->t_tx_throttled == 1) {
+		return NULL;
+	}
+	if (current->t_xdp_frame_free == 0) {
+		goto throttled;
+	}
+	if (current->t_xdp_tx_buf != NULL) {
+		buf = current->t_xdp_tx_buf;
+		*idx = current->t_xdp_tx_idx;
+		current->t_xdp_tx_buf = NULL;
+		//dbg("Her!");
+		return buf;
+	}
+	rc = xsk_ring_prod__reserve(&current->t_xdp_txq, 1, idx);
+	assert(rc <= 1);
+	if (rc == 0) {
+		goto throttled;
+	}
+	addr = alloc_frame(current);
+	xsk_ring_prod__tx_desc(&current->t_xdp_txq, *idx)->addr = addr;
+	addr = xsk_umem__add_offset_to_addr(addr);
+	buf = xsk_umem__get_data(current->t_xdp_buf, addr);
+	return buf;
+throttled:
+	current->t_tx_throttled = 1;
+	return NULL;
+}
+
+bool
+xdp_is_tx_buffer_full()
+{
+	if (current->t_tx_throttled == 1) {
+		return true;
+	}
+	if (xsk_prod_nb_free(&current->t_xdp_txq, 1) == 0) {
+		current->t_tx_throttled = 1;
+		return true;
+	} else {
+		return false;
+	}
+}
+
+void
+xdp_init_tx_packet(struct packet *pkt)
+{
+	void *buf;
+
+	pkt->pkt.len = 0;
+	buf = xdp_get_tx_buf(&pkt->pkt.idx);
+	if (buf == NULL) {
+		pkt->pkt.buf = pkt->pkt_body;
+	} else {
+		pkt->pkt.buf = buf;
+	}
+}
+
+void
+xdp_deinit_tx_packet(struct packet *pkt)
+{
+	if (pkt->pkt.buf != pkt->pkt_body && pkt->pkt.buf != NULL) {
+//		dbg("Not used TX buf");
+		assert(current->t_xdp_tx_buf == NULL);
+		current->t_xdp_tx_buf = pkt->pkt.buf;
+		current->t_xdp_tx_idx = pkt->pkt.idx;
+		pkt->pkt.buf = NULL;
+	}
+}
+
+bool
+xdp_tx_packet(struct packet *pkt)
+{
+	void *buf;
+
+	assert(pkt->pkt.len);
+	if (pkt->pkt.buf == pkt->pkt_body) {
+		buf = xdp_get_tx_buf(&pkt->pkt.idx);
+		if (buf == NULL) {
+			add_pending_packet(pkt);
+			return false;
+		}
+		memcpy(buf, pkt->pkt.buf, pkt->pkt.len);
+		pkt->pkt.buf = buf;
+	}
+	xsk_ring_prod__tx_desc(&current->t_xdp_txq, pkt->pkt.idx)->len = pkt->pkt.len;
+	xsk_ring_prod__submit(&current->t_xdp_txq, 1);
+	current->t_xdp_tx_outstanding++;
+	pkt->pkt.buf = NULL;
+	return true;
+}
+
+void
+xdp_tx()
+{
+	int i, n;
+	uint32_t idx;
+	uint64_t addr;
+
+	if (current->t_xdp_tx_outstanding == 0) {
+		return;
+	}
+	sendto(current->t_fd, NULL, 0, MSG_DONTWAIT, NULL, 0);
+	idx = UINT32_MAX;
+	n = xsk_ring_cons__peek(&current->t_xdp_compq, XSK_RING_CONS__DEFAULT_NUM_DESCS, &idx);
+	if (n <= 0) {
+		return;
+	}
+	assert(idx != UINT32_MAX);
+	for (i = 0; i < n; ++i, ++idx) {
+		addr = *xsk_ring_cons__comp_addr(&current->t_xdp_compq, idx);
+		free_frame(current, addr);
+	}
+	xsk_ring_cons__release(&current->t_xdp_compq, n);
+	assert(n <= current->t_xdp_tx_outstanding);
+	current->t_xdp_tx_outstanding -= n;
+}
+
+void
+xdp_rx()
+{
+	int i, n, m, rc, len;
+	uint32_t idx_rx, idx_fill;
+	uint64_t addr, frame;
+	struct xsk_ring_prod *fillq;
+
+	n = xsk_ring_cons__peek(&current->t_xdp_rxq, current->t_burst_size, &idx_rx);
+	if (n == 0) {
+		return;
+	}
+	for (i = 0; i < n; ++i, ++idx_rx) {
+		addr = xsk_ring_cons__rx_desc(&current->t_xdp_rxq, idx_rx)->addr;
+		frame = xsk_umem__extract_addr(addr);
+
+		addr = xsk_umem__add_offset_to_addr(addr);
+		len = xsk_ring_cons__rx_desc(&current->t_xdp_rxq, idx_rx)->len;
+		(*current->t_rx_op)(xsk_umem__get_data(current->t_xdp_buf, addr), len);
+		free_frame(current, frame);
+	}
+	xsk_ring_cons__release(&current->t_xdp_rxq, n);
+
+	fillq = &current->t_xdp_fillq;
+	m = xsk_prod_nb_free(fillq, current->t_xdp_frame_free);
+	if (m > 0) {
+		m = MIN(m, current->t_xdp_frame_free);
+		idx_fill = UINT32_MAX;
+		rc = xsk_ring_prod__reserve(fillq, m, &idx_fill);
+		assert(rc == m);
+		assert(idx_fill != UINT32_MAX);
+		UNUSED(rc);
+		for (i = 0; i < m; ++i, ++idx_fill) {
+			frame = alloc_frame(current);
+			*xsk_ring_prod__fill_addr(fillq, idx_fill) = frame;
+		}
+		xsk_ring_prod__submit(fillq, m);
+	}
+}
+#endif // HAVE_XDP
 
 void
 set_transport(struct thread *t, int transport)
@@ -462,7 +720,7 @@ set_transport(struct thread *t, int transport)
 	case TRANSPORT_NETMAP:
 		t->t_io_init_op = netmap_init;
 		t->t_io_is_tx_buffer_full_op = netmap_is_tx_buffer_full;
-		t->t_io_alloc_tx_packet_op = netmap_alloc_tx_packet;
+		t->t_io_init_tx_packet_op = netmap_init_tx_packet;
 		t->t_io_tx_packet_op = netmap_tx_packet;
 		t->t_io_rx_op = netmap_rx;
 		break;
@@ -471,9 +729,20 @@ set_transport(struct thread *t, int transport)
 	case TRANSPORT_PCAP:
 		t->t_io_init_op = cg_pcap_init;
 		t->t_io_is_tx_buffer_full_op = pcap_is_tx_buffer_full;
-		t->t_io_alloc_tx_packet_op = pcap_alloc_tx_packet;
+		t->t_io_init_tx_packet_op = pcap_init_tx_packet;
 		t->t_io_tx_packet_op = pcap_tx_packet;
 		t->t_io_rx_op = pcap_rx;
+		break;
+#endif
+#ifdef HAVE_XDP
+	case TRANSPORT_XDP:
+		t->t_io_init_op = xdp_init;
+		t->t_io_is_tx_buffer_full_op = xdp_is_tx_buffer_full;
+		t->t_io_init_tx_packet_op = xdp_init_tx_packet;
+		t->t_io_deinit_tx_packet_op = xdp_deinit_tx_packet;
+		t->t_io_tx_packet_op = xdp_tx_packet;
+		t->t_io_rx_op = xdp_rx;
+		t->t_io_tx_op = xdp_tx;
 		break;
 #endif
 	default:
@@ -488,10 +757,18 @@ io_init(struct thread *t, const char *ifname)
 	return (*t->t_io_init_op)(t, ifname);
 }
 
-struct packet *
-io_alloc_tx_packet()
+void
+io_init_tx_packet(struct packet *pkt)
 {
-	return (*current->t_io_alloc_tx_packet_op)();
+	return (*current->t_io_init_tx_packet_op)(pkt);
+}
+
+void
+io_deinit_tx_packet(struct packet *pkt)
+{
+	if (current->t_io_deinit_tx_packet_op != NULL) {
+		(*current->t_io_deinit_tx_packet_op)(pkt);
+	}
 }
 
 bool
@@ -500,16 +777,33 @@ io_is_tx_buffer_full()
 	return (*current->t_io_is_tx_buffer_full_op)();
 }
 
-void
+bool
 io_tx_packet(struct packet *pkt)
 {
-	(*current->t_io_tx_packet_op)(pkt);
+	int len;
+	bool sent;
+
+	len = pkt->pkt.len;
+	sent = (*current->t_io_tx_packet_op)(pkt);
+	if (sent) {
+		counter64_add(&if_obytes, len);
+		counter64_inc(&if_opackets);
+	}
+	return sent;
 }
 
 void
 io_rx()
 {
 	(*current->t_io_rx_op)();
+}
+
+void
+io_tx()
+{
+	if (current->t_io_tx_op != NULL) {
+		(*current->t_io_tx_op)();
+	}
 }
 
 int

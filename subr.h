@@ -21,6 +21,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <net/if.h>
 #include <net/if_arp.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -29,6 +30,7 @@
 #include <sys/types.h>
 #include <sys/fcntl.h>
 #include <sys/un.h>
+#include <sys/time.h>
 #include <pthread.h>
 #include <emmintrin.h>
 #ifdef __linux__
@@ -45,6 +47,15 @@
 
 #ifdef HAVE_PCAP
 #include <pcap/pcap.h>
+#endif
+
+#ifdef HAVE_XDP
+#include <linux/if_xdp.h>
+#include <linux/if_link.h>
+#include <linux/bpf.h>
+#include <bpf/libbpf.h>
+#include <bpf/xsk.h>
+#define XDP_FRAME_NUM (2 * (XSK_RING_CONS__DEFAULT_NUM_DESCS + XSK_RING_PROD__DEFAULT_NUM_DESCS))
 #endif
 
 #include "gbtcp/list.h"
@@ -229,22 +240,34 @@ struct ip_socket {
 };
 
 struct packet {
-	struct dlist pkt_list;
-	u_char *pkt_buf;
-	int pkt_len;
+	struct packet_header {
+		struct dlist list;
+		u_char *buf;
+		int len;
+		union {
 #ifdef HAVE_NETMAP
-	struct netmap_ring *pkt_txr;
-	struct netmap_slot *pkt_slot;
+			struct {
+				struct netmap_ring *txr;
+				struct netmap_slot *slot;
+			};
 #endif
+#ifdef HAVE_XDP
+			uint32_t idx;
+#endif
+		};
+	} pkt;
+	u_char pkt_body[2048 - sizeof(struct packet_header)];
 };
 
 // not_empty_txr
 struct thread;
 void set_transport(struct thread *, int);
 int io_init(struct thread *, const char *);
-struct packet *io_alloc_tx_packet();
 bool io_is_tx_buffer_full();
-void io_tx_packet(struct packet *);
+void io_init_tx_packet(struct packet *);
+void io_deinit_tx_packet(struct packet *);
+bool io_tx_packet(struct packet *);
+void io_tx();
 void io_rx();
 
 int ip_connect(struct ip_socket *, uint32_t *);
@@ -257,7 +280,5 @@ int alloc_ephemeral_port(uint32_t *, uint16_t *);
 void free_ephemeral_port(uint32_t, uint16_t);
 
 uint32_t select_faddr();
-
-void ether_output(struct packet *);
 
 #endif // CON_GEN__SUBR_H

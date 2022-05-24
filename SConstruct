@@ -6,6 +6,9 @@ AddOption("--without-netmap", action = 'store_true',
     help = "Don't use netmap", default = False)
 AddOption("--without-pcap", action = 'store_true',
     help = "Don't use libpcap", default = False)
+if platform.system() == "Linux":
+    AddOption("--without-xdp", action = 'store_true',
+        help = "Don't use XDP", default = False)
 
 srcs = [
     'bsd44/uipc_socket.c',
@@ -74,7 +77,14 @@ if not GetOption('without_netmap'):
     if conf.CheckHeader('net/netmap_user.h'):
         cflags.append('-DHAVE_NETMAP')
         have_transport = True
-if not GetOption('without_pcap'):
+have_xdp = False
+if platform.system() == "Linux" and not GetOption('without_xdp'):
+    if (conf.CheckHeader('linux/bpf.h') and conf.CheckLib('bpf')):
+        cflags.append('-DHAVE_XDP')
+        ldflags.append('-lbpf')
+        have_xdp = True
+        have_transport = True
+if not have_xdp and not GetOption('without_pcap'):
     if conf.CheckHeader('pcap/pcap.h'):
         cflags.append('-DHAVE_PCAP')
         ldflags.append('-lpcap')

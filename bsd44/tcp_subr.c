@@ -97,13 +97,10 @@ tcp_respond(struct tcpcb *tp, struct ip *ip_rcv, struct tcp_hdr *th_rcv,
 	int win;
 	struct ip *ip;
 	struct tcp_hdr *th;
-	struct packet *pkt;
+	struct packet pkt;
 
-	pkt = io_alloc_tx_packet();
-	if (pkt == NULL) {
-		return;
-	}
-	ip = (struct ip *)(pkt->pkt_buf + sizeof(struct ether_header));
+	io_init_tx_packet(&pkt);
+	ip = (struct ip *)(pkt.pkt.buf + sizeof(struct ether_header));
 	th = (struct tcp_hdr *)(ip + 1);
 	tcp_template(tp, ip, th);
 	if (tp == NULL) {
@@ -124,7 +121,7 @@ tcp_respond(struct tcpcb *tp, struct ip *ip_rcv, struct tcp_hdr *th_rcv,
 	}
 	ip->ip_len = sizeof(*ip) + sizeof(*th);
 	th->th_sum = tcp_cksum(ip, sizeof(*th));
-	ip_output(pkt, ip);
+	ip_output(&pkt, ip);
 }
 
 /*

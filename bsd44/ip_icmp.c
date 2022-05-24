@@ -94,7 +94,7 @@ icmp_error(struct ip *oip, int type, int code, be32_t dest)
 	struct icmp *icp;
 	unsigned icmplen;
 	be32_t t;
-	struct packet *pkt;
+	struct packet pkt;
 
 	if (icmpprintfs)
 		printf("icmp_error(%d, %d)\n", type, code);
@@ -113,11 +113,8 @@ icmp_error(struct ip *oip, int type, int code, be32_t dest)
 	/*
 	 * First, formulate icmp message
 	 */
-	pkt = io_alloc_tx_packet();
-	if (pkt == NULL) {
-		return;
-	}
-	nip = (struct ip *)(pkt->pkt_buf + sizeof(struct ether_header));
+	io_init_tx_packet(&pkt);
+	nip = (struct ip *)(pkt.pkt.buf + sizeof(struct ether_header));
 	icmplen = oiplen + MIN(8, oip->ip_len);
 	icp = (struct icmp *)(nip + 1);
 	if ((u_int)type > ICMP_MAXTYPE)
@@ -159,7 +156,7 @@ icmp_error(struct ip *oip, int type, int code, be32_t dest)
 	nip->ip_p = IPPROTO_ICMP;
 	nip->ip_tos = 0;
 	nip->ip_ttl = MAXTTL;
-	icmp_send(pkt, nip);
+	icmp_send(&pkt, nip);
 }
 
 /*
@@ -341,15 +338,12 @@ icmp_reflect(struct ip *ip)
 	be32_t t;
 	int optlen, hlen;
 	struct ip *nip;
-	struct packet *pkt;
+	struct packet pkt;
 
-	pkt = io_alloc_tx_packet();
-	if (pkt == NULL) {
-		return;
-	}
+	io_init_tx_packet(&pkt);
 	hlen = (ip->ip_hl << 2);
 	optlen = hlen - sizeof(*ip);
-	nip = (struct ip *)(pkt->pkt_buf + sizeof(struct ether_header));
+	nip = (struct ip *)(pkt.pkt.buf + sizeof(struct ether_header));
 	memcpy(nip, ip, sizeof(*ip));
 	memcpy(nip + 1, ((u_char *)ip) + hlen, ip->ip_len - hlen);
 
@@ -360,5 +354,5 @@ icmp_reflect(struct ip *ip)
 	nip->ip_ttl = MAXTTL;
 	nip->ip_len -= optlen;
 
-	icmp_send(pkt, nip);
+	icmp_send(&pkt, nip);
 }

@@ -23,15 +23,15 @@ arp_reply(struct arp_hdr *ah)
 {
 	struct eth_hdr *eh_rpl;
 	struct arp_hdr *ah_rpl;
-	struct packet *pkt;
+	struct packet pkt;
 
-	pkt = io_alloc_tx_packet();
-	if (pkt == NULL) {
-		//arps.arps_txrepliesdropped++;
-		return;
-	}
-	pkt->pkt_len = sizeof(struct eth_hdr) + sizeof(struct arp_hdr);
-	eh_rpl = (struct eth_hdr *)pkt->pkt_buf;
+	io_init_tx_packet(&pkt);
+	//if (pkt == NULL) {
+	//	//arps.arps_txrepliesdropped++;
+	//	return;
+	//}
+	pkt.pkt.len = sizeof(struct eth_hdr) + sizeof(struct arp_hdr);
+	eh_rpl = (struct eth_hdr *)pkt.pkt.buf;
 	ah_rpl = (struct arp_hdr *)(eh_rpl + 1);
 	eh_rpl->eh_type = ETH_TYPE_ARP_BE;
 	memcpy(eh_rpl->eh_saddr, current->t_eth_laddr, 6);
@@ -46,7 +46,7 @@ arp_reply(struct arp_hdr *ah)
 	memcpy(&ah_rpl->ah_data.aip_tha, ah->ah_data.aip_sha, 6);
 	ah_rpl->ah_data.aip_tip = ah->ah_data.aip_sip;
 	//arps.arps_txreplies++;
-	io_tx_packet(pkt);
+	io_tx_packet(&pkt);
 }
 
 static int
