@@ -2,7 +2,7 @@
 
 ## Introdution
 - Based on BSD4.4 TCP/IP stack.
-- Use netmap.
+- Support: netmap, XDP, libpcap for packet sending
 - Can operate with speed ~4mpps (~500kcps) on low end processor.
 
 ## Guide
