@@ -67,7 +67,7 @@ icmp_reflectsrc(be32_t dst)
  * after supplying a checksum.
  */
 void
-icmp_send(struct netmap_ring *txr, struct netmap_slot *m, struct ip *ip)
+icmp_send(struct packet *pkt, struct ip *ip)
 {
 	struct icmp *icp;
 
@@ -79,7 +79,7 @@ icmp_send(struct netmap_ring *txr, struct netmap_slot *m, struct ip *ip)
 	icp->icmp_cksum = 0;
 	icp->icmp_cksum = in_cksum(icp, ip->ip_len - sizeof(*ip));
 
-	ip_output(txr, m, ip);
+	ip_output(pkt, ip);
 }
 
 /*
@@ -94,9 +94,7 @@ icmp_error(struct ip *oip, int type, int code, be32_t dest)
 	struct icmp *icp;
 	unsigned icmplen;
 	be32_t t;
-	u_char *buf;
-	struct netmap_ring *txr;
-	struct netmap_slot *m;
+	struct packet pkt;
 
 	if (icmpprintfs)
 		printf("icmp_error(%d, %d)\n", type, code);
@@ -115,12 +113,8 @@ icmp_error(struct ip *oip, int type, int code, be32_t dest)
 	/*
 	 * First, formulate icmp message
 	 */
-	txr = not_empty_txr(&m);
-	if (txr == NULL) {
-		return;
-	}
-	buf = (u_char *)NETMAP_BUF(txr, m->buf_idx);
-	nip = (struct ip *)(buf + sizeof(struct ether_header));
+	io_init_tx_packet(&pkt);
+	nip = (struct ip *)(pkt.pkt.buf + sizeof(struct ether_header));
 	icmplen = oiplen + MIN(8, oip->ip_len);
 	icp = (struct icmp *)(nip + 1);
 	if ((u_int)type > ICMP_MAXTYPE)
@@ -162,7 +156,7 @@ icmp_error(struct ip *oip, int type, int code, be32_t dest)
 	nip->ip_p = IPPROTO_ICMP;
 	nip->ip_tos = 0;
 	nip->ip_ttl = MAXTTL;
-	icmp_send(txr, m, nip);
+	icmp_send(&pkt, nip);
 }
 
 /*
@@ -343,19 +337,13 @@ icmp_reflect(struct ip *ip)
 {
 	be32_t t;
 	int optlen, hlen;
-	u_char *buf;
 	struct ip *nip;
-	struct netmap_ring *txr;
-	struct netmap_slot *m;
+	struct packet pkt;
 
-	txr = not_empty_txr(&m);
-	if (txr == NULL) {
-		return;
-	}
-	buf = (u_char *)NETMAP_BUF(txr, m->buf_idx);
+	io_init_tx_packet(&pkt);
 	hlen = (ip->ip_hl << 2);
 	optlen = hlen - sizeof(*ip);
-	nip = (struct ip *)(buf + sizeof(struct ether_header));
+	nip = (struct ip *)(pkt.pkt.buf + sizeof(struct ether_header));
 	memcpy(nip, ip, sizeof(*ip));
 	memcpy(nip + 1, ((u_char *)ip) + hlen, ip->ip_len - hlen);
 
@@ -366,5 +354,5 @@ icmp_reflect(struct ip *ip)
 	nip->ip_ttl = MAXTTL;
 	nip->ip_len -= optlen;
 
-	icmp_send(txr, m, nip);
+	icmp_send(&pkt, nip);
 }

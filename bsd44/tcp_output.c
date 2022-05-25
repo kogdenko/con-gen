@@ -44,8 +44,8 @@
 
 /*
  * Flags used when sending segments in tcp_output.
- * Basic flags (TH_RST,TH_ACK,TH_SYN,TH_FIN) are totally
- * determined by state, with the proviso that TH_FIN is sent only
+ * Basic flags (TH_RST,TH_ACK,TH_SYN,BSD_TH_FIN) are totally
+ * determined by state, with the proviso that BSD_TH_FIN is sent only
  * if all data queued for output is included in the segment.
  */
 u_char tcp_outflags[TCP_NSTATES] = {
@@ -55,9 +55,9 @@ u_char tcp_outflags[TCP_NSTATES] = {
 	[TCPS_SYN_RECEIVED] = TH_SYN|TH_ACK,
 	[TCPS_ESTABLISHED] = TH_ACK,
 	[TCPS_CLOSE_WAIT] = TH_ACK,
-	[TCPS_FIN_WAIT_1] = TH_FIN|TH_ACK,
-	[TCPS_CLOSING] = TH_FIN|TH_ACK,
-	[TCPS_LAST_ACK] = TH_FIN|TH_ACK,
+	[TCPS_FIN_WAIT_1] = BSD_TH_FIN|TH_ACK,
+	[TCPS_CLOSING] = BSD_TH_FIN|TH_ACK,
+	[TCPS_LAST_ACK] = BSD_TH_FIN|TH_ACK,
 	[TCPS_FIN_WAIT_2] = TH_ACK,
 	[TCPS_TIME_WAIT] = TH_ACK,
 };
@@ -74,13 +74,8 @@ tcp_output(struct tcpcb *tp)
 	if (so->so_state & SS_ISTXPENDING) {
 		return;
 	}
-	do {
-		if (1 ||  not_empty_txr(NULL) == NULL) {
-			so->so_state |= SS_ISTXPENDING;
-			DLIST_INSERT_TAIL(&current->t_so_txq, so, so_txlist);
-			break;
-		}
-	} while (tcp_output_real(tp) > 0);
+	so->so_state |= SS_ISTXPENDING;
+	DLIST_INSERT_TAIL(&current->t_so_txq, so, so_txlist);
 }
 
 int
@@ -88,14 +83,12 @@ tcp_output_real(struct tcpcb *tp)
 {
 	struct socket *so;
 	int off, len, win, flags, error;
-	u_char *m_buf;
 	u_char opt[MAX_TCPOPTLEN];
 	unsigned optlen, hdrlen;
 	int idle, sendalot, t_force;
 	struct ip *ip;
 	struct tcp_hdr *th;
-	struct netmap_ring *txr;
-	struct netmap_slot *m;
+	struct packet pkt;
 
 	so = tcpcbtoso(tp);
 	t_force = tp->t_force;
@@ -146,7 +139,7 @@ tcp_output_real(struct tcpcb *tp)
 			 * itself.
 			 */
 			if (off < so->so_snd.sb_cc) {
-				flags &= ~TH_FIN;
+				flags &= ~BSD_TH_FIN;
 			}
 			win = 1;
 		} else {
@@ -179,7 +172,7 @@ tcp_output_real(struct tcpcb *tp)
 		sendalot = 1;
 	}
 	if (SEQ_LT(tp->snd_nxt + len, tp->snd_una + so->so_snd.sb_cc)) {
-		flags &= ~TH_FIN;
+		flags &= ~BSD_TH_FIN;
 	}
 	win = so->so_rcv_hiwat;
 
@@ -241,7 +234,7 @@ tcp_output_real(struct tcpcb *tp)
 	 * and we have not yet done so, or we're retransmitting the FIN,
 	 * then we need to send.
 	 */
-	if ((flags & TH_FIN) &&
+	if ((flags & BSD_TH_FIN) &&
 	    ((tp->t_flags & TF_SENTFIN) == 0 || tp->snd_nxt == tp->snd_una))
 		goto send;
 
@@ -365,14 +358,13 @@ send:
 			counter64_inc(&tcpstat.tcps_sndpack);
 			counter64_add(&tcpstat.tcps_sndbyte, len);
 		}
-		txr = not_empty_txr(&m);
-		if (txr == NULL) {
-			error = ENOBUFS;
-			goto err;
-		}
-		m_buf = (u_char *)NETMAP_BUF(txr, m->buf_idx);
+		io_init_tx_packet(&pkt);
+		//if (pkt == NULL) {
+		//	error = ENOBUFS;
+		//	goto err;
+		//}
 		sbcopy(&so->so_snd, off, len,
-		       m_buf + sizeof(struct ether_header) + hdrlen);
+		       pkt.pkt.buf + sizeof(struct ether_header) + hdrlen);
 		/*
 		 * If we're sending everything we've got, set PUSH.
 		 * (This will keep happy those implementations which only
@@ -385,19 +377,18 @@ send:
 	} else {
 		if (tp->t_flags & TF_ACKNOW) {
 			counter64_inc(&tcpstat.tcps_sndacks);
-		} else if (flags & (TH_SYN|TH_FIN|TH_RST)) {
+		} else if (flags & (TH_SYN|BSD_TH_FIN|TH_RST)) {
 			counter64_inc(&tcpstat.tcps_sndctrl);
 		} else {
 			counter64_inc(&tcpstat.tcps_sndwinup);
 		}
-		txr = not_empty_txr(&m);
-		if (txr == NULL) {
-			error = ENOBUFS;
-			goto err;
-		}
-		m_buf = (u_char *)NETMAP_BUF(txr, m->buf_idx);
+		io_init_tx_packet(&pkt);
+		//if (pkt == NULL) {
+		//	error = ENOBUFS;
+		//	goto err;
+		//}
 	}
-	ip = (struct ip *)(m_buf + sizeof(struct ether_header));
+	ip = (struct ip *)(pkt.pkt.buf + sizeof(struct ether_header));
 	th = (struct tcp_hdr *)(ip + 1);
 	tcp_template(tp, ip, th);
 	/*
@@ -405,7 +396,7 @@ send:
 	 * window for use in delaying messages about window sizes.
 	 * If resending a FIN, be sure not to use a new sequence number.
 	 */
-	if (flags & TH_FIN && tp->t_flags & TF_SENTFIN && 
+	if (flags & BSD_TH_FIN && tp->t_flags & TF_SENTFIN && 
 	    tp->snd_nxt == tp->snd_max) {
 		tp->snd_nxt--;
 	}
@@ -422,7 +413,7 @@ send:
 	 * case, since we know we aren't doing a retransmission.
 	 * (retransmit and persist are mutually exclusive...)
 	 */
-	if (len || (flags & (TH_SYN|TH_FIN)) ||
+	if (len || (flags & (TH_SYN|BSD_TH_FIN)) ||
 	    timer_is_running(tp->t_timer + TCPT_PERSIST)) {
 		th->th_seq = htonl(tp->snd_nxt);
 	} else {
@@ -467,11 +458,11 @@ send:
 		/*
 		 * Advance snd_nxt over sequence space of this segment.
 		 */
-		if (flags & (TH_SYN|TH_FIN)) {
+		if (flags & (TH_SYN|BSD_TH_FIN)) {
 			if (flags & TH_SYN) {
 				tp->snd_nxt++;
 			}
-			if (flags & TH_FIN) {
+			if (flags & BSD_TH_FIN) {
 				tp->snd_nxt++;
 				tp->t_flags |= TF_SENTFIN;
 			}
@@ -517,7 +508,7 @@ send:
 		tcp_trace(TA_OUTPUT, tp->t_state, tp, ip, th, 0);
 	}
 	ip->ip_len = hdrlen + len;
-	ip_output(txr, m, ip);
+	ip_output(&pkt, ip);
 	counter64_inc(&tcpstat.tcps_sndtotal);
 
 	/*
@@ -533,7 +524,7 @@ send:
 	tp->t_flags &= ~(TF_ACKNOW|TF_DELACK);
 	timer_cancel(&tp->t_timer_delack);
 	return sendalot;
-err:
+//err:
 	if (error == ENOBUFS) {
 		tcp_quench(so, 0);
 		return 0;

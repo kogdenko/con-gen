@@ -2,7 +2,6 @@
 #include "./bsd44/if_ether.h"
 #include "./bsd44/ip.h"
 #include "./gbtcp/timer.h"
-#include "global.h"
 #include "netstat.h"
 #include <getopt.h>
 
@@ -45,14 +44,14 @@ int n_threads;
 __thread struct thread *current;
 
 void bsd_eth_in(void *, int);
-void bsd_flush();
+void bsd_flush(void);
 void bsd_server_listen(int);
-void bsd_client_connect();
+void bsd_client_connect(void);
 
 void toy_eth_in(void *, int);
-void toy_flush();
+void toy_flush(void);
 void toy_server_listen(int);
-void toy_client_connect();
+void toy_client_connect(void);
 
 static const char *
 norm2(char *buf, double val, char *fmt, int normalize)
@@ -87,7 +86,7 @@ union tsc {
 };
 
 static uint64_t
-rdtsc()
+rdtsc(void)
 {
 	union tsc tsc;
 
@@ -147,70 +146,12 @@ set_affinity(int cpu_id)
 	CPU_SET(cpu_id, &x);
 	rc = pthread_setaffinity_np(pthread_self(), sizeof(x), &x);
 	if (rc) {
-		dbg("pthread_setaffinity_np(%d) failed", cpu_id);
+		fprintf(stderr, "pthread_setaffinity_np(%d) failed\n", cpu_id);
 		return -rc;
 	}
 	return 0;
 }
 
-#ifdef __linux__
-int
-read_rss_key(const char *ifname, u_char *rss_key)
-{
-	int fd, rc, size, off;
-	struct ifreq ifr;
-	struct ethtool_rxfh rss, *rss2;
-
-	rc = socket(AF_INET, SOCK_DGRAM, 0);
-	if (rc < 0) {
-		return rc;
-	}
-	fd = rc;
-	memset(&rss, 0, sizeof(rss));
-	memset(&ifr, 0, sizeof(ifr));
-	strzcpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
-	rss.cmd = ETHTOOL_GRSSH;
-	ifr.ifr_data = (void *)&rss;
-	rc = ioctl(fd, SIOCETHTOOL, (uintptr_t)&ifr);
-	if (rc < 0) {
-		dbg("%s: ioctl(SIOCETHTOOL) failed", ifname);
-		goto out;
-	}
-	if (rss.key_size != RSS_KEY_SIZE) {
-		dbg("%s: Invalid rss key_size (%d)", ifname, rss.key_size);
-		goto out;
-	}
-	size = (sizeof(rss) + rss.key_size +
-	       rss.indir_size * sizeof(rss.rss_config[0]));
-	rss2 = malloc(size);
-	if (rc) {
-		goto out;
-	}
-	memset(rss2, 0, size);
-	rss2->cmd = ETHTOOL_GRSSH;
-	rss2->indir_size = rss.indir_size;
-	rss2->key_size = rss.key_size;
-	ifr.ifr_data = (void *)rss2;
-	rc = ioctl(fd, SIOCETHTOOL, (uintptr_t)&ifr);
-	if (rc) {
-		dbg("%s: ioctl(SIOCETHTOOL) failed", ifname);
-		goto out2;
-	}
-	off = rss2->indir_size * sizeof(rss2->rss_config[0]);
-	memcpy(rss_key, (u_char *)rss2->rss_config + off, RSS_KEY_SIZE);
-out2:
-	free(rss2);
-out:
-	close(fd);
-	return rc;
-}
-#else // __linux__
-int
-read_rss_key(const char *ifname, u_char *rss_key)
-{
-	return 0;
-}
-#endif // __linux__
 
 uint32_t
 ip_socket_hash(struct dlist *p)
@@ -264,11 +205,10 @@ print_report_diffs(struct report_data *new, struct report_data *old)
 		printf("%-10s", bps_b);
 	}
 	printf("%-10s", rxmtps_b);
-	*old = *new;
 }
 
 static void
-print_report()
+print_report(void)
 {
 	int i;
 	static int n;
@@ -303,6 +243,7 @@ print_report()
 	new.rd_closed = counter64_get(&tcpstat.tcps_closed);
 	new.rd_sndrexmitpack = counter64_get(&tcpstat.tcps_sndrexmitpack);
 	print_report_diffs(&new, &report01);
+	report01 = new;
 	printf("%d\n", conns);
 	n++;
 	if (n == 20) {
@@ -311,7 +252,7 @@ print_report()
 }
 
 static void
-quit()
+quit(void)
 {
 	int i;
 
@@ -341,7 +282,7 @@ sighandler(int signum)
 	}
 }
 
-static int
+static void
 thread_init_dst_cache(struct thread *t)
 {
 	uint64_t i, n;
@@ -356,16 +297,15 @@ thread_init_dst_cache(struct thread *t)
 
 	t->t_dst_cache = malloc(t->t_dst_cache_size * sizeof(struct ip_socket));
 	if (t->t_dst_cache == NULL) {
-		dbg("Not enough memory for dst cache");
-		return -ENOMEM;
+		panic(0, "Not enough memory (%zu) for dst cache",
+			t->t_dst_cache_size * sizeof(struct ip_socket));
 	}
 	ip_laddr_connect = t->t_ip_laddr_min;
 	ip_lport_connect = EPHEMERAL_MIN;
 	ip_faddr_connect = t->t_ip_faddr_min;
 	dst_cache_size = 0;
 	n = (t->t_ip_laddr_max - t->t_ip_laddr_min + 1) * 
-	    (t->t_ip_faddr_max - t->t_ip_faddr_min + 1) *
-	    NEPHEMERAL;
+		(t->t_ip_faddr_max - t->t_ip_faddr_min + 1) * NEPHEMERAL;
 	for (i = 0; i < n; ++i) {
 		laddr = htonl(ip_laddr_connect);
 		faddr = htonl(ip_faddr_connect);
@@ -386,9 +326,9 @@ thread_init_dst_cache(struct thread *t)
 				}
 			}
 		}
-		if (t->t_rss_qid != RSS_QID_NONE) {
+		if (t->t_rss_queue_id != RSS_QUEUE_ID_NONE && t->t_rss_queue_num > 1) {
 			h = rss_hash4(laddr, faddr, lport, fport, t->t_rss_key);
-			if ((h % t->t_n_rss_q) != t->t_rss_qid) {
+			if ((h % t->t_rss_queue_num) != t->t_rss_queue_id) {
 				continue;
 			}
 		}
@@ -404,38 +344,6 @@ thread_init_dst_cache(struct thread *t)
 		}
 	}
 	t->t_dst_cache_size = dst_cache_size;
-	return 0;
-}
-
-static void
-thread_process_rx()
-{
-	int i, j, n;
-	void *buf;
-	struct netmap_slot *slot;
-	struct netmap_ring *rxr;
-
-	for (i = current->t_nmd->first_rx_ring;
-	     i <= current->t_nmd->last_rx_ring; ++i) {
-		rxr = NETMAP_RXRING(current->t_nmd->nifp, i);
-		n = nm_ring_space(rxr);
-		if (n > current->t_burst_size) {
-			n = current->t_burst_size;
-		}
-		for (j = 0; j < n; ++j) {
-			DEV_PREFETCH(rxr);
-			slot = rxr->slot + rxr->cur;
-			buf = NETMAP_BUF(rxr, slot->buf_idx);
-			if (slot->len >= 14) {
-				if (current->t_toy) {
-					toy_eth_in(buf, slot->len);
-				} else {
-					bsd_eth_in(buf, slot->len);
-				}
-			}
-			rxr->head = rxr->cur = nm_ring_next(rxr, rxr->cur);
-		}
-	}
 }
 
 static void
@@ -458,7 +366,7 @@ main_process_req(int fd, FILE *out)
 }
 
 static void
-main_routine()
+main_routine(void)
 {
 	int rc, fd, fd2, pid, n_pfds;
 	FILE *file;
@@ -511,18 +419,46 @@ main_routine()
 	unlink(a.sun_path);	
 }
 
-void
-thread_process()
+int
+multiplexer_add(int fd)
 {
-	uint64_t t, age;
-	struct pollfd pfd;
+	int index;
 
-	pfd.fd = current->t_nmd->fd;
-	pfd.events = POLLIN;
-	if (current->t_tx_throttled) {
-		pfd.events |= POLLOUT;
-	}
-	poll(&pfd, 1, 10);
+	index = current->t_pfd_num;
+	if (index == ARRAY_SIZE(current->t_pfds))
+		panic(0, "Too many RSS queues");
+	current->t_pfd_num++;
+	current->t_pfds[index].fd = fd;
+	current->t_pfds[index].events = POLLIN;
+	current->t_pfds[index].revents = 0;
+	return index;
+}
+
+void
+multiplexer_pollout(int index)
+{
+	assert(index < current->t_pfd_num);
+	current->t_pfds[index].events |= POLLOUT;
+}
+
+int
+multiplexer_get_events(int index)
+{
+	assert(index < current->t_pfd_num);
+	return current->t_pfds[index].events;
+}
+
+void
+thread_process(void)
+{
+	int i;
+	uint64_t t, age;
+	struct packet *pkt;
+	struct pollfd pfds[ARRAY_SIZE(current->t_pfds)];
+
+	io_tx();
+	memcpy(pfds, current->t_pfds, current->t_pfd_num * sizeof(struct pollfd));
+	poll(pfds, current->t_pfd_num, 10);
 	t = rdtsc();
 	if (t > current->t_tsc) {
 		current->t_time = 1000llu * t / tsc_mhz;
@@ -533,14 +469,25 @@ thread_process()
 		}
 	}
 	current->t_tsc = t;
-	if (pfd.revents & POLLIN) {
-		spinlock_lock(&current->t_lock);
-		thread_process_rx();
-		spinlock_unlock(&current->t_lock);
+	for (i = 0; i < current->t_pfd_num; ++i) {
+		// FIXME: XDP: POLLIN sometimes have not been raise on fd with pending rx packets
+		// Simply reproduced in multiqueue mode
+		if (current->t_transport == TRANSPORT_XDP || (pfds[i].revents & POLLIN)) {
+			spinlock_lock(&current->t_lock);
+			io_rx(i);
+			spinlock_unlock(&current->t_lock);
+		}
+		if (pfds[i].revents & POLLOUT) {
+			current->t_pfds[i].events &= ~POLLOUT;
+		}
 	}
 	check_timers();
-	if (pfd.revents & POLLOUT) {
-		current->t_tx_throttled = 0;
+	while (!io_is_tx_throttled() && !dlist_is_empty(&current->t_pkt_pending_head)) {
+		pkt = DLIST_FIRST(&current->t_pkt_pending_head,	struct packet, pkt.list);
+		DLIST_REMOVE(pkt, pkt.list);
+		if (!io_tx_packet(pkt)) {
+			DLIST_INSERT_HEAD(&current->t_pkt_head, pkt, pkt.list);	
+		}
 	}
 	if (current->t_toy) {
 		toy_flush();
@@ -552,7 +499,7 @@ thread_process()
 static void *
 thread_routine(void *udata)
 {
-	int rc, ipproto;
+	int ipproto;
 
 	current = udata;
 	if (current->t_affinity >= 0) {
@@ -562,10 +509,7 @@ thread_routine(void *udata)
 		if (current->t_dst_cache_size < 2 * current->t_concurrency) {
 			current->t_dst_cache_size = 2 * current->t_concurrency;
 		}
-		rc = thread_init_dst_cache(current);
-		if (rc) {
-			return NULL;
-		}
+		thread_init_dst_cache(current);
 	}
 	current->t_tsc = rdtsc();
 	current->t_time = 1000 * current->t_tsc / tsc_mhz;
@@ -593,7 +537,7 @@ thread_routine(void *udata)
 }
 
 static void
-usage()
+usage(void)
 {
 	printf(
 	"Usage: con-gen [options] { -i interface }\n"
@@ -613,7 +557,16 @@ usage()
 	"\t-b {num}: Burst size\n"
 	"\t-N: Do not normalize units (i.e., use bps, pps instead of Mbps, Kpps, etc.).\n"
 	"\t-L: Operate in server mode\n"
-	"\t--so-debug: Enable SO_DEBUG option\n"
+	"\t--so-debug: Enable SO_DEBUG option on all sockets\n"
+#ifdef HAVE_NETMAP
+	"\t--netmap: Use netmap transport\n"
+#endif
+#ifdef HAVE_PCAP
+	"\t--pcap: Use libpcap transport\n"
+#endif
+#ifdef HAVE_XDP
+	"\t--xdp: Use XDP transport\n"
+#endif
 	"\t--udp: Use UDP instead of TCP\n"
 	"\t--toy: Use toy tcp/ip stack instead of bsd4.4 (it is a bit faster)\n"
 	"\t--dst-cache: Number of precomputed connect tuples (default: 100000)\n"
@@ -642,6 +595,15 @@ static struct option long_options[] = {
 	{ "toy", no_argument, 0, 0 },
 	{ "dst-cache", required_argument, 0, 0 },
 	{ "so-debug", no_argument, 0, 0 },
+#ifdef HAVE_NETMAP
+	{ "netmap", no_argument, 0, 0 },
+#endif
+#ifdef HAVE_PCAP
+	{ "pcap", no_argument, 0, 0 },
+#endif
+#ifdef HAVE_XDP
+	{ "xdp", no_argument, 0, 0 },
+#endif
 	{ "ip-in-cksum", required_argument, 0, 0 },
 	{ "ip-out-cksum", required_argument, 0, 0 },
 	{ "tcp-in-cksum", required_argument, 0, 0 },
@@ -661,41 +623,6 @@ static struct option long_options[] = {
 };
 
 static int
-thread_init_if(struct thread *t, const char *ifname)
-{
-	int rc;
-	char buf[IFNAMSIZ + 7];
-
-	snprintf(buf, sizeof(buf), "netmap:%s", ifname);
-	t->t_nmd = nm_open(buf, NULL, 0, NULL);
-	if (t->t_nmd == NULL) {
-		rc = -errno;
-		dbg("nm_open('%s') failed (%s)", buf, strerror(-rc));
-		return rc;
-	}
-	if (t->t_nmd->req.nr_rx_rings != t->t_nmd->req.nr_tx_rings) {
-		rc = -EINVAL;
-		dbg("%s: nr_rx_rings != nr_tx_rings", buf);
-		goto err;
-	}
-	t->t_n_rss_q = t->t_nmd->req.nr_rx_rings;
-	t->t_rss_qid = RSS_QID_NONE;	
-	if ((t->t_nmd->req.nr_flags & NR_REG_MASK) == NR_REG_ONE_NIC) {
-		t->t_rss_qid = t->t_nmd->first_rx_ring;
-		rc = read_rss_key(t->t_nmd->req.nr_name, t->t_rss_key);
-		if (rc) {
-			dbg("%s: Can't read rss key", t->t_nmd->req.nr_name);
-			goto err;
-		}
-	}
-	return 0;
-err:
-	nm_close(t->t_nmd);
-	t->t_nmd = NULL;
-	return rc;
-}
-
-static int
 thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char **argv)
 {
 	int rc, opt, option_index;
@@ -706,10 +633,15 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 	spinlock_init(&t->t_lock);
 	t->t_id = t - threads;
 	t->t_tcp_rttdflt = TCPTV_SRTTDFLT / PR_SLOWHZ;
+	dlist_init(&t->t_pkt_head);
+	dlist_init(&t->t_pkt_pending_head);
 	dlist_init(&t->t_so_txq);
 	dlist_init(&t->t_so_pool);
 	dlist_init(&t->t_sob_pool);
+	t->t_rss_queue_id = RSS_QUEUE_ID_NONE;
 	if (pt == NULL) {
+		t->t_toy = 0;
+		t->t_transport = TRANSPORT_DEFAULT;
 		t->t_dst_cache_size = 100000;
 		t->t_ip_do_incksum = 2;
 		t->t_ip_do_outcksum = 2;
@@ -731,6 +663,7 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 		t->t_affinity = -1;
 	} else {
 		t->t_toy = pt->t_toy;
+		t->t_transport = pt->t_transport;
 		t->t_dst_cache_size = pt->t_dst_cache_size;
 		t->t_Lflag = pt->t_Lflag;
 		t->t_so_debug = pt->t_so_debug;
@@ -772,6 +705,18 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 				t->t_dst_cache_size = optval;
 			} else if (!strcmp(optname, "so-debug")) {
 				t->t_so_debug = 1;
+#ifdef HAVE_NETMAP
+			} else if (!strcmp(optname, "netmap")) {
+				t->t_transport = TRANSPORT_NETMAP;
+#endif
+#ifdef HAVE_PCAP
+			} else if (!strcmp(optname, "pcap")) {
+				t->t_transport = TRANSPORT_PCAP;
+#endif
+#ifdef HAVE_XDP
+			} else if (!strcmp(optname, "xdp")) {
+				t->t_transport = TRANSPORT_XDP;
+#endif
 			} else if (!strcmp(optname, "ip-in-cksum")) {
 				t->t_ip_do_incksum = optval;
 			} else if (!strcmp(optname, "ip-out-cksum")) {
@@ -876,19 +821,18 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 			break;
 		default:
 err:
-			dbg("Invalid argument '-%c': %s", opt, optarg);
+			fprintf(stderr, "Invalid argument '-%c': %s\n", opt, optarg);
 			return -EINVAL;
 		}
 	}
 	if (ifname == NULL) {
-		dbg("Interface (-i) not specified for thread %d", thread_idx);
+		fprintf(stderr, "Interface (-i) not specified for thread %d\n", thread_idx);
 		usage();
 		return -EINVAL;
 	}
-	rc = thread_init_if(t, ifname);
-	if (rc) {
-		return rc;
-	}
+	set_transport(t, t->t_transport);
+	current = t;
+	io_init(ifname);
 	htable_init(&t->t_in_htable, 4096, ip_socket_hash);
 	if (t->t_Lflag) {
 		t->t_http = http_reply;
@@ -897,13 +841,18 @@ err:
 		t->t_http = http_request;
 		t->t_http_len = http_request_len;
 	}
+	if (t->t_toy) {
+		t->t_rx_op = toy_eth_in;
+	} else {
+		t->t_rx_op = bsd_eth_in;
+	}
 	t->t_counters = xmalloc(n_counters * sizeof(uint64_t));
 	memset(t->t_counters, 0, n_counters * sizeof(uint64_t));
 	return 0;
 }
 
 static void
-sleep_compute_hz()
+sleep_compute_hz(void)
 {
 	uint64_t t, t2, tsc_hz;
 
@@ -948,7 +897,7 @@ main(int argc, char **argv)
 	sleep_compute_hz();
 	rc = gethostname(hostname, sizeof(hostname));
 	if (rc == -1) {
-		dbg("gethostname() failed (%s)\n", strerror(errno));
+		fprintf(stderr, "gethostname() failed (%s)\n", strerror(errno));
 		strcpy(hostname, "127.0.0.1");
 	} else {
 		hostname[sizeof(hostname) - 1] = '\0';
@@ -986,7 +935,7 @@ main(int argc, char **argv)
 		t = threads + i;
 		rc = pthread_create(&t->t_pthread, NULL, thread_routine, t);
 		if (rc) {
-			dbg("pthread_create() failed (%s)", strerror(rc));
+			fprintf(stderr, "pthread_create() failed (%s)\n", strerror(rc));
 			return EXIT_FAILURE;
 		}
 	}

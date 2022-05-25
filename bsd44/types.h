@@ -40,7 +40,6 @@
 #define	CON_GEN__BSD44__TYPES_H
 
 #include "../global.h"
-#include "../netstat.h"
 
 #define	M_BCAST		0x0100	/* send/received as link-level broadcast */
 #define	M_MCAST		0x0200	/* send/received as link-level multicast */

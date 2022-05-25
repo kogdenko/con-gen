@@ -10,14 +10,14 @@ static void client(struct socket *, short, struct sockaddr_in *, void *, int);
 static void server(struct socket *, short, struct sockaddr_in *, void *, int);
 
 void
-bsd_flush()
+bsd_flush(void)
 {
 	int rc;
 	struct socket *so;
 
 	while (!dlist_is_empty(&current->t_so_txq)) {
 		so = DLIST_FIRST(&current->t_so_txq, struct socket, so_txlist);
-		if (not_empty_txr(NULL) == NULL) {
+		if (io_is_tx_throttled()) {
 			break;
 		}
 		rc = tcp_output_real(sototcpcb(so));
@@ -30,7 +30,7 @@ bsd_flush()
 }
 
 void
-bsd_client_connect()
+bsd_client_connect(void)
 {
 	int rc;
 	struct socket *so;
@@ -59,7 +59,7 @@ udp_echo(struct socket *so, short events, struct sockaddr_in *addr,
 
 static void
 srv_accept(struct socket *so, short events,
-           struct sockaddr_in *addr, void *dat, int len)
+	struct sockaddr_in *addr, void *dat, int len)
 {
 	int rc;
 	struct socket *aso;
@@ -101,7 +101,7 @@ bsd_server_listen(int proto)
 }
 
 static void
-con_close()
+con_close(void)
 {
 	if (current->t_done) {
 		return;
@@ -143,8 +143,7 @@ conn_sendto(struct socket *so)
 }
 
 static void
-client(struct socket *so, short events, struct sockaddr_in *addr,
-	void *dat, int len)
+client(struct socket *so, short events, struct sockaddr_in *addr, void *dat, int len)
 {
 	int rc;
 	char fb[INET_ADDRSTRLEN];
@@ -158,8 +157,7 @@ client(struct socket *so, short events, struct sockaddr_in *addr,
 	if (cp->cn_sent == 0) {
 		if (events & POLLERR) {
 			panic(so->so_error, "Could't connect to %s:%hu",
-				inet_ntop(AF_INET, &so->so_base.ipso_faddr,
-					fb, sizeof(fb)),
+				inet_ntop(AF_INET, &so->so_base.ipso_faddr, fb, sizeof(fb)),
 				ntohs(so->so_base.ipso_fport));
 		}
 		if (events|POLLOUT) {

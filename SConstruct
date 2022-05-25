@@ -2,6 +2,13 @@ import platform
 
 AddOption('--debug-build', action = 'store_true',
     help = 'Debug build', default = False)
+AddOption("--without-netmap", action = 'store_true',
+    help = "Don't use netmap", default = False)
+AddOption("--without-pcap", action = 'store_true',
+    help = "Don't use libpcap", default = False)
+if platform.system() == "Linux":
+    AddOption("--without-xdp", action = 'store_true',
+        help = "Don't use XDP", default = False)
 
 srcs = [
     'bsd44/uipc_socket.c',
@@ -35,7 +42,9 @@ cflags = [
     '-pipe',
     '-finline-functions',
     '-pthread',
-    '-fPIC'
+    '-fPIC',
+	'-std=gnu99',
+    '-Wstrict-prototypes',
 ]
 
 ldflags = [
@@ -61,9 +70,34 @@ else:
 cflags.append('-falign-functions=16')
 
 env=Environment(CC = 'gcc',
-    CCFLAGS = ' '.join(cflags),
-    LINKFLAGS = ' '.join(ldflags)
 )
+
+conf = Configure(env)
+have_transport = False
+if not GetOption('without_netmap'):
+    if conf.CheckHeader('net/netmap_user.h'):
+        cflags.append('-DHAVE_NETMAP')
+        srcs.append('netmap.c')
+        have_transport = True
+if platform.system() == "Linux" and not GetOption('without_xdp'):
+    if (conf.CheckHeader('linux/bpf.h') and conf.CheckLib('bpf')):
+        cflags.append('-DHAVE_XDP')
+        ldflags.append('-lbpf')
+        srcs.append('xdp.c')
+        have_transport = True
+if not GetOption('without_pcap'):
+    if conf.CheckHeader('pcap/pcap.h'):
+        cflags.append('-DHAVE_PCAP')
+        ldflags.append('-lpcap')
+        srcs.append('pcap.c')
+        have_transport = True
+
+if not have_transport:
+    print("At least one transport must exists")
+    Exit(1)
+env.Append(CFLAGS = ' '.join(cflags))
+env.Append(LINKFLAGS = ' '.join(ldflags))
+
 con_gen = env.Program('build/con-gen%s' % suffix, srcs)
 env.Install('/usr/local/bin', con_gen)
 env.Alias('install', '/usr/local/bin')

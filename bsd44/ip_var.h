@@ -37,10 +37,11 @@
 #include "types.h"
 
 struct ip;
+struct packet;
 
 void	 ip_drain(void);
 void	 ip_init(void);
-void	 ip_output(struct netmap_ring *txr, struct netmap_slot *m, struct ip *);
+void	 ip_output(struct packet *, struct ip *);
 void	 ip_input(struct ip *ip, int, int);
 
 #endif

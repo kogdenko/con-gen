@@ -71,8 +71,7 @@ arp_input(struct arphdr *ar, int len)
 	struct ether_header *eh;
 	struct in_addr isaddr, itaddr, myaddr;
 	int op;
-	struct netmap_ring *txr;
-	struct netmap_slot *m;
+	struct packet pkt;
 
 	if (len >= sizeof(struct arphdr) &&
 	    ntohs(ar->ar_hrd) == ARPHRD_ETHER &&
@@ -139,28 +138,14 @@ out:
 	memcpy(ea->arp_spa, &itaddr, sizeof(ea->arp_spa));
 	ea->arp_op = htons(ARPOP_REPLY);
 	ea->arp_pro = htons(ETHERTYPE_IP); /* let's be sure! */
-	txr = not_empty_txr(&m);
-	if (txr == NULL) {
-		return;
-	}
-	m->len = sizeof(*eh) +  sizeof(*ea);
-	eh = (struct ether_header *)NETMAP_BUF(txr, m->buf_idx);
+	io_init_tx_packet(&pkt);
+	pkt.pkt.len = sizeof(*eh) +  sizeof(*ea);
+	eh = (struct ether_header *)pkt.pkt.buf;
 	memcpy(eh + 1, ea, sizeof(*ea));
 	memcpy(eh->ether_shost, current->t_eth_laddr, sizeof(eh->ether_shost));
 	memcpy(eh->ether_dhost, ea->arp_tha, sizeof(eh->ether_dhost));
 	eh->ether_type = htons(ETHERTYPE_ARP);
-	ether_output(txr, m);
-}
-
-/*
- * Ethernet output routine.
- */
-void
-ether_output(struct netmap_ring *txr, struct netmap_slot *m)
-{
-	counter64_add(&if_obytes, m->len);
-	counter64_inc(&if_opackets);
-	txr->head = txr->cur = nm_ring_next(txr, txr->cur);
+	io_tx_packet(&pkt);
 }
 
 /* Process a received Ethernet packet; */

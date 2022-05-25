@@ -91,26 +91,16 @@ tcp_template(struct tcpcb *tp, struct ip *ip, struct tcp_hdr *th)
  * segment are as specified by the parameters.
  */
 void
-tcp_respond(struct tcpcb *tp,
-            struct ip *ip_rcv,
-            struct tcp_hdr *th_rcv,
-            tcp_seq ack,
-            tcp_seq seq,
-            int flags)
+tcp_respond(struct tcpcb *tp, struct ip *ip_rcv, struct tcp_hdr *th_rcv,
+	tcp_seq ack, tcp_seq seq, int flags)
 {
 	int win;
-	u_char *m_buf;
 	struct ip *ip;
 	struct tcp_hdr *th;
-	struct netmap_ring *txr;
-	struct netmap_slot *m;
+	struct packet pkt;
 
-	txr = not_empty_txr(&m);
-	if (txr == NULL) {
-		return;
-	}
-	m_buf = (u_char *)NETMAP_BUF(txr, m->buf_idx);
-	ip = (struct ip *)(m_buf + sizeof(struct ether_header));
+	io_init_tx_packet(&pkt);
+	ip = (struct ip *)(pkt.pkt.buf + sizeof(struct ether_header));
 	th = (struct tcp_hdr *)(ip + 1);
 	tcp_template(tp, ip, th);
 	if (tp == NULL) {
@@ -131,7 +121,7 @@ tcp_respond(struct tcpcb *tp,
 	}
 	ip->ip_len = sizeof(*ip) + sizeof(*th);
 	th->th_sum = tcp_cksum(ip, sizeof(*th));
-	ip_output(txr, m, ip);
+	ip_output(&pkt, ip);
 }
 
 /*
@@ -235,9 +225,9 @@ tcp_notify(struct socket *so, int error)
 	 * can never complete.
 	 */
 	if (tp->t_state == TCPS_ESTABLISHED &&
-	    (error == EHOSTUNREACH ||
-	     error == ENETUNREACH ||
-	     error == EHOSTDOWN)) {
+			(error == EHOSTUNREACH ||
+			error == ENETUNREACH ||
+			error == EHOSTDOWN)) {
 		return;
 	} else if (tp->t_state < TCPS_ESTABLISHED) {
 		so->so_error = error;
@@ -264,7 +254,7 @@ tcp_ctlinput(int err,
 	}
 	th = (struct tcp_hdr *)((u_char *)ip + (ip->ip_hl << 2));
 	in_pcbnotify(IPPROTO_TCP, ip->ip_src.s_addr, th->th_sport,
-	             dst, th->th_dport, err, notify);
+		dst, th->th_dport, err, notify);
 }
 
 /*

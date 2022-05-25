@@ -1,6 +1,8 @@
 #include "global.h"
 #include "subr.h"
 
+#include <sys/resource.h>
+
 int verbose;
 struct udpstat udpstat;
 struct tcpstat tcpstat;
@@ -20,6 +22,8 @@ const char *tcpstates[TCP_NSTATES] = {
 	[TCPS_FIN_WAIT_2] = "FIN_WAIT_2",
 	[TCPS_TIME_WAIT] = "TIME_WAIT",
 };
+
+static void read_rss_key(const char *, u_char *) __attribute__((unused));
 
 void
 dbg5(const char *file, u_int line, const char *func, int suppressed,
@@ -173,31 +177,117 @@ panic3(const char *file, int line, int errnum, const char *format, ...)
 		fprintf(stderr, " (%d:%s)", errnum, strerror(errnum));
 	}
 	fprintf(stderr, "\n");
+	print_stats(stdout, 0);
 	exit(1);
 }
 
-struct netmap_ring *
-not_empty_txr(struct netmap_slot **pslot)
+static struct packet *
+alloc_tx_packet(void)
 {
-	int i;
-	struct netmap_ring *txr;
+	struct packet *pkt;
 
-	if (current->t_tx_throttled) {
-		return NULL;
+	if (dlist_is_empty(&current->t_pkt_head)) {
+		pkt = xmalloc(sizeof(*pkt));
+	} else {
+		pkt = DLIST_FIRST(&current->t_pkt_head, struct packet, pkt.list);
+		DLIST_REMOVE(pkt, pkt.list);
 	}
-	for (i = current->t_nmd->first_tx_ring;
-	     i <= current->t_nmd->last_tx_ring; ++i) {
-		txr = NETMAP_TXRING(current->t_nmd->nifp, i);
-		if (!nm_ring_empty(txr)) {
-			if (pslot != NULL) {
-				*pslot = txr->slot + txr->cur;
-				(*pslot)->len = 0;
-			}
-			return txr;	
-		}
+	return pkt;
+}
+
+void
+add_pending_packet(struct packet *pkt)
+{
+	struct packet *cp;
+
+	cp = alloc_tx_packet();
+	memcpy(cp->pkt_body, pkt->pkt.buf, pkt->pkt.len);
+	cp->pkt.len = pkt->pkt.len;
+	cp->pkt.buf = cp->pkt_body;
+	DLIST_INSERT_TAIL(&current->t_pkt_pending_head, cp, pkt.list);
+}
+
+void
+set_transport(struct thread *t, int transport)
+{
+	switch (transport) {
+#ifdef HAVE_NETMAP
+	case TRANSPORT_NETMAP:
+		set_netmap_ops(t);
+		break;
+#endif
+#ifdef HAVE_PCAP
+	case TRANSPORT_PCAP:
+		set_pcap_ops(t);
+		break;
+#endif
+#ifdef HAVE_XDP
+	case TRANSPORT_XDP:
+		set_xdp_ops(t);
+		break;
+#endif
+	default:
+		panic(0, "Transport %d not supported", transport);
+		break;
 	}
-	current->t_tx_throttled = 1;
-	return NULL;
+}
+
+void
+io_init(const char *ifname)
+{
+	(*current->t_io_init_op)(ifname);
+	if (current->t_rss_queue_num > 1 && current->t_rss_queue_id != RSS_QUEUE_ID_NONE) {
+		read_rss_key(current->t_ifname, current->t_rss_key);
+	}
+}
+
+void
+io_init_tx_packet(struct packet *pkt)
+{
+	return (*current->t_io_init_tx_packet_op)(pkt);
+}
+
+void
+io_deinit_tx_packet(struct packet *pkt)
+{
+	if (current->t_io_deinit_tx_packet_op != NULL) {
+		(*current->t_io_deinit_tx_packet_op)(pkt);
+	}
+}
+
+bool
+io_is_tx_throttled()
+{
+	return (*current->t_io_is_tx_throttled_op)();
+}
+
+bool
+io_tx_packet(struct packet *pkt)
+{
+	int len;
+	bool sent;
+
+	len = pkt->pkt.len;
+	sent = (*current->t_io_tx_packet_op)(pkt);
+	if (sent) {
+		counter64_add(&if_obytes, len);
+		counter64_inc(&if_opackets);
+	}
+	return sent;
+}
+
+void
+io_rx(int queue_id)
+{
+	(*current->t_io_rx_op)(queue_id);
+}
+
+void
+io_tx()
+{
+	if (current->t_io_tx_op != NULL) {
+		(*current->t_io_tx_op)();
+	}
 }
 
 int
@@ -235,6 +325,63 @@ strzcpy(char *dest, const char *src, size_t n)
 	dest[i] = '\0';
 	return dest;
 }
+
+#ifdef __linux__
+static void
+read_rss_key(const char *ifname, u_char *rss_key)
+{
+	int fd, rc, size, off;
+	struct ifreq ifr;
+	struct ethtool_rxfh rss, *rss2;
+
+	rc = socket(AF_INET, SOCK_DGRAM, 0);
+	if (rc < 0) {
+		panic(errno, "Reading %s RSS key error: socket() failed", ifname);
+	}
+	fd = rc;
+	memset(&rss, 0, sizeof(rss));
+	memset(&ifr, 0, sizeof(ifr));
+	strzcpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
+	rss.cmd = ETHTOOL_GRSSH;
+	ifr.ifr_data = (void *)&rss;
+	rc = ioctl(fd, SIOCETHTOOL, (uintptr_t)&ifr);
+	if (rc < 0) {
+		panic(errno, "Reading %s RSS key error: ioctl(SIOCETHTOOL) failed", ifname);
+	}
+	if (rss.key_size != RSS_KEY_SIZE) {
+		panic(errno, "%s: Invalid RSS key_size (%d)\n", ifname, rss.key_size);
+	}
+	size = (sizeof(rss) + rss.key_size +
+	       rss.indir_size * sizeof(rss.rss_config[0]));
+	rss2 = xmalloc(size);
+	memset(rss2, 0, size);
+	rss2->cmd = ETHTOOL_GRSSH;
+	rss2->indir_size = rss.indir_size;
+	rss2->key_size = rss.key_size;
+	ifr.ifr_data = (void *)rss2;
+	rc = ioctl(fd, SIOCETHTOOL, (uintptr_t)&ifr);
+	if (rc) {
+		panic(errno, "Reading %s RSS key error: ioctl(SIOCETHTOOL) failed", ifname);
+	}
+	off = rss2->indir_size * sizeof(rss2->rss_config[0]);
+	memcpy(rss_key, (u_char *)rss2->rss_config + off, RSS_KEY_SIZE);
+	free(rss2);
+	close(fd);
+}
+#else // __linux__
+void
+read_rss_key(const char *ifname, u_char *rss_key)
+{
+	static uint8_t freebsd_rss_key[RSS_KEY_SIZE] = {
+		0x6d, 0x5a, 0x56, 0xda, 0x25, 0x5b, 0x0e, 0xc2,
+		0x41, 0x67, 0x25, 0x3d, 0x43, 0xa3, 0x8f, 0xb0,
+		0xd0, 0xca, 0x2b, 0xcb, 0xae, 0x7b, 0x30, 0xb4,
+		0x77, 0xcb, 0x2d, 0xa3, 0x80, 0x30, 0xf2, 0x0c,
+		0x6a, 0x42, 0xb7, 0x3b, 0xbe, 0xac, 0x01, 0xfa,
+	};
+	memcpy(rss_key, freebsd_rss_key, RSS_KEY_SIZE);
+}
+#endif // __linux__
 
 uint32_t
 toeplitz_hash(const u_char *data, int cnt, const u_char *key)

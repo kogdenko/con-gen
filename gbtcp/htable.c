@@ -1,5 +1,6 @@
-/* GPL2 license */
+// GPL v2 license
 #include "htable.h"
+#include "../subr.h"
 
 static int htable_print = 0;
 

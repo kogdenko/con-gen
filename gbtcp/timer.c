@@ -16,7 +16,7 @@ static __thread int n_timer_rings;
 static __thread struct timer_ring *timer_rings[TIMER_RING_MAX];
 
 static int
-alloc_timer_rings()
+alloc_timer_rings(void)
 {
 	int i;
 
@@ -27,7 +27,7 @@ alloc_timer_rings()
 }
 
 static void
-free_timer_rings()
+free_timer_rings(void)
 {
 	int i;
 
@@ -69,7 +69,7 @@ timer_ring_init(struct timer_ring *ring, uint64_t seg_size)
 }
 
 int
-init_timers()
+init_timers(void)
 {
 	int i;
 	uint64_t seg_size;
@@ -98,7 +98,7 @@ init_timers()
 }
 
 void
-deinit_timers()
+deinit_timers(void)
 {
 	free_timer_rings();
 }
@@ -213,7 +213,7 @@ check_timer_ring(struct timer_ring *ring, struct dlist *q)
 }
 
 void
-check_timers()
+check_timers(void)
 {
 	int i;
 	static __thread uint64_t last_check_time;

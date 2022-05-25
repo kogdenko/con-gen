@@ -1,8 +1,9 @@
-/* GPL2 license */
+// GPL v2 license
 #ifndef CON_GEN__GBTCP__HTABLE_H
 #define CON_GEN__GBTCP__HTABLE_H
 
-#include "../subr.h"
+#include <stdint.h>
+#include "list.h"
 
 typedef uint32_t (*htable_f)(struct dlist *);
 typedef void (*htable_foreach_f)(void *, void *);

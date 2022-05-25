@@ -40,11 +40,11 @@
 static uint16_t ip_id;				/* ip packet ctr, for ids */
 
 void
-ip_output(struct netmap_ring *txr, struct netmap_slot *m, struct ip *ip)
+ip_output(struct packet *pkt, struct ip *ip)
 {
 	struct ether_header *eh;
 
-	m->len = sizeof(struct ether_header) + ip->ip_len;
+	pkt->pkt.len = sizeof(struct ether_header) + ip->ip_len;
 	/*
 	 * Fill in IP header.
 	 */
@@ -52,7 +52,7 @@ ip_output(struct netmap_ring *txr, struct netmap_slot *m, struct ip *ip)
 	ip->ip_off = IP_DF;
 	ip->ip_id = htons(ip_id++);
 	ip->ip_ttl = IPDEFTTL;
-	ip->ip_tos = 0;
+	ip->ip_tos = 5;
 	ip->ip_hl = sizeof(*ip) >> 2;
 	counter64_inc(&ipstat.ips_localout);
 	assert((u_short)ip->ip_len <= current->t_mtu);
@@ -66,5 +66,6 @@ ip_output(struct netmap_ring *txr, struct netmap_slot *m, struct ip *ip)
 	eh->ether_type = htons(ETHERTYPE_IP);
  	memcpy(eh->ether_shost, current->t_eth_laddr, sizeof(eh->ether_shost));
  	memcpy(eh->ether_dhost, current->t_eth_faddr, sizeof(eh->ether_dhost));
-	ether_output(txr, m);
+
+	io_tx_packet(pkt);
 }
