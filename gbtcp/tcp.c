@@ -1,5 +1,6 @@
-#include "tcp.h"
 #include "inet.h"
+#include "timer.h"
+#include "../global.h"
 
 #define MSS (current->t_mtu - 40)
 

@@ -1,8 +1,8 @@
-// gpl2 license
+// GPL v2 license
 #ifndef CON_GEN__GBTCP__LIST_H
 #define CON_GEN__GBTCP__LIST_H
 
-/* Double linked list */
+// Double linked list
 struct dlist {
 	struct dlist *dls_next;
 	struct dlist *dls_prev;

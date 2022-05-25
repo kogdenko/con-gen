@@ -2,7 +2,6 @@
 #include "./bsd44/if_ether.h"
 #include "./bsd44/ip.h"
 #include "./gbtcp/timer.h"
-#include "global.h"
 #include "netstat.h"
 #include <getopt.h>
 

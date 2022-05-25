@@ -1,5 +1,4 @@
 #include "../global.h"
-#include "../netstat.h"
 #include "inet.h"
 
 #define SHIFT(p, size) \
