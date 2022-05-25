@@ -42,23 +42,6 @@
 #include <pthread_np.h>
 #endif // __linux__
 
-#ifdef HAVE_NETMAP
-#define NETMAP_WITH_LIBS
-#include <net/netmap_user.h>
-#endif
-
-#ifdef HAVE_PCAP
-#include <pcap/pcap.h>
-#endif
-
-#ifdef HAVE_XDP
-#include <linux/if_xdp.h>
-#include <linux/if_link.h>
-#include <linux/bpf.h>
-#include <bpf/libbpf.h>
-#include <bpf/xsk.h>
-#endif
-
 #include "gbtcp/list.h"
 #include "gbtcp/htable.h"
 
@@ -188,6 +171,16 @@ enum {
 #endif
 };
 
+#ifdef HAVE_NETMAP
+struct nm_desc;
+struct netmap_ring;
+struct netmap_slot;
+#endif
+#ifdef HAVE_XDP
+struct xdp_queue;
+#endif
+
+
 struct spinlock {
 	volatile int spinlock_locked;
 };
@@ -243,19 +236,6 @@ struct packet {
 	u_char pkt_body[2048 - sizeof(struct packet_header)];
 };
 
-#ifdef HAVE_XDP
-struct xdp_queue {
-	struct xsk_ring_prod xq_fill;
-	struct xsk_ring_cons xq_comp;
-	struct xsk_ring_prod xq_tx;
-	struct xsk_ring_cons xq_rx;
-	int xq_tx_outstanding;
-	int xq_fd;
-	struct xsk_umem *xq_umem;
-	struct xsk_socket *xq_xsk;
-};
-#endif
-
 struct thread {
 	struct spinlock t_lock;
 	struct dlist t_pkt_head;
@@ -293,19 +273,15 @@ struct thread {
 	struct nm_desc *t_nmd;
 #endif
 #ifdef HAVE_PCAP
-	pcap_t *t_pcap;
+	void *t_pcap;
 #endif
 #ifdef HAVE_XDP
 	struct xdp_queue *t_xdp_queues;
 	int t_xdp_queue_num;
 	uint32_t t_xdp_prog_id;
-	uint64_t *t_xdp_frame;
-	int t_xdp_frame_free;
-	int t_xdp_frame_num;
 	void *t_xdp_tx_buf;
 	uint32_t t_xdp_tx_idx;
 	int t_xdp_tx_queue_idx;
-	void *t_xdp_buf;
 #endif
 	struct ip_socket *t_dst_cache;
 	int t_dst_cache_size;
@@ -369,8 +345,19 @@ void spinlock_unlock(struct spinlock *);
 void counter64_init(counter64_t *);
 uint64_t counter64_get(counter64_t *);
 
-struct thread;
 void set_transport(struct thread *, int);
+
+void add_pending_packet(struct packet *);
+
+#ifdef HAVE_NETMAP
+void set_netmap_ops(struct thread *);
+#endif
+#ifdef HAVE_XDP
+void set_xdp_ops(struct thread *);
+#endif
+#ifdef HAVE_PCAP
+void set_pcap_ops(struct thread *);
+#endif
 
 void io_init(const char *);
 bool io_is_tx_throttled();

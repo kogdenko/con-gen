@@ -76,18 +76,19 @@ have_transport = False
 if not GetOption('without_netmap'):
     if conf.CheckHeader('net/netmap_user.h'):
         cflags.append('-DHAVE_NETMAP')
+        srcs.append('netmap.c')
         have_transport = True
-have_xdp = False
 if platform.system() == "Linux" and not GetOption('without_xdp'):
     if (conf.CheckHeader('linux/bpf.h') and conf.CheckLib('bpf')):
         cflags.append('-DHAVE_XDP')
         ldflags.append('-lbpf')
-        have_xdp = True
+        srcs.append('xdp.c')
         have_transport = True
-if not have_xdp and not GetOption('without_pcap'):
+if not GetOption('without_pcap'):
     if conf.CheckHeader('pcap/pcap.h'):
         cflags.append('-DHAVE_PCAP')
         ldflags.append('-lpcap')
+        srcs.append('pcap.c')
         have_transport = True
 
 if not have_transport:
