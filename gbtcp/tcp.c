@@ -619,8 +619,8 @@ toy_flush()
 
 	while (!dlist_is_empty(&current->t_so_txq)) {
 		so = DLIST_FIRST(&current->t_so_txq, struct sock, tx_list);
-		while (1) {
-			if (io_is_tx_buffer_full()) {
+		for (;;) {
+			if (io_is_tx_throttled()) {
 				return;
 			}
 			io_init_tx_packet(&pkt);

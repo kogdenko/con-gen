@@ -17,7 +17,7 @@ bsd_flush()
 
 	while (!dlist_is_empty(&current->t_so_txq)) {
 		so = DLIST_FIRST(&current->t_so_txq, struct socket, so_txlist);
-		if (io_is_tx_buffer_full()) {
+		if (io_is_tx_throttled()) {
 			break;
 		}
 		rc = tcp_output_real(sototcpcb(so));

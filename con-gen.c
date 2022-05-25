@@ -420,20 +420,42 @@ main_routine()
 	unlink(a.sun_path);	
 }
 
+int
+multiplexer_add(int fd)
+{
+	int index;
+
+	index = current->t_pfd_num;
+	if (index == ARRAY_SIZE(current->t_pfds))
+		panic(0, "Too many RSS queues");
+	current->t_pfd_num++;
+	current->t_pfds[index].fd = fd;
+	return index;
+}
+
+void
+multiplexer_pollout(int index)
+{
+	assert(index < current->t_pfd_num);
+	current->t_pfds[index].events |= POLLOUT;
+}
+
+int
+multiplexer_get_events(int index)
+{
+	assert(index < current->t_pfd_num);
+	return current->t_pfds[index].events;
+}
+
 void
 thread_process()
 {
+	int i, n;
 	uint64_t t, age;
-	struct pollfd pfd;
 	struct packet *pkt;
 
-	pfd.fd = current->t_fd;
-	pfd.events = POLLIN;
-	if (current->t_tx_throttled) {
-		pfd.events |= POLLOUT;
-	}
 	io_tx();
-	poll(&pfd, 1, 10);
+	n = poll(current->t_pfds, current->t_pfd_num, 10);
 	t = rdtsc();
 	if (t > current->t_tsc) {
 		current->t_time = 1000llu * t / tsc_mhz;
@@ -444,16 +466,23 @@ thread_process()
 		}
 	}
 	current->t_tsc = t;
-	if (pfd.revents & POLLIN) {
-		spinlock_lock(&current->t_lock);
-		io_rx();
-		spinlock_unlock(&current->t_lock);
+	for (i = 0; i < n; ++i) {
+		//if (current->t_pfds[i].revents) {
+		//	dbg("%d: revents=%x", i, current->t_pfds[i].revents);
+		//}
+		if (current->t_pfds[i].revents & POLLIN) {
+		//	dbg("POLLIN %d", i);
+			spinlock_lock(&current->t_lock);
+			io_rx(i);
+			spinlock_unlock(&current->t_lock);
+		}
+		if (current->t_pfds[i].revents & POLLOUT) {
+		//	dbg("POLLOUT %d", i);
+			current->t_pfds[i].events &= ~POLLOUT;
+		}
 	}
 	check_timers();
-	if (pfd.revents & POLLOUT) {
-		current->t_tx_throttled = 0;
-	}
-	while (!io_is_tx_buffer_full() && !dlist_is_empty(&current->t_pkt_pending_head)) {
+	while (!io_is_tx_throttled() && !dlist_is_empty(&current->t_pkt_pending_head)) {
 		pkt = DLIST_FIRST(&current->t_pkt_pending_head,	struct packet, pkt.list);
 		DLIST_REMOVE(pkt, pkt.list);
 		if (!io_tx_packet(pkt)) {
@@ -802,7 +831,8 @@ err:
 		return -EINVAL;
 	}
 	set_transport(t, t->t_transport);
-	io_init(t, ifname);
+	current = t;
+	io_init(ifname);
 	htable_init(&t->t_in_htable, 4096, ip_socket_hash);
 	if (t->t_Lflag) {
 		t->t_http = http_reply;

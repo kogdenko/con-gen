@@ -26,8 +26,8 @@ struct thread {
 	struct dlist t_pkt_head;
 	struct dlist t_pkt_pending_head;
 	void (*t_rx_op)(void *, int);
-	void (*t_io_init_op)(struct thread *, const char *);
-	bool (*t_io_is_tx_buffer_full_op)();
+	void (*t_io_init_op)(const char *);
+	bool (*t_io_is_tx_throttled_op)();
 	void (*t_io_init_tx_packet_op)(struct packet *);
 	void (*t_io_deinit_tx_packet_op)(struct packet *);
 	bool (*t_io_tx_packet_op)(struct packet *);
@@ -49,11 +49,11 @@ struct thread {
 	be16_t t_port;
 	u_short t_mtu;
 	u_short t_burst_size;
-	u_char t_tx_throttled;
 	u_char t_rss_queue_num;
 	u_char t_rss_queue_id;
 	u_char t_rss_key[RSS_KEY_SIZE];
-	int t_fd;
+	struct pollfd t_pfds[256];
+	int t_pfd_num;
 #ifdef HAVE_NETMAP
 	struct nm_desc *t_nmd;
 #endif
@@ -104,6 +104,7 @@ struct thread {
 	u_char t_transport;
 	int t_affinity;
 	pthread_t t_pthread;
+	char t_ifname[IFNAMSIZ];
 	uint64_t *t_counters;
 };
 

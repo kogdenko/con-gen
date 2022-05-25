@@ -260,16 +260,19 @@ struct packet {
 	u_char pkt_body[2048 - sizeof(struct packet_header)];
 };
 
-// not_empty_txr
 struct thread;
 void set_transport(struct thread *, int);
-void io_init(struct thread *, const char *);
-bool io_is_tx_buffer_full();
+void io_init(const char *);
+bool io_is_tx_throttled();
 void io_init_tx_packet(struct packet *);
 void io_deinit_tx_packet(struct packet *);
 bool io_tx_packet(struct packet *);
 void io_tx();
 void io_rx();
+
+int multiplexer_add(int);
+void multiplexer_pollout(int);
+int multiplexer_get_events(int);
 
 int ip_connect(struct ip_socket *, uint32_t *);
 void ip_disconnect(struct ip_socket *);
