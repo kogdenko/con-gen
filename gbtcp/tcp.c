@@ -184,7 +184,7 @@ tcp_on_rcv(struct sock *so, const char *payload, int len)
 }
 
 static struct sock *
-tcp_open()
+tcp_open(void)
 {
 	struct sock *so;
 
@@ -255,7 +255,7 @@ toy_get_so_info(void *p, struct socket_info *x)
 }
 
 static int
-tcp_connect()
+tcp_connect(void)
 {
 	int rc;
 	uint32_t h;
@@ -275,7 +275,7 @@ tcp_connect()
 }
 
 void
-toy_client_connect()
+toy_client_connect(void)
 {
 	tcp_connect();
 }
@@ -612,7 +612,7 @@ tcp_xmit(struct packet *pkt, struct sock *so)
 }
 
 void
-toy_flush()
+toy_flush(void)
 {
 	int rc;
 	struct packet pkt;

@@ -44,6 +44,7 @@ cflags = [
     '-pthread',
     '-fPIC',
 	'-std=gnu99',
+    '-Wstrict-prototypes',
 ]
 
 ldflags = [

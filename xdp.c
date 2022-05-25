@@ -23,6 +23,8 @@ struct xdp_queue {
 	void *xq_buf;
 	struct xsk_umem *xq_umem;
 	struct xsk_socket *xq_xsk;
+	void *xq_tx_buf;
+	uint32_t xq_tx_idx;
 	uint64_t xq_frame[XDP_FRAME_NUM];
 };
 
@@ -165,15 +167,15 @@ xdp_get_tx_buf(struct packet *pkt)
 	uint64_t addr;
 	struct xdp_queue *q;
 
-	if (current->t_xdp_tx_buf != NULL) {
-		buf = current->t_xdp_tx_buf;
-		pkt->pkt.idx = current->t_xdp_tx_idx;
-		pkt->pkt.queue_idx = current->t_xdp_tx_queue_idx;
-		current->t_xdp_tx_buf = NULL;
-		return buf;
-	}
 	for (i = 0; i < current->t_xdp_queue_num; ++i) {
 		q = current->t_xdp_queues + i;
+		if (q->xq_tx_buf != NULL) {
+			buf = q->xq_tx_buf;
+			q->xq_tx_buf = NULL;
+			pkt->pkt.idx = q->xq_tx_idx;
+			pkt->pkt.queue_idx = i;
+			return buf;
+		}
 		if (q->xq_frame_free == 0) {
 			continue;
 		}
@@ -184,6 +186,7 @@ xdp_get_tx_buf(struct packet *pkt)
 			xsk_ring_prod__tx_desc(&q->xq_tx, pkt->pkt.idx)->addr = addr;
 			addr = xsk_umem__add_offset_to_addr(addr);
 			buf = xsk_umem__get_data(q->xq_buf, addr);
+			pkt->pkt.queue_idx = i;
 			return buf;
 		} else {
 			multiplexer_pollout(i);
@@ -193,7 +196,7 @@ xdp_get_tx_buf(struct packet *pkt)
 }
 
 bool
-xdp_is_tx_throttled()
+xdp_is_tx_throttled(void)
 {
 	int i;
 	struct xdp_queue *q;
@@ -228,11 +231,13 @@ xdp_init_tx_packet(struct packet *pkt)
 void
 xdp_deinit_tx_packet(struct packet *pkt)
 {
+	struct xdp_queue *q;
+
 	if (pkt->pkt.buf != pkt->pkt_body && pkt->pkt.buf != NULL) {
-		assert(current->t_xdp_tx_buf == NULL);
-		current->t_xdp_tx_buf = pkt->pkt.buf;
-		current->t_xdp_tx_idx = pkt->pkt.idx;
-		current->t_xdp_tx_queue_idx = pkt->pkt.queue_idx;
+		q = current->t_xdp_queues + pkt->pkt.queue_idx;
+		assert(q->xq_tx_buf == NULL);
+		q->xq_tx_buf = pkt->pkt.buf;
+		q->xq_tx_idx = pkt->pkt.idx;
 		pkt->pkt.buf = NULL;
 	}
 }
@@ -262,7 +267,7 @@ xdp_tx_packet(struct packet *pkt)
 }
 
 void
-xdp_tx()
+xdp_tx(void)
 {
 	int i, n;
 	uint32_t idx;
@@ -291,13 +296,15 @@ xdp_tx()
 	}
 }
 
-static void
-xdp_rx_queue(struct xdp_queue *q)
+void
+xdp_rx(int queue_id)
 {
 	int i, n, m, rc, len;
 	uint32_t idx_rx, idx_fill;
 	uint64_t addr, frame;
+	struct xdp_queue *q;
 
+	q = current->t_xdp_queues + queue_id;
 	n = xsk_ring_cons__peek(&q->xq_rx, current->t_burst_size, &idx_rx);
 	if (n == 0) {
 		return;
@@ -326,16 +333,6 @@ xdp_rx_queue(struct xdp_queue *q)
 			*xsk_ring_prod__fill_addr(&q->xq_fill, idx_fill) = frame;
 		}
 		xsk_ring_prod__submit(&q->xq_fill, m);
-	}
-}
-
-void
-xdp_rx()
-{
-	int i;
-
-	for (i = 0; i < current->t_xdp_queue_num; ++i) {
-		xdp_rx_queue(current->t_xdp_queues + i);
 	}
 }
 

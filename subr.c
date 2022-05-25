@@ -182,7 +182,7 @@ panic3(const char *file, int line, int errnum, const char *format, ...)
 }
 
 static struct packet *
-alloc_tx_packet()
+alloc_tx_packet(void)
 {
 	struct packet *pkt;
 
@@ -277,9 +277,9 @@ io_tx_packet(struct packet *pkt)
 }
 
 void
-io_rx()
+io_rx(int queue_id)
 {
-	(*current->t_io_rx_op)();
+	(*current->t_io_rx_op)(queue_id);
 }
 
 void

@@ -10,7 +10,7 @@ static void client(struct socket *, short, struct sockaddr_in *, void *, int);
 static void server(struct socket *, short, struct sockaddr_in *, void *, int);
 
 void
-bsd_flush()
+bsd_flush(void)
 {
 	int rc;
 	struct socket *so;
@@ -30,7 +30,7 @@ bsd_flush()
 }
 
 void
-bsd_client_connect()
+bsd_client_connect(void)
 {
 	int rc;
 	struct socket *so;
@@ -101,7 +101,7 @@ bsd_server_listen(int proto)
 }
 
 static void
-con_close()
+con_close(void)
 {
 	if (current->t_done) {
 		return;

@@ -17,10 +17,10 @@ struct timer {
 
 typedef void (*timer_f)(struct timer *);
 
-int init_timers();
-void deinit_timers();
+int init_timers(void);
+void deinit_timers(void);
 
-void check_timers();
+void check_timers(void);
 void timer_init(struct timer *);
 int timer_is_running(struct timer *);
 void timer_set(struct timer *, uint64_t, timer_f);

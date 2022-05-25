@@ -76,6 +76,18 @@
 #define NANOSECONDS_MILLISECOND 1000000llu
 #define NANOSECONDS_MICROSECOND 1000llu
 
+#define TRANSPORT_NETMAP 0
+#define TRANSPORT_XDP 1
+#define TRANSPORT_PCAP 2
+
+#ifdef HAVE_NETMAP
+#define TRANSPORT_DEFAULT TRANSPORT_NETMAP
+#elif defined HAVE_XDP
+#define TRANSPORT_DEFAULT TRANSPORT_XDP
+#else
+#define TRANSPORT_DEFAULT TRANSPORT_PCAP
+#endif
+
 // Macros
 #define STRSZ(s) (s), (sizeof(s) - 1)
 
@@ -159,18 +171,6 @@ typedef uint32_t be32_t;
 
 typedef int counter64_t;
 
-enum {
-#ifdef HAVE_NETMAP
-	TRANSPORT_NETMAP,
-#endif
-#ifdef HAVE_PCAP
-	TRANSPORT_PCAP,
-#endif
-#ifdef HAVE_XDP
-	TRANSPORT_XDP,
-#endif
-};
-
 #ifdef HAVE_NETMAP
 struct nm_desc;
 struct netmap_ring;
@@ -242,12 +242,12 @@ struct thread {
 	struct dlist t_pkt_pending_head;
 	void (*t_rx_op)(void *, int);
 	void (*t_io_init_op)(const char *);
-	bool (*t_io_is_tx_throttled_op)();
+	bool (*t_io_is_tx_throttled_op)(void);
 	void (*t_io_init_tx_packet_op)(struct packet *);
 	void (*t_io_deinit_tx_packet_op)(struct packet *);
 	bool (*t_io_tx_packet_op)(struct packet *);
-	void (*t_io_tx_op)();
-	void (*t_io_rx_op)();
+	void (*t_io_tx_op)(void);
+	void (*t_io_rx_op)(int);
 	u_char t_id;
 	u_char t_toy;
 	u_char t_done;
@@ -279,9 +279,6 @@ struct thread {
 	struct xdp_queue *t_xdp_queues;
 	int t_xdp_queue_num;
 	uint32_t t_xdp_prog_id;
-	void *t_xdp_tx_buf;
-	uint32_t t_xdp_tx_idx;
-	int t_xdp_tx_queue_idx;
 #endif
 	struct ip_socket *t_dst_cache;
 	int t_dst_cache_size;
@@ -294,9 +291,9 @@ struct thread {
 	int t_concurrency;
 	uint64_t t_tsc;
 	uint64_t t_time;
-	uint32_t t_tcp_now; /* for RFC 1323 timestamps */
+	uint32_t t_tcp_now; // for RFC 1323 timestamps
 	uint64_t t_tcp_nowage;
-	uint64_t t_tcp_twtimo;  /* max seg lifetime (hah!) */
+	uint64_t t_tcp_twtimo;  // max seg lifetime (hah!)
 	uint64_t t_tcp_fintimo;
 	u_char t_eth_laddr[6];
 	u_char t_eth_faddr[6];
@@ -360,12 +357,12 @@ void set_pcap_ops(struct thread *);
 #endif
 
 void io_init(const char *);
-bool io_is_tx_throttled();
+bool io_is_tx_throttled(void);
 void io_init_tx_packet(struct packet *);
 void io_deinit_tx_packet(struct packet *);
 bool io_tx_packet(struct packet *);
-void io_tx();
-void io_rx();
+void io_tx(void);
+void io_rx(int);
 
 int multiplexer_add(int);
 void multiplexer_pollout(int);
@@ -381,6 +378,6 @@ void ifaddr_free_ephemeral_port(struct if_addr *, uint16_t);
 int alloc_ephemeral_port(uint32_t *, uint16_t *);
 void free_ephemeral_port(uint32_t, uint16_t);
 
-uint32_t select_faddr();
+uint32_t select_faddr(void);
 
 #endif // CON_GEN__SUBR_H

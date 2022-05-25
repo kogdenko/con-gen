@@ -60,7 +60,7 @@ cg_pcap_init(const char *ifname)
 }
 
 bool
-pcap_is_tx_throttled()
+pcap_is_tx_throttled(void)
 {
 	return multiplexer_get_events(0) & POLLOUT;
 }
@@ -86,7 +86,7 @@ pcap_tx_packet(struct packet *pkt)
 }
 
 void
-pcap_rx()
+pcap_rx(int queue_id)
 {
 	int i, rc;
 	const u_char *pkt_dat;

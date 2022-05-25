@@ -44,14 +44,14 @@ int n_threads;
 __thread struct thread *current;
 
 void bsd_eth_in(void *, int);
-void bsd_flush();
+void bsd_flush(void);
 void bsd_server_listen(int);
-void bsd_client_connect();
+void bsd_client_connect(void);
 
 void toy_eth_in(void *, int);
-void toy_flush();
+void toy_flush(void);
 void toy_server_listen(int);
-void toy_client_connect();
+void toy_client_connect(void);
 
 static const char *
 norm2(char *buf, double val, char *fmt, int normalize)
@@ -86,7 +86,7 @@ union tsc {
 };
 
 static uint64_t
-rdtsc()
+rdtsc(void)
 {
 	union tsc tsc;
 
@@ -208,7 +208,7 @@ print_report_diffs(struct report_data *new, struct report_data *old)
 }
 
 static void
-print_report()
+print_report(void)
 {
 	int i;
 	static int n;
@@ -252,7 +252,7 @@ print_report()
 }
 
 static void
-quit()
+quit(void)
 {
 	int i;
 
@@ -366,7 +366,7 @@ main_process_req(int fd, FILE *out)
 }
 
 static void
-main_routine()
+main_routine(void)
 {
 	int rc, fd, fd2, pid, n_pfds;
 	FILE *file;
@@ -429,6 +429,8 @@ multiplexer_add(int fd)
 		panic(0, "Too many RSS queues");
 	current->t_pfd_num++;
 	current->t_pfds[index].fd = fd;
+	current->t_pfds[index].events = POLLIN;
+	current->t_pfds[index].revents = 0;
 	return index;
 }
 
@@ -447,14 +449,16 @@ multiplexer_get_events(int index)
 }
 
 void
-thread_process()
+thread_process(void)
 {
-	int i, n;
+	int i;
 	uint64_t t, age;
 	struct packet *pkt;
+	struct pollfd pfds[ARRAY_SIZE(current->t_pfds)];
 
 	io_tx();
-	n = poll(current->t_pfds, current->t_pfd_num, 10);
+	memcpy(pfds, current->t_pfds, current->t_pfd_num * sizeof(struct pollfd));
+	poll(pfds, current->t_pfd_num, 10);
 	t = rdtsc();
 	if (t > current->t_tsc) {
 		current->t_time = 1000llu * t / tsc_mhz;
@@ -465,18 +469,15 @@ thread_process()
 		}
 	}
 	current->t_tsc = t;
-	for (i = 0; i < n; ++i) {
-		//if (current->t_pfds[i].revents) {
-		//	dbg("%d: revents=%x", i, current->t_pfds[i].revents);
-		//}
-		if (current->t_pfds[i].revents & POLLIN) {
-		//	dbg("POLLIN %d", i);
+	for (i = 0; i < current->t_pfd_num; ++i) {
+		// FIXME: XDP: POLLIN sometimes have not been raise on fd with pending rx packets
+		// Simply reproduced in multiqueue mode
+		if (current->t_transport == TRANSPORT_XDP || (pfds[i].revents & POLLIN)) {
 			spinlock_lock(&current->t_lock);
 			io_rx(i);
 			spinlock_unlock(&current->t_lock);
 		}
-		if (current->t_pfds[i].revents & POLLOUT) {
-		//	dbg("POLLOUT %d", i);
+		if (pfds[i].revents & POLLOUT) {
 			current->t_pfds[i].events &= ~POLLOUT;
 		}
 	}
@@ -536,7 +537,7 @@ thread_routine(void *udata)
 }
 
 static void
-usage()
+usage(void)
 {
 	printf(
 	"Usage: con-gen [options] { -i interface }\n"
@@ -640,7 +641,7 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 	t->t_rss_queue_id = RSS_QUEUE_ID_NONE;
 	if (pt == NULL) {
 		t->t_toy = 0;
-		t->t_transport = 0;
+		t->t_transport = TRANSPORT_DEFAULT;
 		t->t_dst_cache_size = 100000;
 		t->t_ip_do_incksum = 2;
 		t->t_ip_do_outcksum = 2;
@@ -851,7 +852,7 @@ err:
 }
 
 static void
-sleep_compute_hz()
+sleep_compute_hz(void)
 {
 	uint64_t t, t2, tsc_hz;
 

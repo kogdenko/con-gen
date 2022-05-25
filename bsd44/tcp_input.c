@@ -147,8 +147,8 @@ findpcb:
 	again = 0;
 	datlen = 0;
 	so = in_pcblookup(IPPROTO_TCP,
-	                  ip->ip_dst.s_addr, th->th_dport,
-	                  ip->ip_src.s_addr, th->th_sport);
+		ip->ip_dst.s_addr, th->th_dport,
+		ip->ip_src.s_addr, th->th_sport);
 
 	/*
 	 * If the state is CLOSED (i.e., TCB does not exist) then
@@ -216,7 +216,7 @@ findpcb:
 		/* Compute proper scaling value from buffer space
 		 */
 		while (tp->request_r_scale < TCP_MAX_WINSHIFT &&
-		       TCP_MAXWIN << tp->request_r_scale < so->so_rcv_hiwat) {
+				TCP_MAXWIN << tp->request_r_scale < so->so_rcv_hiwat) {
 			tp->request_r_scale++;
 		}
 	}
@@ -233,8 +233,7 @@ findpcb:
 	 * else do it below (after getting remote address).
 	 */
 	if (optp != NULL && tp->t_state != TCPS_LISTEN) {
-		tcp_dooptions(tp, optp, optlen, th,
-		              &ts_present, &ts_val, &ts_ecr);
+		tcp_dooptions(tp, optp, optlen, th, &ts_present, &ts_val, &ts_ecr);
 	}
 
 
@@ -276,13 +275,12 @@ findpcb:
 		 * in_broadcast() should never return true on a received
 		 * packet with M_BCAST not set.
 		 */
-		if ((eth_flags & (M_MCAST|M_BCAST)) ||
-		    IN_MULTICAST(ip->ip_dst.s_addr)) {
+		/*if ((eth_flags & (M_MCAST|M_BCAST)) || IN_MULTICAST(ip->ip_dst.s_addr)) {
 			goto drop;
-		}
+		}*/
 		if (optp != NULL) {
 			tcp_dooptions(tp, optp, optlen, th,
-			              &ts_present, &ts_val, &ts_ecr);
+				&ts_present, &ts_val, &ts_ecr);
 		}
 		tcp_sendseqinit(tp, h);
 		tcp_rcvseqinit(tp, th->th_seq);
@@ -917,10 +915,10 @@ dropwithreset:
 	 * Make ACK acceptable to originator of segment.
 	 * Don't bother to respond if destination was broadcast/multicast.
 	 */
-	if ((flags & TH_RST) || (eth_flags & (M_MCAST|M_BCAST)) ||
+	/*if ((flags & TH_RST) || (eth_flags & (M_MCAST|M_BCAST)) ||
 	    IN_MULTICAST(ip->ip_dst.s_addr)) {
 		goto drop;
-	}
+	}*/
 	if (flags & TH_ACK) {
 		tcp_respond(NULL, ip, th, 0, th->th_ack, TH_RST);
 	} else {

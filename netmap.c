@@ -49,7 +49,7 @@ netmap_init(const char *ifname)
 }
 
 bool
-netmap_is_tx_throttled()
+netmap_is_tx_throttled(void)
 {
 	return not_empty_txr(NULL) == NULL;
 }
@@ -90,7 +90,7 @@ netmap_tx_packet(struct packet *pkt)
 }
 
 void
-netmap_rx()
+netmap_rx(int queue_id)
 {
 	int i, j, n;
 	struct netmap_slot *slot;

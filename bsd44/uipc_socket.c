@@ -37,7 +37,7 @@
 #include "../gbtcp/list.h"
 
 static struct socket *
-somalloc()
+somalloc(void)
 {
 	struct socket *so;
 
