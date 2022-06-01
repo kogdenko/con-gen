@@ -89,26 +89,26 @@ netmap_tx_packet(struct packet *pkt)
 	return true;
 }
 
-void
+int
 netmap_rx(int queue_id)
 {
-	int i, j, n;
+	int i, j, n, accum;
 	struct netmap_slot *slot;
 	struct netmap_ring *rxr;
 
+	accum = 0;
 	for (i = current->t_nmd->first_rx_ring; i <= current->t_nmd->last_rx_ring; ++i) {
 		rxr = NETMAP_RXRING(current->t_nmd->nifp, i);
 		n = nm_ring_space(rxr);
-		if (n > current->t_burst_size) {
-			n = current->t_burst_size;
-		}
 		for (j = 0; j < n; ++j) {
 			DEV_PREFETCH(rxr);
 			slot = rxr->slot + rxr->cur;
 			(*current->t_rx_op)(NETMAP_BUF(rxr, slot->buf_idx) , slot->len);
 			rxr->head = rxr->cur = nm_ring_next(rxr, rxr->cur);
 		}
+		accum += n;
 	}
+	return accum;
 }
 
 void

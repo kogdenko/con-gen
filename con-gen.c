@@ -454,11 +454,14 @@ thread_process(void)
 	int i;
 	uint64_t t, age;
 	struct packet *pkt;
+	struct timespec to;
 	struct pollfd pfds[ARRAY_SIZE(current->t_pfds)];
 
 	io_tx();
 	memcpy(pfds, current->t_pfds, current->t_pfd_num * sizeof(struct pollfd));
-	poll(pfds, current->t_pfd_num, 10);
+	to.tv_sec = 0;
+	to.tv_nsec = 20;
+	ppoll(pfds, current->t_pfd_num, &to, NULL);
 	t = rdtsc();
 	if (t > current->t_tsc) {
 		current->t_time = 1000llu * t / tsc_mhz;
@@ -470,9 +473,7 @@ thread_process(void)
 	}
 	current->t_tsc = t;
 	for (i = 0; i < current->t_pfd_num; ++i) {
-		// FIXME: XDP: POLLIN sometimes have not been raise on fd with pending rx packets
-		// Simply reproduced in multiqueue mode
-		if (current->t_transport == TRANSPORT_XDP || (pfds[i].revents & POLLIN)) {
+		if (pfds[i].revents & POLLIN) {
 			spinlock_lock(&current->t_lock);
 			io_rx(i);
 			spinlock_unlock(&current->t_lock);
@@ -554,7 +555,6 @@ usage(void)
 	"\t-c {num}: Number of parallel connections\n"
 	"\t-a {cpu-id}: Set CPU affinity\n"
 	"\t-n {num}: Number of connections of con-gen (0 meaning infinite)\n"
-	"\t-b {num}: Burst size\n"
 	"\t-N: Do not normalize units (i.e., use bps, pps instead of Mbps, Kpps, etc.).\n"
 	"\t-L: Operate in server mode\n"
 	"\t--so-debug: Enable SO_DEBUG option on all sockets\n"
@@ -652,7 +652,6 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 		t->t_tcp_fintimo = 60 * NANOSECONDS_SECOND;
 		t->t_port = htons(80);
 		t->t_mtu = 522;
-		t->t_burst_size = 256;
 		t->t_concurrency = 1;
 		ether_scanf(t->t_eth_laddr, "00:00:00:00:00:00");
 		ether_scanf(t->t_eth_faddr, "ff:ff:ff:ff:ff:ff");
@@ -678,7 +677,6 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 		t->t_nflag = pt->t_nflag;
 		t->t_port = pt->t_port;
 		t->t_mtu = pt->t_mtu;
-		t->t_burst_size = pt->t_burst_size;
 		t->t_concurrency = pt->t_concurrency;
 		memcpy(t->t_eth_laddr, pt->t_eth_laddr, 6);
 		memcpy(t->t_eth_faddr, pt->t_eth_faddr, 6);
@@ -691,7 +689,7 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 	}
 	ifname = NULL;
 	while ((opt = getopt_long(argc, argv,
-			"hvi:s:d:S:D:a:n:b:c:p:NL",
+			"hvi:s:d:S:D:a:n:c:p:NL",
 			long_options, &option_index)) != -1) {
 		optval = optarg ? strtoll(optarg, NULL, 10) : 0;
 		switch (opt) {
@@ -797,12 +795,6 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 			break;
 		case 'n':
 			t->t_nflag = optval;
-			break;
-		case 'b':
-			t->t_burst_size = strtoul(optarg, NULL, 10);
-			if (!t->t_burst_size) {
-				goto err;
-			}
 			break;
 		case 'c':
 			t->t_concurrency = strtoul(optarg, NULL, 10);

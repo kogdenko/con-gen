@@ -85,21 +85,24 @@ pcap_tx_packet(struct packet *pkt)
 	}
 }
 
-void
+int
 pcap_rx(int queue_id)
 {
-	int i, rc;
+	int n, rc;
 	const u_char *pkt_dat;
 	struct pcap_pkthdr *pkt_hdr;
 
-	for (i = 0; i < current->t_burst_size; ++i) {
+	n = 0;
+	for (;;) {
 		rc = pcap_next_ex(current->t_pcap, &pkt_hdr, &pkt_dat);
 		if (rc == 1) {
 			(*current->t_rx_op)((void *)pkt_dat, pkt_hdr->caplen);
+			n++;
 		} else {
 			break;
 		}
 	}
+	return n;
 }
 
 void

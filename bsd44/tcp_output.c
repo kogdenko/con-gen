@@ -313,9 +313,9 @@ send:
 	 * and our peer have sent timestamps in our SYN's.
  	 */
  	if ((tp->t_flags & (TF_REQ_TSTMP|TF_NOOPT)) == TF_REQ_TSTMP &&
- 	     (flags & TH_RST) == 0 &&
- 	    ((flags & (TH_SYN|TH_ACK)) == TH_SYN ||
-	     (tp->t_flags & TF_RCVD_TSTMP))) {
+			(flags & TH_RST) == 0 &&
+			((flags & (TH_SYN|TH_ACK)) == TH_SYN ||
+			(tp->t_flags & TF_RCVD_TSTMP))) {
 		u_char *optp = opt + optlen;
 		be32_t ts_val, ts_ecr;
 
@@ -363,8 +363,7 @@ send:
 		//	error = ENOBUFS;
 		//	goto err;
 		//}
-		sbcopy(&so->so_snd, off, len,
-		       pkt.pkt.buf + sizeof(struct ether_header) + hdrlen);
+		sbcopy(&so->so_snd, off, len, pkt.pkt.buf + sizeof(struct ether_header) + hdrlen);
 		/*
 		 * If we're sending everything we've got, set PUSH.
 		 * (This will keep happy those implementations which only
@@ -414,7 +413,7 @@ send:
 	 * (retransmit and persist are mutually exclusive...)
 	 */
 	if (len || (flags & (TH_SYN|BSD_TH_FIN)) ||
-	    timer_is_running(tp->t_timer + TCPT_PERSIST)) {
+			timer_is_running(tp->t_timer + TCPT_PERSIST)) {
 		th->th_seq = htonl(tp->snd_nxt);
 	} else {
 		th->th_seq = htonl(tp->snd_max);
@@ -488,8 +487,7 @@ send:
 		 * Initialize shift counter which is used for backoff
 		 * of retransmit time.
 		 */
-		if (!timer_is_running(tp->t_timer + TCPT_REXMT) &&
-		    tp->snd_nxt != tp->snd_una) {
+		if (!timer_is_running(tp->t_timer + TCPT_REXMT) && tp->snd_nxt != tp->snd_una) {
 			tcp_setslowtimer(tp, TCPT_REXMT, tp->t_rxtcur);
 			if (timer_is_running(tp->t_timer + TCPT_PERSIST)) {
 				timer_cancel(tp->t_timer + TCPT_PERSIST);
@@ -501,13 +499,13 @@ send:
 			tp->snd_max = tp->snd_nxt + len;
 		}
 	}
+	ip->ip_len = hdrlen + len;
 	/*
 	 * Trace.
 	 */
 	if (so->so_options & SO_OPTION(SO_DEBUG)) {
 		tcp_trace(TA_OUTPUT, tp->t_state, tp, ip, th, 0);
 	}
-	ip->ip_len = hdrlen + len;
 	ip_output(&pkt, ip);
 	counter64_inc(&tcpstat.tcps_sndtotal);
 

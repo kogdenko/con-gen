@@ -276,10 +276,10 @@ io_tx_packet(struct packet *pkt)
 	return sent;
 }
 
-void
+int
 io_rx(int queue_id)
 {
-	(*current->t_io_rx_op)(queue_id);
+	return (*current->t_io_rx_op)(queue_id);
 }
 
 void

@@ -52,7 +52,7 @@ ip_output(struct packet *pkt, struct ip *ip)
 	ip->ip_off = IP_DF;
 	ip->ip_id = htons(ip_id++);
 	ip->ip_ttl = IPDEFTTL;
-	ip->ip_tos = 5;
+	ip->ip_tos = 0;
 	ip->ip_hl = sizeof(*ip) >> 2;
 	counter64_inc(&ipstat.ips_localout);
 	assert((u_short)ip->ip_len <= current->t_mtu);

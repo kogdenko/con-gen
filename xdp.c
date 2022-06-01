@@ -65,6 +65,7 @@ get_interface_queue_num(const char *ifname)
 	if (ioctl(fd, SIOCETHTOOL, &req) == -1) {
 		panic(errno, "%s: ioctl(ETHTOOL_GCHANNELS) failed", ifname);
 	}
+	close(fd);
 	return cmd.combined_count + cmd.rx_count;
 }
 
@@ -269,7 +270,7 @@ xdp_tx_packet(struct packet *pkt)
 void
 xdp_tx(void)
 {
-	int i, n;
+	int i, j, n;
 	uint32_t idx;
 	uint64_t addr;
 	struct xdp_queue *q;
@@ -286,7 +287,7 @@ xdp_tx(void)
 			continue;
 		}
 		assert(idx != UINT32_MAX);
-		for (i = 0; i < n; ++i, ++idx) {
+		for (j = 0; j < n; ++j, ++idx) {
 			addr = *xsk_ring_cons__comp_addr(&q->xq_comp, idx);
 			free_frame(q, addr);
 		}
@@ -296,7 +297,7 @@ xdp_tx(void)
 	}
 }
 
-void
+int
 xdp_rx(int queue_id)
 {
 	int i, n, m, rc, len;
@@ -305,16 +306,17 @@ xdp_rx(int queue_id)
 	struct xdp_queue *q;
 
 	q = current->t_xdp_queues + queue_id;
-	n = xsk_ring_cons__peek(&q->xq_rx, current->t_burst_size, &idx_rx);
+	idx_rx = 0;
+	n = xsk_ring_cons__peek(&q->xq_rx, XSK_RING_CONS__DEFAULT_NUM_DESCS, &idx_rx);
 	if (n == 0) {
-		return;
+		return 0;
 	}
-	for (i = 0; i < n; ++i, ++idx_rx) {
-		addr = xsk_ring_cons__rx_desc(&q->xq_rx, idx_rx)->addr;
+	for (i = 0; i < n; ++i) {
+		addr = xsk_ring_cons__rx_desc(&q->xq_rx, idx_rx + i)->addr;
 		frame = xsk_umem__extract_addr(addr);
 
 		addr = xsk_umem__add_offset_to_addr(addr);
-		len = xsk_ring_cons__rx_desc(&q->xq_rx, idx_rx)->len;
+		len = xsk_ring_cons__rx_desc(&q->xq_rx, idx_rx + i)->len;
 		(*current->t_rx_op)(xsk_umem__get_data(q->xq_buf, addr), len);
 		free_frame(q, frame);
 	}
@@ -334,6 +336,7 @@ xdp_rx(int queue_id)
 		}
 		xsk_ring_prod__submit(&q->xq_fill, m);
 	}
+	return n;
 }
 
 void

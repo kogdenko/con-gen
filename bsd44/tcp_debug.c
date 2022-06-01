@@ -73,8 +73,7 @@ static const char *tcptimers[] = {
  * Tcp debug routines
  */
 void
-tcp_trace(int act, int ostate, struct tcpcb *tp, struct ip *ip,
-	struct tcp_hdr *th, int req)
+tcp_trace(int act, int ostate, struct tcpcb *tp, struct ip *ip,	struct tcp_hdr *th, int req)
 {
 	char lb[INET_ADDRSTRLEN];
 	char fb[INET_ADDRSTRLEN];
@@ -91,8 +90,6 @@ tcp_trace(int act, int ostate, struct tcpcb *tp, struct ip *ip,
 			inet_ntop(AF_INET, &so->so_base.ipso_faddr, fb, sizeof(fb)),
 			ntohs(so->so_base.ipso_fport),
 			tcpstates[ostate]);
-		if (th != NULL)
-			printf("{%u} ", ntohs(th->th_sport));
 	} else {
 		printf("[?] ");
 	}
@@ -109,10 +106,7 @@ tcp_trace(int act, int ostate, struct tcpcb *tp, struct ip *ip,
 		if (act == TA_OUTPUT) {
 			seq = ntohl(seq);
 			ack = ntohl(ack);
-			len = ntohs((u_short)len);
-		}
-		if (act == TA_OUTPUT) {
-			len -= sizeof(struct tcp_hdr);
+			len -= (sizeof(*ip) + (th->th_off << 2));
 		}
 		if (len) {
 			printf("[%u..%u)", seq, seq + len);
@@ -153,7 +147,7 @@ tcp_trace(int act, int ostate, struct tcpcb *tp, struct ip *ip,
 	if (tp == NULL) {
 		return;
 	}
-	printf("\trcv_(nxt)=(%u) snd_(una,nxt,max)=(%u,%u,%u)\n",
+	printf("\trcv_nxt=%u snd_(una,nxt,max)=(%u,%u,%u)\n",
 		tp->rcv_nxt, tp->snd_una, tp->snd_nxt, tp->snd_max);
 	printf("\tsnd_(wl1,wl2,wnd) (%u,%u,%lu)\n",
 		tp->snd_wl1, tp->snd_wl2, tp->snd_wnd);

@@ -247,7 +247,7 @@ struct thread {
 	void (*t_io_deinit_tx_packet_op)(struct packet *);
 	bool (*t_io_tx_packet_op)(struct packet *);
 	void (*t_io_tx_op)(void);
-	void (*t_io_rx_op)(int);
+	int (*t_io_rx_op)(int);
 	u_char t_id;
 	u_char t_toy;
 	u_char t_done;
@@ -263,7 +263,6 @@ struct thread {
 	u_int t_nflag;
 	be16_t t_port;
 	u_short t_mtu;
-	u_short t_burst_size;
 	u_char t_rss_queue_num;
 	u_char t_rss_queue_id;
 	u_char t_rss_key[RSS_KEY_SIZE];
@@ -362,7 +361,7 @@ void io_init_tx_packet(struct packet *);
 void io_deinit_tx_packet(struct packet *);
 bool io_tx_packet(struct packet *);
 void io_tx(void);
-void io_rx(int);
+int io_rx(int);
 
 int multiplexer_add(int);
 void multiplexer_pollout(int);
