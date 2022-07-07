@@ -192,19 +192,19 @@ print_report_diffs(struct report_data *new, struct report_data *old)
 	norm(pps_b, pps, Nflag);
 	norm(bps_b, bps, Nflag);
 	norm(rxmtps_b, rxmtps, Nflag);
-	printf("%-10s%-10s", cps_b, ipps_b);
+	printf("%-12s%-12s", cps_b, ipps_b);
 	if (report_bytes_flag) {
-		printf("%-10s", ibps_b);
+		printf("%-12s", ibps_b);
 	}
 	printf("%-10s", opps_b);
 	if (report_bytes_flag) {
-		printf("%-10s", obps_b);
+		printf("%-12s", obps_b);
 	}
 	printf("%-10s", pps_b);
 	if (report_bytes_flag) {
-		printf("%-10s", bps_b);
+		printf("%-12s", bps_b);
 	}
-	printf("%-10s", rxmtps_b);
+	printf("%-12s", rxmtps_b);
 }
 
 static void
