@@ -60,11 +60,9 @@ else:
 
 if GetOption('debug_build'):
     cflags.append('-O0')
-    suffix = "-d"
 else:
     cflags.append('-O2')
     cflags.append('-DNDEBUG')
-    suffix=""
 
 # NOTE: gcc only. Need for timers
 cflags.append('-falign-functions=16')
@@ -98,6 +96,6 @@ if not have_transport:
 env.Append(CFLAGS = ' '.join(cflags))
 env.Append(LINKFLAGS = ' '.join(ldflags))
 
-con_gen = env.Program('build/con-gen%s' % suffix, srcs)
+con_gen = env.Program('con-gen', srcs)
 env.Install('/usr/local/bin', con_gen)
 env.Alias('install', '/usr/local/bin')

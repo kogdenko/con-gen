@@ -765,15 +765,13 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 			ifname = optarg;
 			break;
 		case 's':
-			rc = scan_ip_range(&t->t_ip_laddr_min,
-				&t->t_ip_laddr_max, optarg);
+			rc = scan_ip_range(&t->t_ip_laddr_min, &t->t_ip_laddr_max, optarg);
 			if (rc) {
 				goto err;
 			}
 			break;
 		case 'd':
-			rc = scan_ip_range(&t->t_ip_faddr_min,
-				&t->t_ip_faddr_max, optarg);
+			rc = scan_ip_range(&t->t_ip_faddr_min, &t->t_ip_faddr_max, optarg);
 			if (rc) {
 				goto err;
 			}

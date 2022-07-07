@@ -3,6 +3,8 @@
 
 #include <sys/resource.h>
 
+static struct spinlock panic_lock;
+
 int verbose;
 struct udpstat udpstat;
 struct tcpstat tcpstat;
@@ -169,7 +171,10 @@ panic3(const char *file, int line, int errnum, const char *format, ...)
 {
 	va_list ap;
 
+	spinlock_lock(&panic_lock);
+#ifndef NDEBUG
 	fprintf(stderr, "%s:%d: ", file, line);
+#endif // NDEBUG
 	va_start(ap, format);
 	vfprintf(stderr, format, ap);
 	va_end(ap);
@@ -177,8 +182,13 @@ panic3(const char *file, int line, int errnum, const char *format, ...)
 		fprintf(stderr, " (%d:%s)", errnum, strerror(errnum));
 	}
 	fprintf(stderr, "\n");
-	print_stats(stdout, 0);
+	print_stats(stderr, 0);
+#ifndef NDEBUG
+	abort();
+#else
 	exit(1);
+#endif
+	spinlock_unlock(&panic_lock);
 }
 
 static struct packet *
