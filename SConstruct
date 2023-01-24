@@ -1,5 +1,15 @@
 import platform
 
+def check_xdp(conf):
+    if not conf.CheckLib('bpf'):
+        return False
+    if not conf.CheckLib('xdp'):
+        return False
+    if not conf.CheckHeader('xdp/xsk.h'):
+        return False
+    return True
+
+
 AddOption('--debug-build', action = 'store_true',
     help = 'Debug build', default = False)
 AddOption("--without-netmap", action = 'store_true',
@@ -78,9 +88,10 @@ if not GetOption('without_netmap'):
         srcs.append('netmap.c')
         have_transport = True
 if platform.system() == "Linux" and not GetOption('without_xdp'):
-    if (conf.CheckHeader('linux/bpf.h') and conf.CheckLib('bpf')):
+    if (check_xdp(conf)):
         cflags.append('-DHAVE_XDP')
         ldflags.append('-lbpf')
+        ldflags.append('-lxdp')
         srcs.append('xdp.c')
         have_transport = True
 if not GetOption('without_pcap'):

@@ -1,8 +1,8 @@
 #include <linux/if_xdp.h>
 #include <linux/if_link.h>
 #include <linux/bpf.h>
-#include <bpf/libbpf.h>
-#include <bpf/xsk.h>
+//#include <bpf/libbpf.h>
+#include <xdp/xsk.h>
 #include "subr.h"
 #include "global.h"
 
@@ -142,9 +142,9 @@ xdp_init(const char *ifname_full)
 	} else {
 		current->t_xdp_queue_num = current->t_rss_queue_num;
 	}
-	rc = bpf_get_link_xdp_id(ifindex, &current->t_xdp_prog_id, 0);
+	rc = bpf_xdp_query_id(ifindex, 0, &current->t_xdp_prog_id);
 	if (rc < 0) {
-		panic(-rc, "bpf_get_link_xdp_id() failed");
+		panic(-rc, "bpf_xdp_query_id() failed");
 	}
 	current->t_xdp_queues = xmalloc(current->t_xdp_queue_num * sizeof(struct xdp_queue));
 	if (current->t_rss_queue_id != RSS_QUEUE_ID_NONE) {
