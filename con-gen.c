@@ -46,7 +46,7 @@ __thread struct thread *current;
 void bsd_eth_in(void *, int);
 void bsd_flush(void);
 void bsd_server_listen(int);
-void bsd_client_connect(void);
+void bsd_client_connect(int proto);
 
 void toy_eth_in(void *, int);
 void toy_flush(void);
@@ -58,11 +58,13 @@ norm2(char *buf, double val, char *fmt, int normalize)
 {
 	char *units[] = { "", "k", "m", "g", "t" };
 	u_int i;
-	if (normalize)
-		for (i = 0; val >=1000 && i < sizeof(units)/sizeof(char *) - 1; i++)
+	if (normalize) {
+		for (i = 0; val >=1000 && i < sizeof(units)/sizeof(char *) - 1; i++) {
 			val /= 1000;
-	else
-		i=0;
+		}
+	} else {
+		i = 0;
+	}
 	sprintf(buf, fmt, val, units[i]);
 	return buf;
 }
@@ -175,7 +177,7 @@ print_report_diffs(struct report_data *new, struct report_data *old)
 	char rxmtps_b[40];
 
 	dt = (new->rd_tv.tv_sec - old->rd_tv.tv_sec) +
-		(new->rd_tv.tv_usec - old->rd_tv.tv_usec) / 1000000.0f;
+			(new->rd_tv.tv_usec - old->rd_tv.tv_usec) / 1000000.0f;
 	ipps = (new->rd_ipackets - old->rd_ipackets) / dt;
 	opps = (new->rd_opackets - old->rd_opackets) / dt;
 	ibps = (new->rd_ibytes - old->rd_ibytes) / dt;
@@ -216,19 +218,19 @@ print_report(void)
 	int conns;
 
 	if (n == 0 && print_banner) {
-		printf("%-10s%-10s", "cps", "ipps");
+		printf("%-12s%-12s", "cps", "ipps");
 		if (report_bytes_flag) {
-			printf("%-10s", "ibps");
+			printf("%-12s", "ibps");
 		}
 		printf("%-10s", "opps");
 		if (report_bytes_flag) {
-			printf("%-10s", "obps");
+			printf("%-12s", "obps");
 		}
 		printf("%-10s", "pps");
 		if (report_bytes_flag) {
-			printf("%-10s", "bps");
+			printf("%-12s", "bps");
 		}
-		printf("%-10s", "rxmtps");
+		printf("%-12s", "rxmtps");
 		printf("%s\n", "conns");
 	}
 	conns = 0;
@@ -425,8 +427,9 @@ multiplexer_add(int fd)
 	int index;
 
 	index = current->t_pfd_num;
-	if (index == ARRAY_SIZE(current->t_pfds))
+	if (index == ARRAY_SIZE(current->t_pfds)) {
 		panic(0, "Too many RSS queues");
+	}
 	current->t_pfd_num++;
 	current->t_pfds[index].fd = fd;
 	current->t_pfds[index].events = POLLIN;
@@ -448,7 +451,7 @@ multiplexer_get_events(int index)
 	return current->t_pfds[index].events;
 }
 
-void
+static void
 thread_process(void)
 {
 	int i;
@@ -483,11 +486,12 @@ thread_process(void)
 		}
 	}
 	check_timers();
-	while (!io_is_tx_throttled() && !dlist_is_empty(&current->t_pkt_pending_head)) {
-		pkt = DLIST_FIRST(&current->t_pkt_pending_head,	struct packet, pkt.list);
+	while (!io_is_tx_throttled() && !dlist_is_empty(&current->t_pending_head)) {
+		pkt = DLIST_FIRST(&current->t_pending_head, struct packet, pkt.list);
 		DLIST_REMOVE(pkt, pkt.list);
+		current->t_n_pending--;
 		if (!io_tx_packet(pkt)) {
-			DLIST_INSERT_HEAD(&current->t_pkt_head, pkt, pkt.list);	
+			DLIST_INSERT_HEAD(&current->t_available_head, pkt, pkt.list);
 		}
 	}
 	if (current->t_toy) {
@@ -500,41 +504,49 @@ thread_process(void)
 static void *
 thread_routine(void *udata)
 {
-	int ipproto;
+	int proto;
 
 	current = udata;
+
 	if (current->t_affinity >= 0) {
 		set_affinity(current->t_affinity);
 	}
+
 	if (!current->t_Lflag) {
 		if (current->t_dst_cache_size < 2 * current->t_concurrency) {
 			current->t_dst_cache_size = 2 * current->t_concurrency;
 		}
 		thread_init_dst_cache(current);
 	}
+
 	current->t_tsc = rdtsc();
 	current->t_time = 1000 * current->t_tsc / tsc_mhz;
 	current->t_tcp_now = 1;
 	current->t_tcp_nowage = current->t_time;
+
 	init_timers();
-	if (current->t_Lflag || current->t_udp) {
-		ipproto = current->t_udp ? IPPROTO_UDP: IPPROTO_TCP;
+
+	proto = current->t_udp ? IPPROTO_UDP : IPPROTO_TCP;
+
+	if (current->t_Lflag) {
 		if (current->t_toy) {
-			toy_server_listen(ipproto);
+			toy_server_listen(proto);
 		} else {
-			bsd_server_listen(ipproto);
+			bsd_server_listen(proto);
 		}
 	} else {
 		if (current->t_toy) {
 			toy_client_connect();
 		} else {
-			bsd_client_connect();
+			bsd_client_connect(proto);
 		}
 	}
+
 	while (!current->t_done) {
 		thread_process();
 	}
-	return 0;
+
+	return NULL;
 }
 
 static void
@@ -545,46 +557,46 @@ usage(void)
 	"\n"
 	"Options:\n"
 	"\t-h,--help: Print this help\n"
-	"\t-v,--verbose: Be verbose\n"
+	"\t-v,--verbose:  Be verbose\n"
 	"\t-i {interface}:  To operate on\n"
 	"\t-p {port}:  Server port (default: 80)\n"
-	"\t-s {ip[-ip]]}: Source ip range\n"
-	"\t-d {ip[:port[-ip:port]]): Destination ip range\n"
-	"\t-S {hwaddr}: Source ethernet address\n"
-	"\t-D {hwaddr}: Destination ethernet address\n"
-	"\t-c {num}: Number of parallel connections\n"
-	"\t-a {cpu-id}: Set CPU affinity\n"
-	"\t-n {num}: Number of connections of con-gen (0 meaning infinite)\n"
-	"\t-N: Do not normalize units (i.e., use bps, pps instead of Mbps, Kpps, etc.).\n"
-	"\t-L: Operate in server mode\n"
-	"\t--so-debug: Enable SO_DEBUG option on all sockets\n"
+	"\t-s {ip[-ip]}:  Source ip range\n"
+	"\t-d {ip[-ip]):  Destination ip range\n"
+	"\t-S {hwaddr}:  Source ethernet address\n"
+	"\t-D {hwaddr}:  Destination ethernet address\n"
+	"\t-c {num}:  Number of parallel connections\n"
+	"\t-a {cpu-id}:  Set CPU affinity\n"
+	"\t-n {num}:  Number of connections of con-gen (0 meaning infinite)\n"
+	"\t-N:  Do not normalize units (i.e., use bps, pps instead of Mbps, Kpps, etc.).\n"
+	"\t-L:  Operate in server mode\n"
+	"\t--so-debug:  Enable SO_DEBUG option on all sockets\n"
 #ifdef HAVE_NETMAP
-	"\t--netmap: Use netmap transport\n"
+	"\t--netmap:  Use netmap transport\n"
 #endif
 #ifdef HAVE_PCAP
-	"\t--pcap: Use libpcap transport\n"
+	"\t--pcap:  Use libpcap transport\n"
 #endif
 #ifdef HAVE_XDP
-	"\t--xdp: Use XDP transport\n"
+	"\t--xdp:  Use XDP transport\n"
 #endif
-	"\t--udp: Use UDP instead of TCP\n"
-	"\t--toy: Use toy tcp/ip stack instead of bsd4.4 (it is a bit faster)\n"
-	"\t--dst-cache: Number of precomputed connect tuples (default: 100000)\n"
-	"\t--ip-in-cksum {0|1}: On/Off IP input checksum calculation\n"
-	"\t--ip-out-cksum {0|1}: On/Off IP output checksum calculation\n"
-	"\t--tcp-in-cksum {0|1}: On/Off TCP input checksum calculation\n"
+	"\t--udp:  Use UDP instead of TCP\n"
+	"\t--toy:  Use \"toy\" tcp/ip stack instead of bsd4.4 (it is a bit faster)\n"
+	"\t--dst-cache:  Number of precomputed connect tuples (default: 100000)\n"
+	"\t--ip-in-cksum {0|1}:  On/Off IP input checksum calculation\n"
+	"\t--ip-out-cksum {0|1}:  On/Off IP output checksum calculation\n"
+	"\t--tcp-in-cksum {0|1}:  On/Off TCP input checksum calculation\n"
 	"\t--tcp-out-cksum {0|1}: On/Off TCP output checksum calculation\n"
-	"\t--in-cksum {0|1}: On/Off input checksum calculation\n"
-	"\t--out-cksum {0|1}: On/Off output checksum calculation\n"
-	"\t--cksum {0|1}: On/Off checksum calculation\n"
-	"\t--tcp-wscale {0|1}: On/Off wscale TCP option\n"
-	"\t--tcp-timestamps {0|1}: On/Off timestamp TCP option\n"
-	"\t--tcp-fin-timeout {seconds}: Specify FIN timeout\n"
-	"\t--tcp-timewait-timeout {seconds}: Specify TIME_WAIT timeout\n"
-	"\t--report-bytes {0|1}: On/Off byte statistic in report\n"
-	"\t--reports {num}: Number of reports of con-gen (0 meaning infinite)\n"
-	"\t--print-banner {0|1}: On/Off printing report banner every 20 seconds\n"
-	"\t--print-statistics {0|1}: On/Off printing statistics at the end of execution\n"
+	"\t--in-cksum {0|1}:  On/Off input checksum calculation\n"
+	"\t--out-cksum {0|1}:  On/Off output checksum calculation\n"
+	"\t--cksum {0|1}:  On/Off checksum calculation\n"
+	"\t--tcp-wscale {0|1}:  On/Off wscale TCP option\n"
+	"\t--tcp-timestamps {0|1}:  On/Off timestamp TCP option\n"
+	"\t--tcp-fin-timeout {seconds}:  Specify FIN timeout\n"
+	"\t--tcp-timewait-timeout {seconds}:  Specify TIME_WAIT timeout\n"
+	"\t--report-bytes {0|1}:  On/Off byte statistic in report\n"
+	"\t--reports {num}:  Number of reports of con-gen (0 meaning infinite)\n"
+	"\t--print-banner {0|1}:  On/Off printing report banner every 20 seconds\n"
+	"\t--print-statistics {0|1}:  On/Off printing statistics at the end of execution\n"
 	);
 }
 
@@ -622,6 +634,13 @@ static struct option long_options[] = {
 	{ 0, 0, 0, 0 }
 };
 
+static void
+udp_in(void *data, int len)
+{
+	counter64_inc(&if_ipackets);
+	counter64_add(&if_ibytes, len);
+}
+
 static int
 thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char **argv)
 {
@@ -633,8 +652,8 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 	spinlock_init(&t->t_lock);
 	t->t_id = t - threads;
 	t->t_tcp_rttdflt = TCPTV_SRTTDFLT / PR_SLOWHZ;
-	dlist_init(&t->t_pkt_head);
-	dlist_init(&t->t_pkt_pending_head);
+	dlist_init(&t->t_available_head);
+	dlist_init(&t->t_pending_head);
 	dlist_init(&t->t_so_txq);
 	dlist_init(&t->t_so_pool);
 	dlist_init(&t->t_sob_pool);
@@ -655,10 +674,8 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 		t->t_concurrency = 1;
 		ether_scanf(t->t_eth_laddr, "00:00:00:00:00:00");
 		ether_scanf(t->t_eth_faddr, "ff:ff:ff:ff:ff:ff");
-		scan_ip_range(&t->t_ip_laddr_min,
-			&t->t_ip_laddr_max, "10.0.0.1");
-		scan_ip_range(&t->t_ip_faddr_min,
-			&t->t_ip_faddr_max, "10.1.0.1");
+		scan_ip_range(&t->t_ip_laddr_min, &t->t_ip_laddr_max, "10.0.0.1");
+		scan_ip_range(&t->t_ip_faddr_min, &t->t_ip_faddr_max, "10.1.0.1");
 		t->t_affinity = -1;
 	} else {
 		t->t_toy = pt->t_toy;
@@ -706,15 +723,15 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 #ifdef HAVE_NETMAP
 			} else if (!strcmp(optname, "netmap")) {
 				t->t_transport = TRANSPORT_NETMAP;
-#endif
+#endif // HAVE_NETMAP
 #ifdef HAVE_PCAP
 			} else if (!strcmp(optname, "pcap")) {
 				t->t_transport = TRANSPORT_PCAP;
-#endif
+#endif // HAVE_PCAP
 #ifdef HAVE_XDP
 			} else if (!strcmp(optname, "xdp")) {
 				t->t_transport = TRANSPORT_XDP;
-#endif
+#endif // HAVE_XDP
 			} else if (!strcmp(optname, "ip-in-cksum")) {
 				t->t_ip_do_incksum = optval;
 			} else if (!strcmp(optname, "ip-out-cksum")) {
@@ -831,7 +848,13 @@ err:
 		t->t_http = http_request;
 		t->t_http_len = http_request_len;
 	}
-	if (t->t_toy) {
+	if (t->t_udp) {
+		t->t_rx_op = udp_in;
+		if (t->t_toy) {
+			fprintf(stderr, "\"toy\" tcp/ip stack doesn't support UDP\n");
+			return -EINVAL;
+		}
+	} else if (t->t_toy) {
 		t->t_rx_op = toy_eth_in;
 	} else {
 		t->t_rx_op = bsd_eth_in;

@@ -39,14 +39,11 @@
 #include "udp_var.h"
 #include "if_ether.h"
 
-/*
- * UDP protocol implementation.
- * Per RFC 768, August, 1980.
- */
+// UDP protocol implementation.
+// Per RFC 768, August, 1980.
 int udpcksum = 1;
 
 static	void udp_notify(struct socket *, int);
-//static	struct mbuf *udp_saveopt __P((caddr_t, int, int));
 
 void
 udp_init()
@@ -54,9 +51,7 @@ udp_init()
 }
 
 void
-udp_input(struct ip *ip,
-	  int iphlen,
-          int eth_flags)
+udp_input(struct ip *ip, int iphlen, int eth_flags)
 {
 	struct udp_hdr *uh;
 	struct socket *so;
@@ -66,19 +61,15 @@ udp_input(struct ip *ip,
 
 	counter64_inc(&udpstat.udps_ipackets);
 
-	/*
-	 * Get IP and UDP header together in first mbuf.
-	 */
+	// Get IP and UDP header together in first mbuf.
 	if (ip->ip_len < sizeof(struct udp_hdr)) {
 		counter64_inc(&udpstat.udps_hdrops);
 		return;
 	}
 	uh = (struct udp_hdr *)((u_char *)ip + iphlen);
 
-	/*
-	 * Make mbuf data length reflect UDP length.
-	 * If not enough data to reflect UDP length, drop.
-	 */
+	// Make mbuf data length reflect UDP length.
+	// If not enough data to reflect UDP length, drop.
 	len = ntohs((u_short)uh->uh_ulen);
 	if (ip->ip_len != len) {
 		if (len > ip->ip_len) {
@@ -86,15 +77,12 @@ udp_input(struct ip *ip,
 			return;
 		}
 	}
-	/*
-	 * Save a copy of the IP header in case we want restore it
-	 * for sending an ICMP error message in response.
-	 */
+
+	// Save a copy of the IP header in case we want restore it
+	// for sending an ICMP error message in response.
 	save_ip = *ip;
 
-	/*
-	 * Checksum extended UDP header and data.
-	 */
+	// Checksum extended UDP header and data.
 	if (udpcksum && uh->uh_sum) {
 		uh_sum = uh->uh_sum;
 		uh->uh_sum = 0;
@@ -105,12 +93,9 @@ udp_input(struct ip *ip,
 		}
 	}
 
-	/*
-	 * Locate pcb for datagram.
-	 */
-	so = in_pcblookup(IPPROTO_UDP,
-	                  ip->ip_dst.s_addr, uh->uh_dport,
-	                  ip->ip_src.s_addr, uh->uh_sport);
+	// Locate pcb for datagram.
+	so = in_pcblookup(IPPROTO_UDP, ip->ip_dst.s_addr, uh->uh_dport,
+			ip->ip_src.s_addr, uh->uh_sport);
 	if (so == NULL) {
 		counter64_inc(&udpstat.udps_noport);
 		if (eth_flags & (M_BCAST | M_MCAST)) {
@@ -123,10 +108,8 @@ udp_input(struct ip *ip,
 		return;
 	}
 
-	/*
-	 * Construct sockaddr format source address.
-	 * Stuff source address and datagram in user buffer.
-	 */
+	// Construct sockaddr format source address.
+	// Stuff source address and datagram in user buffer.
 	udp_in.sin_family = AF_INET;
 	udp_in.sin_port = uh->uh_sport;
 	udp_in.sin_addr = ip->ip_src;
@@ -134,10 +117,8 @@ udp_input(struct ip *ip,
 	sowakeup(so, POLLIN, &udp_in, uh + 1, ip->ip_len - sizeof(*uh));
 }
 
-/*
- * Notify a udp user of an asynchronous error;
- * just wake up so that he can collect error status.
- */
+// Notify a udp user of an asynchronous error;
+// just wake up so that he can collect error status.
 static void
 udp_notify(struct socket *so, int e)
 {
@@ -155,12 +136,11 @@ udp_ctlinput(int err, be32_t dst, struct ip *ip)
 	}
 	uh = (struct udp_hdr *)((u_char *)ip + (ip->ip_hl << 2));
 	in_pcbnotify(IPPROTO_UDP, ip->ip_src.s_addr, uh->uh_sport,
-	             dst, uh->uh_dport, err, udp_notify);
+			dst, uh->uh_dport, err, udp_notify);
 }
 
 int
-udp_output(struct socket *so, const void *dat, int len,
-	const struct sockaddr_in *addr)
+udp_output(struct socket *so, const void *dat, int len,	const struct sockaddr_in *addr)
 {
 	int rc;
 	struct ip *ip;
@@ -170,20 +150,19 @@ udp_output(struct socket *so, const void *dat, int len,
 	if (sizeof(*ip) + sizeof(*uh) + len > current->t_mtu) {
 		return -EMSGSIZE;
 	}
+
 //	if (addr != NULL) {
 //		rc = in_pcbconnect(so, addr, &h);
 //		if (rc) {
 //			return rc;	
 //		}
 //	} else {
-		if (so->inp_faddr == INADDR_ANY) {
-			return -ENOTCONN;
-		} else {
-			rc = in_pcbconnect(so, NULL);
-			if (rc) {
-				return rc;	
-			}
+	if (so->inp_faddr == INADDR_ANY) {
+		rc = in_pcbconnect(so, NULL);
+		if (rc) {
+			return rc;
 		}
+	}
 //	}
 	io_init_tx_packet(&pkt);
 	//if (pkt == NULL) {
@@ -204,19 +183,17 @@ udp_output(struct socket *so, const void *dat, int len,
 
 	memcpy(uh + 1, dat, len);
 
-	/*
-	 * Stuff checksum and output datagram.
-	 */
+	// Stuff checksum and output datagram.
 	uh->uh_sum = 0;
 	if (udpcksum) {
 		uh->uh_sum = udp_cksum(ip, sizeof(*uh) + len);
 	}
 	counter64_inc(&udpstat.udps_opackets);
-	ip_output(&pkt, ip);
-	if (addr) {
-		in_pcbdisconnect(so);
-	}
-	return 0;
+	rc = ip_output(&pkt, ip);
+//	if (addr) {
+//		in_pcbdisconnect(so);
+//	}
+	return rc;
 }
 
 int
@@ -232,10 +209,7 @@ udp_connect(struct socket *so)
 }
 
 int
-udp_send(struct socket *so,
-         const void *dat,
-         int datlen,
-         const struct sockaddr_in *addr)
+udp_send(struct socket *so, const void *dat, int datlen, const struct sockaddr_in *addr)
 {
 	return udp_output(so, dat, datlen, addr);
 }

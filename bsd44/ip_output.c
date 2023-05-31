@@ -39,15 +39,15 @@
 
 static uint16_t ip_id;				/* ip packet ctr, for ids */
 
-void
+int
 ip_output(struct packet *pkt, struct ip *ip)
 {
+	int rc;
 	struct ether_header *eh;
 
 	pkt->pkt.len = sizeof(struct ether_header) + ip->ip_len;
-	/*
-	 * Fill in IP header.
-	 */
+	
+	// Fill in IP header.
 	ip->ip_v = IPVERSION;
 	ip->ip_off = IP_DF;
 	ip->ip_id = htons(ip_id++);
@@ -67,5 +67,7 @@ ip_output(struct packet *pkt, struct ip *ip)
  	memcpy(eh->ether_shost, current->t_eth_laddr, sizeof(eh->ether_shost));
  	memcpy(eh->ether_dhost, current->t_eth_faddr, sizeof(eh->ether_dhost));
 
-	io_tx_packet(pkt);
+	rc = io_tx_packet(pkt);
+
+	return rc;
 }

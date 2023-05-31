@@ -109,9 +109,7 @@ ip_input(struct ip *ip, int len, int eth_flags)
 		return;
 	}
 
-	/*
-	 * Check our list of addresses, to see if the packet is for us.
-	 */
+	// Check our list of addresses, to see if the packet is for us.
 	for (ia = current->t_ip_laddr_min;
 	     ia <= current->t_ip_laddr_max; ++ia) {
 		if (ia == ntohl(ip->ip_dst.s_addr)) {
@@ -119,9 +117,7 @@ ip_input(struct ip *ip, int len, int eth_flags)
 		}
 	}
 
-	/*
-	 * Not for us.
-	 */
+	// Not for us.
 	icmp_error(ip, ICMP_UNREACH, ICMP_UNREACH_NET, 0);
 	return;
 

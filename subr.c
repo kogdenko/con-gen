@@ -159,6 +159,7 @@ xmalloc(size_t size)
 {
 	void *ptr;
 
+	//printf("malloc(%zu)\n", size);
 	ptr = malloc(size);
 	if (ptr == NULL) {
 		panic(0, "malloc(%zu) failed", size);
@@ -191,30 +192,29 @@ panic3(const char *file, int line, int errnum, const char *format, ...)
 	spinlock_unlock(&panic_lock);
 }
 
-static struct packet *
-alloc_tx_packet(void)
-{
-	struct packet *pkt;
-
-	if (dlist_is_empty(&current->t_pkt_head)) {
-		pkt = xmalloc(sizeof(*pkt));
-	} else {
-		pkt = DLIST_FIRST(&current->t_pkt_head, struct packet, pkt.list);
-		DLIST_REMOVE(pkt, pkt.list);
-	}
-	return pkt;
-}
-
 void
 add_pending_packet(struct packet *pkt)
 {
 	struct packet *cp;
 
-	cp = alloc_tx_packet();
+	if (dlist_is_empty(&current->t_available_head)) {
+		if (current->t_n_pending < 2048) {
+			cp = xmalloc(sizeof(*pkt));
+		} else {
+			cp = DLIST_FIRST(&current->t_pending_head, struct packet, pkt.list);
+			current->t_n_pending--;
+		}
+	} else {
+		cp = DLIST_FIRST(&current->t_available_head, struct packet, pkt.list);
+		DLIST_REMOVE(cp, pkt.list);
+	}
+
 	memcpy(cp->pkt_body, pkt->pkt.buf, pkt->pkt.len);
 	cp->pkt.len = pkt->pkt.len;
 	cp->pkt.buf = cp->pkt_body;
-	DLIST_INSERT_TAIL(&current->t_pkt_pending_head, cp, pkt.list);
+	DLIST_INSERT_TAIL(&current->t_pending_head, cp, pkt.list);
+	current->t_n_pending++;
+
 }
 
 void
@@ -271,7 +271,7 @@ io_is_tx_throttled()
 	return (*current->t_io_is_tx_throttled_op)();
 }
 
-bool
+int
 io_tx_packet(struct packet *pkt)
 {
 	int len;
@@ -282,8 +282,10 @@ io_tx_packet(struct packet *pkt)
 	if (sent) {
 		counter64_add(&if_obytes, len);
 		counter64_inc(&if_opackets);
+		return 0;
+	} else {
+		return -ENOBUFS;
 	}
-	return sent;
 }
 
 int
@@ -493,10 +495,9 @@ ip_socket_get(struct ip_socket *x, uint32_t h)
 
 	b = htable_bucket_get(&current->t_in_htable, h);
 	DLIST_FOREACH(so, b, ipso_list) {
-		if (so->ipso_laddr == x->ipso_laddr &&
-		    so->ipso_faddr == x->ipso_faddr &&
-		    so->ipso_lport == x->ipso_lport &&
-		    so->ipso_fport == x->ipso_fport) {
+		if (so->ipso_laddr == x->ipso_laddr && so->ipso_faddr == x->ipso_faddr &&
+				so->ipso_lport == x->ipso_lport &&
+				so->ipso_fport == x->ipso_fport) {
 			return so;
 		}
 	}

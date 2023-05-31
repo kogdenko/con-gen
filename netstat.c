@@ -346,16 +346,13 @@ print_udpstat(FILE *file, int verbose)
 		fprintf(file, "\t%"PRIu64" dropped due to no socket\n", noport);
 	}
 	noportbcast = counter64_get(&udpstat.udps_noportbcast);
-	delivered -= noportbcast;
 	if (noportbcast || verbose) {
-		fprintf(file, "\t%"PRIu64" broadcast/multicast datagrams undelivered\n",
-		       noportbcast);
+		fprintf(file, "\t%"PRIu64" broadcast/multicast datagrams undelivered\n", noportbcast);
 	}
 	fullsock = counter64_get(&udpstat.udps_fullsock);
 	delivered -= fullsock;
 	if (fullsock || verbose) {
-		fprintf(file, "\t%"PRIu64" dropped due to full socket buffers\n",
-		       fullsock);
+		fprintf(file, "\t%"PRIu64" dropped due to full socket buffers\n", fullsock);
 	}
 	if (delivered || verbose) {
 		fprintf(file, "\t%"PRIu64" delivered\n", delivered);
@@ -634,7 +631,7 @@ print_sockets(FILE *file)
 	struct print_socket_udata udata;
 
 	fprintf(file, "%-5.5s %-22.22s %-22.22s %-11.11s %-5.5s %s\n",
-	       "Proto", "Local Address", "Foreign Address", "State ", "Idle", "Debug");
+		       "Proto", "Local Address", "Foreign Address", "State ", "Idle", "Debug");
 	for (i = 0; i < n_threads; ++i) {
 		t = threads + i;
 		udata.prsud_thread = t;

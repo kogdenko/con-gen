@@ -12,8 +12,7 @@ not_empty_txr(struct netmap_slot **pslot)
 	if (multiplexer_get_events(0) & POLLOUT) {
 		return NULL;
 	}
-	for (i = current->t_nmd->first_tx_ring;
-			i <= current->t_nmd->last_tx_ring; ++i) {
+	for (i = current->t_nmd->first_tx_ring; i <= current->t_nmd->last_tx_ring; ++i) {
 		txr = NETMAP_TXRING(current->t_nmd->nifp, i);
 		if (!nm_ring_empty(txr)) {
 			if (pslot != NULL) {

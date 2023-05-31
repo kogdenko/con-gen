@@ -1,11 +1,11 @@
 import platform
 
 def check_xdp(conf):
-    if not conf.CheckLib('bpf'):
-        return False
-    if not conf.CheckLib('xdp'):
+    if not conf.CheckHeader('linux/if_xdp.h'):
         return False
     if not conf.CheckHeader('xdp/xsk.h'):
+        return False
+    if not conf.CheckLib('bpf'):
         return False
     return True
 
@@ -53,7 +53,7 @@ cflags = [
     '-finline-functions',
     '-pthread',
     '-fPIC',
-	'-std=gnu99',
+    '-std=gnu99',
     '-Wstrict-prototypes',
 ]
 
@@ -77,7 +77,7 @@ else:
 # NOTE: gcc only. Need for timers
 cflags.append('-falign-functions=16')
 
-env=Environment(CC = 'gcc',
+env=Environment(CC = 'clang',
 )
 
 conf = Configure(env)

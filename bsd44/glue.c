@@ -6,8 +6,20 @@ struct conn {
 	u_char cn_http;
 };
 
-static void client(struct socket *, short, struct sockaddr_in *, void *, int);
-static void server(struct socket *, short, struct sockaddr_in *, void *, int);
+static void udp_client(struct socket *, short, struct sockaddr_in *, void *, int);
+static void tcp_client(struct socket *, short, struct sockaddr_in *, void *, int);
+static void tcp_server(struct socket *, short, struct sockaddr_in *, void *, int);
+
+static void
+udp_send(struct socket *so)
+{
+	int rc;
+
+	do {
+		rc = sosend(so, "xx", 2, NULL, 0);
+	} while (rc == 0);
+	DLIST_INSERT_TAIL(&current->t_so_txq, so, so_txlist);
+}
 
 void
 bsd_flush(void)
@@ -20,26 +32,31 @@ bsd_flush(void)
 		if (io_is_tx_throttled()) {
 			break;
 		}
-		rc = tcp_output_real(sototcpcb(so));
-		if (rc <= 0) {
+		if (so->so_proto == IPPROTO_TCP) {
+			rc = tcp_output_real(sototcpcb(so));
+			if (rc <= 0) {
+				DLIST_REMOVE(so, so_txlist);
+				so->so_state &= ~SS_ISTXPENDING;
+				sofree(so);
+			}
+		} else {
 			DLIST_REMOVE(so, so_txlist);
-			so->so_state &= ~SS_ISTXPENDING;
-			sofree(so);
+			udp_send(so);
 		}
 	}
 }
 
 void
-bsd_client_connect(void)
+bsd_client_connect(int proto)
 {
 	int rc;
 	struct socket *so;
 
-	rc = bsd_socket(IPPROTO_TCP, &so);
+	rc = bsd_socket(proto, &so);
 	if (rc < 0) {
 		panic(-rc, "bsd_socket() failed");
 	}
-	so->so_userfn = client;
+	so->so_userfn = proto == IPPROTO_TCP ? tcp_client : udp_client;
 	so->so_user = 0;
 	if (current->t_so_debug) {
 		sosetopt(so, SO_DEBUG);
@@ -48,18 +65,13 @@ bsd_client_connect(void)
 	if (rc < 0) {
 		panic(-rc, "bsd_connect() failed");
 	}
+	if (proto == IPPROTO_UDP) {
+		udp_send(so);
+	}
 }
 
 static void
-udp_echo(struct socket *so, short events, struct sockaddr_in *addr,
-	void *dat, int len)
-{
-	bsd_sendto(so, dat, len, MSG_NOSIGNAL, addr);
-}
-
-static void
-srv_accept(struct socket *so, short events,
-	struct sockaddr_in *addr, void *dat, int len)
+srv_accept(struct socket *so, short events, struct sockaddr_in *addr, void *dat, int len)
 {
 	int rc;
 	struct socket *aso;
@@ -68,7 +80,7 @@ srv_accept(struct socket *so, short events,
 		rc = bsd_accept(so, &aso);
 		if (rc == 0) {
 			aso->so_user = 0;
-			aso->so_userfn = server;
+			aso->so_userfn = tcp_server;
 		}
 	} while (rc != -EWOULDBLOCK);
 }
@@ -86,7 +98,8 @@ bsd_server_listen(int proto)
 	if (current->t_so_debug) {
 		sosetopt(so, SO_DEBUG);
 	}
-	so->so_userfn = proto == IPPROTO_TCP ? srv_accept : udp_echo;
+	assert(proto == IPPROTO_TCP);
+	so->so_userfn = srv_accept;
 	so->so_user = 0;
 	rc = bsd_bind(so, current->t_port);
 	if (rc) {
@@ -103,6 +116,10 @@ bsd_server_listen(int proto)
 static void
 con_close(void)
 {
+	int proto;
+
+	proto = current->t_udp ? IPPROTO_UDP : IPPROTO_TCP;
+
 	if (current->t_done) {
 		return;
 	}
@@ -115,7 +132,7 @@ con_close(void)
 	}
 	if (!current->t_Lflag) {
 		while (current->t_n_conns < current->t_concurrency) {
-			bsd_client_connect();
+			bsd_client_connect(proto);
 		}
 	}
 }
@@ -127,22 +144,21 @@ conn_sendto(struct socket *so)
 	char lb[INET_ADDRSTRLEN];
 	char fb[INET_ADDRSTRLEN];
 
-	rc = bsd_sendto(so, current->t_http, current->t_http_len,
-		MSG_NOSIGNAL, NULL);
+	rc = bsd_sendto(so, current->t_http, current->t_http_len, MSG_NOSIGNAL, NULL);
 	if (rc == current->t_http_len) {
 		return;
 	} else if (rc > 0) {
 		rc = 0;
 	}
 	panic(-rc, "bsd_sendto() failed, %s:%hu->%s:%hu",
-		inet_ntop(AF_INET, &so->so_base.ipso_laddr, lb, sizeof(lb)),
-		ntohs(so->so_base.ipso_lport),
-		inet_ntop(AF_INET, &so->so_base.ipso_faddr, fb, sizeof(fb)),
-		ntohs(so->so_base.ipso_fport));
+			inet_ntop(AF_INET, &so->so_base.ipso_laddr, lb, sizeof(lb)),
+			ntohs(so->so_base.ipso_lport),
+			inet_ntop(AF_INET, &so->so_base.ipso_faddr, fb, sizeof(fb)),
+			ntohs(so->so_base.ipso_fport));
 }
 
 static void
-client(struct socket *so, short events, struct sockaddr_in *addr, void *dat, int len)
+tcp_client(struct socket *so, short events, struct sockaddr_in *addr, void *dat, int len)
 {
 	int rc;
 	char fb[INET_ADDRSTRLEN];
@@ -184,8 +200,13 @@ client(struct socket *so, short events, struct sockaddr_in *addr, void *dat, int
 }
 
 static void
-server(struct socket *so, short events, struct sockaddr_in *addr,
-	void *dat, int len)
+udp_client(struct socket *so, short events, struct sockaddr_in *addr, void *dat, int len)
+{
+}
+
+
+static void
+tcp_server(struct socket *so, short events, struct sockaddr_in *addr, void *dat, int len)
 {
 	int rc;
 	struct conn *cp;

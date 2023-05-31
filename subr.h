@@ -238,8 +238,9 @@ struct packet {
 
 struct thread {
 	struct spinlock t_lock;
-	struct dlist t_pkt_head;
-	struct dlist t_pkt_pending_head;
+	struct dlist t_available_head;
+	struct dlist t_pending_head;
+	unsigned t_n_pending;
 	void (*t_rx_op)(void *, int);
 	void (*t_io_init_op)(const char *);
 	bool (*t_io_is_tx_throttled_op)(void);
@@ -359,7 +360,7 @@ void io_init(const char *);
 bool io_is_tx_throttled(void);
 void io_init_tx_packet(struct packet *);
 void io_deinit_tx_packet(struct packet *);
-bool io_tx_packet(struct packet *);
+int io_tx_packet(struct packet *);
 void io_tx(void);
 int io_rx(int);
 

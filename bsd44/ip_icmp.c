@@ -62,18 +62,15 @@ icmp_reflectsrc(be32_t dst)
 	return htonl(current->t_ip_laddr_min);
 }
 
-/*
- * Send an icmp packet back to the ip level,
- * after supplying a checksum.
- */
+// Send an icmp packet back to the ip level,
+// after supplying a checksum.
 void
 icmp_send(struct packet *pkt, struct ip *ip)
 {
 	struct icmp *icp;
 
 	if (icmpprintfs) {
-		printf("icmp_send dst %x src %x\n",
-			ip->ip_dst.s_addr, ip->ip_src.s_addr);
+		printf("icmp_send dst %x src %x\n", ip->ip_dst.s_addr, ip->ip_src.s_addr);
 	}
 	icp = (struct icmp *)(ip + 1);
 	icp->icmp_cksum = 0;
@@ -82,22 +79,23 @@ icmp_send(struct packet *pkt, struct ip *ip)
 	ip_output(pkt, ip);
 }
 
-/*
- * Generate an error packet of type error
- * in response to bad packet ip.
- */
+// Generate an error packet of type error
+// in response to bad packet ip.
 void
 icmp_error(struct ip *oip, int type, int code, be32_t dest)
 {
 	struct ip *eip, *nip;
-	unsigned oiplen = oip->ip_hl << 2;
+	unsigned oiplen;
 	struct icmp *icp;
 	unsigned icmplen;
 	be32_t t;
 	struct packet pkt;
 
-	if (icmpprintfs)
+	oiplen = oip->ip_hl << 2;
+
+	if (icmpprintfs) {
 		printf("icmp_error(%d, %d)\n", type, code);
+	}
 
 	if (type != ICMP_REDIRECT) {
 		counter64_inc(&icmpstat.icps_error);
@@ -117,18 +115,17 @@ icmp_error(struct ip *oip, int type, int code, be32_t dest)
 	nip = (struct ip *)(pkt.pkt.buf + sizeof(struct ether_header));
 	icmplen = oiplen + MIN(8, oip->ip_len);
 	icp = (struct icmp *)(nip + 1);
-	if ((u_int)type > ICMP_MAXTYPE)
+	if ((u_int)type > ICMP_MAXTYPE) {
 		panic(0, "icmp_error");
+	}
 	counter64_inc(icmpstat.icps_outhist + type);
 	icp->icmp_type = type;
 	if (type == ICMP_REDIRECT) {
 		icp->icmp_gwaddr.s_addr = dest;
 	} else {
 		icp->icmp_void = 0;
-		/* 
-		 * The following assignments assume an overlay with the
-		 * zeroed icmp_void field.
-		 */
+		// The following assignments assume an overlay with the
+		// zeroed icmp_void field.
 		if (type == ICMP_PARAMPROB) {
 			icp->icmp_pptr = code;
 			code = 0;
@@ -143,10 +140,8 @@ icmp_error(struct ip *oip, int type, int code, be32_t dest)
 	memcpy(eip, oip, icmplen);
 	eip->ip_len = htons((u_short)(eip->ip_len + oiplen));
 
-	/*
-	 * Now, copy old ip header (without options)
-	 * in front of icmp message.
-	 */
+	// Now, copy old ip header (without options)
+	// in front of icmp message.
 	memcpy(nip, oip, sizeof(struct ip));
 	t = nip->ip_dst.s_addr;
 	nip->ip_dst = nip->ip_src;

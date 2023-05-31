@@ -39,12 +39,10 @@
 #include "tcp_timer.h"
 #include "tcp_var.h"
 
-/*
- * Initiate connection to peer.
- * Enter SYN_SENT state, and mark socket as connecting.
- * Start keep-alive timer, and seed output sequence space.
- * Send initial segment on connection.
- */
+// Initiate connection to peer.
+// Enter SYN_SENT state, and mark socket as connecting.
+// Start keep-alive timer, and seed output sequence space.
+// Send initial segment on connection.
 int
 tcp_connect(struct socket *so)
 {

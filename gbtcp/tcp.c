@@ -229,10 +229,8 @@ tcp_get(be32_t laddr, be32_t faddr, be16_t lport, be16_t fport)
 	h = SO_HASH(faddr, lport, fport);
 	b = htable_bucket_get(&current->t_in_htable, h);
 	DLIST_FOREACH(so, b, so_list) {
-		if (so->so_laddr == laddr &&
-		    so->so_faddr == faddr &&
-		    so->so_lport == lport &&
-		    so->so_fport == fport) {
+		if (so->so_laddr == laddr && so->so_faddr == faddr &&
+				so->so_lport == lport && so->so_fport == fport) {
 			return so;
 		}
 	}
@@ -452,8 +450,7 @@ tcp_fill(struct sock *so, void *buf, struct tcb *tcb, int len_max)
 }
 
 static void
-tcp_xmit_out(struct packet *pkt, struct sock *so,
-	uint8_t tcp_flags, int len_max, int len)
+tcp_xmit_out(struct packet *pkt, struct sock *so, uint8_t tcp_flags, int len_max, int len)
 {
 	int total_len;
 	struct eth_hdr *eh;

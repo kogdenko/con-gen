@@ -236,12 +236,11 @@ bsd_connect(struct socket *so)
 	if (so->so_options & SO_OPTION(SO_ACCEPTCONN)) {
 		return -EOPNOTSUPP;
 	}
-	/*
-	 * If protocol is connection-based, can only connect once.
-	 * Otherwise, if connected, try to disconnect first.
-	 * This allows user to disconnect by connecting to, e.g.,
-	 * a null address.
-	 */
+
+	// If protocol is connection-based, can only connect once.
+	// Otherwise, if connected, try to disconnect first.
+	// This allows user to disconnect by connecting to, e.g.,
+	// a null address.
 	if (so->so_state & SS_ISCONNECTING) {
 		rc = -EALREADY;
 	} else if (so->so_state & SS_ISCONNECTED) {
@@ -256,26 +255,23 @@ bsd_connect(struct socket *so)
 	return rc;
 }
 
-/*
- * Send on a socket.
- * If send must go all at once and message is larger than
- * send buffering, then hard error.
- * Lock against other senders.
- * If must go all at once and not enough room now, then
- * inform user that this would block and do nothing.
- * Otherwise, if nonblocking, send as much as possible.
- * The data to be sent is described by "uio" if nonzero,
- * otherwise by the mbuf chain "top" (which must be null
- * if uio is not).  Data provided in mbuf chain must be small
- * enough to send all at once.
- *
- * Returns nonzero on error, timeout or signal; callers
- * must check for short counts if EINTR/ERESTART are returned.
- * Data and control buffers are freed on return.
- */
+// Send on a socket.
+// If send must go all at once and message is larger than
+// send buffering, then hard error.
+// Lock against other senders.
+// If must go all at once and not enough room now, then
+// inform user that this would block and do nothing.
+// Otherwise, if nonblocking, send as much as possible.
+// The data to be sent is described by "uio" if nonzero,
+// otherwise by the mbuf chain "top" (which must be null
+// if uio is not).  Data provided in mbuf chain must be small
+// enough to send all at once.
+//
+// Returns nonzero on error, timeout or signal; callers
+// must check for short counts if EINTR/ERESTART are returned.
+// Data and control buffers are freed on return.
 int
-sosend(struct socket *so, const void *dat, int datlen,
-	const struct sockaddr_in *addr, int flags)
+sosend(struct socket *so, const void *dat, int datlen, const struct sockaddr_in *addr, int flags)
 {
 	int rc, atomic, space;
 
@@ -545,9 +541,9 @@ int
 sowriteable(struct socket *so)
 {
 	return ((sbspace(&so->so_snd) >= so->so_snd.sb_lowat &&
-	       ((so->so_state & SS_ISCONNECTED) ||
-	       (so->so_proto == IPPROTO_UDP)))) ||
-	       (so->so_state & SS_CANTSENDMORE);
+		((so->so_state & SS_ISCONNECTED) ||
+		(so->so_proto == IPPROTO_UDP)))) ||
+		(so->so_state & SS_CANTSENDMORE);
 }
 
 short
@@ -565,14 +561,15 @@ soevents(struct socket *so)
 	if (so->so_error) {
 		events |= POLLERR;
 	}
+
 	return events;
 }
 
 void
-sowakeup(struct socket *so,  short events,  struct sockaddr_in *addr,
-	void *dat, int len)
+sowakeup(struct socket *so,  short events,  struct sockaddr_in *addr, void *dat, int len)
 {
 	assert(events);
+
 	if (so->so_userfn != NULL) {
 		if (so->so_state & SS_ISPROCESSING) {
 			so->so_events |= events;
@@ -891,8 +888,7 @@ bsd_accept(struct socket *so, struct socket **paso)
 }
 
 int
-bsd_sendto(struct socket *so, const void *buf, int len, int flags,
-	const struct sockaddr_in *nam)
+bsd_sendto(struct socket *so, const void *buf, int len, int flags, const struct sockaddr_in *nam)
 {
 	int rc;
 
