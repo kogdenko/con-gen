@@ -266,7 +266,7 @@ io_deinit_tx_packet(struct packet *pkt)
 }
 
 bool
-io_is_tx_throttled()
+io_is_tx_throttled(void)
 {
 	return (*current->t_io_is_tx_throttled_op)();
 }
@@ -295,7 +295,7 @@ io_rx(int queue_id)
 }
 
 void
-io_tx()
+io_tx(void)
 {
 	if (current->t_io_tx_op != NULL) {
 		(*current->t_io_tx_op)();

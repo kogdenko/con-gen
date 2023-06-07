@@ -46,7 +46,7 @@ int udpcksum = 1;
 static	void udp_notify(struct socket *, int);
 
 void
-udp_init()
+udp_init(void)
 {
 }
 

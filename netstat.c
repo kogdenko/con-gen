@@ -618,9 +618,7 @@ print_socket(void *udata, void *e)
 		state = "";
 	}
 	fprintf(file, "%-5.5s %-22.22s %-22.22s %-11.11s %-5u %s\n",
-		proto, bl, bf, state,
-		t->t_tcp_now - x.soi_idle,
-		x.soi_debug);
+			proto, bl, bf, state, t->t_tcp_now - x.soi_idle, x.soi_debug);
 }
 
 void

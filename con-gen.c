@@ -26,6 +26,7 @@ static int http_reply_len;
 static struct report_data report01;
 static int n_reports;
 static int n_reports_max;
+static int g_fprint_report = 1;
 static int print_banner = 1;
 static int print_statistics = 1;
 
@@ -217,6 +218,9 @@ print_report(void)
 	struct report_data new;
 	int conns;
 
+	if (!g_fprint_report) {
+		return;
+	}
 	if (n == 0 && print_banner) {
 		printf("%-12s%-12s", "cps", "ipps");
 		if (report_bytes_flag) {
@@ -349,6 +353,21 @@ thread_init_dst_cache(struct thread *t)
 }
 
 static void
+print_ifstat(FILE *out)
+{
+	uint64_t ipackets, opackets, ibytes, obytes;
+
+	ipackets = counter64_get(&if_ipackets);
+	opackets = counter64_get(&if_opackets);
+	ibytes = counter64_get(&if_ibytes);
+	obytes = counter64_get(&if_obytes);
+
+	fprintf(out, "ipackets ibytes opackets obytes\n");
+	fprintf(out, "%"PRIu64" %"PRIu64" %"PRIu64" %"PRIu64"\n",
+			ipackets, ibytes, opackets, obytes);
+}
+
+static void
 main_process_req(int fd, FILE *out)
 {
 	int rc;
@@ -360,8 +379,13 @@ main_process_req(int fd, FILE *out)
 		case 's':
 			print_stats(out, verbose);
 			break;
+
 		case 'c':
 			print_sockets(out);
+			break;
+
+		case 'i':
+			print_ifstat(out);
 			break;
 		}
 	}
@@ -412,9 +436,8 @@ main_routine(void)
 					main_process_req(fd2, file);
 					fflush(file);
 					fclose(file);
-				} else {
-					close(fd2);
 				}
+				close(fd2);
 			}
 		}
 	}
@@ -595,6 +618,7 @@ usage(void)
 	"\t--tcp-timewait-timeout {seconds}:  Specify TIME_WAIT timeout\n"
 	"\t--report-bytes {0|1}:  On/Off byte statistic in report\n"
 	"\t--reports {num}:  Number of reports of con-gen (0 meaning infinite)\n"
+	"\t--print-report {0|1}:  On/Off printing report\n"
 	"\t--print-banner {0|1}:  On/Off printing report banner every 20 seconds\n"
 	"\t--print-statistics {0|1}:  On/Off printing statistics at the end of execution\n"
 	);
@@ -629,6 +653,7 @@ static struct option long_options[] = {
 	{ "tcp-timewait-timeout", required_argument, 0, 0 },
 	{ "report-bytes", required_argument, 0, 0 },
 	{ "reports", required_argument, 0, 0 },
+	{ "print-report", required_argument, 0, 0 },
 	{ "print-banner", required_argument, 0, 0 },
 	{ "print-statistics", required_argument, 0, 0 },
 	{ 0, 0, 0, 0 }
@@ -766,6 +791,8 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 				report_bytes_flag = 1;
 			} else if (!strcmp(optname, "reports")) {
 				n_reports_max = optval;
+			} else if (!strcmp(optname, "print-report")) {
+				g_fprint_report = optval;
 			} else if (!strcmp(optname, "print-banner")) {
 				print_banner = optval;
 			} else if (!strcmp(optname, "print-statistics")) {
