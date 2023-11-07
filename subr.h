@@ -2,6 +2,7 @@
 #define CON_GEN__SUBR_H
 
 #define _GNU_SOURCE
+#include <ctype.h>
 #include <errno.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -319,6 +320,8 @@ struct thread {
 // Function
 void dbg5(const char *, u_int, const char *, int, const char *, ...)
 	__attribute__((format(printf, 5, 6)));
+
+void print_hexdump_ascii(const void *, int);
 
 void *xmalloc(size_t);
 

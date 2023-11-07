@@ -69,8 +69,7 @@ tcp_template(struct tcpcb *tp, struct ip *ip, struct tcp_hdr *th)
 	}
 	th->th_seq = 0;
 	th->th_ack = 0;
-	th->th_x2 = 0;
-	th->th_off = 5;
+	th->th_off = sizeof(struct tcp_hdr) << 2;
 	th->th_flags = 0;
 	th->th_win = 0;
 	th->th_sum = 0;

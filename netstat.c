@@ -433,8 +433,7 @@ print_ipstat(FILE *file, int verbose)
 	}
 	fragtimeout = counter64_get(&ipstat.ips_fragtimeout);
 	if (fragtimeout || verbose) {
-		fprintf(file, "\t%"PRIu64" fragments dropped after timeout\n",
-			fragtimeout);
+		fprintf(file, "\t%"PRIu64" fragments dropped after timeout\n", fragtimeout);
 	}
 	reassembled = counter64_get(&ipstat.ips_reassembled);
 	if (reassembled || verbose) {

@@ -47,6 +47,35 @@ dbg5(const char *file, u_int line, const char *func, int suppressed,
 	printf("%s\n", buf);
 }
 
+void
+print_hexdump_ascii(const void *data, int count)
+{
+	int i, j, k, savei;
+	u_char ch;
+
+	for (i = 0; i < count;) {
+		savei = i;
+		for (j = 0; j < 8; ++j) {
+			for (k = 0; k < 2; ++k) {
+				if (i < count) {
+					ch = ((const u_char *)data)[i];
+					printf("%02hhx", ch);
+					i++;
+				} else {
+					printf("  ");
+				}
+			}
+			printf(" ");
+		}
+		printf(" ");
+		for (j = savei; j < i; ++j) {
+			ch = ((const u_char *)data)[j];
+			printf("%c", isprint(ch) ? ch : '.');
+		}
+		printf("\n");
+	}
+}
+
 struct pseudo {
 	be32_t ph_src;
 	be32_t ph_dst;

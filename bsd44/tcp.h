@@ -41,13 +41,7 @@ struct tcp_hdr {
 	u_short	th_dport;		/* destination port */
 	tcp_seq	th_seq;			/* sequence number */
 	tcp_seq	th_ack;			/* acknowledgement number */
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-	u_char	th_x2:4,		/* (unused) */
-		th_off:4;		/* data offset */
-#else
-	u_char	th_off:4,		/* data offset */
-		th_x2:4;		/* (unused) */
-#endif
+	u_char	th_off;			/* data offset */
 	u_char	th_flags;
 #define BSD_TH_FIN 0x01
 #define BSD_TH_SYN 0x02
