@@ -48,7 +48,7 @@ tcp_DELACK_timo(struct timer *timer)
 {
 	struct tcpcb *tp;
 
-	tp = container_of(timer, struct tcpcb, t_timer_delack);
+	tp = cg_container_of(timer, struct tcpcb, t_timer_delack);
 	if (tp->t_flags & TF_DELACK) {
 		tp->t_flags &= ~TF_DELACK;
 		tp->t_flags |= TF_ACKNOW;
@@ -91,7 +91,7 @@ tcp_PERSIST_timo(struct timer *timer)
 {
 	struct tcpcb *tp;
 
-	tp = container_of(timer, struct tcpcb, t_timer[TCPT_PERSIST]);
+	tp = cg_container_of(timer, struct tcpcb, t_timer[TCPT_PERSIST]);
 
 	counter64_inc(&tcpstat.tcps_persisttimeo);
 	tcp_setpersist(tp);
@@ -110,7 +110,7 @@ tcp_REXMT_timo(struct timer *timer)
 	u_int win, rexmt;
 	struct tcpcb *tp;
 
-	tp = container_of(timer, struct tcpcb, t_timer[TCPT_REXMT]);
+	tp = cg_container_of(timer, struct tcpcb, t_timer[TCPT_REXMT]);
 
 	if (++tp->t_rxtshift > TCP_MAXRXTSHIFT) {
 		tp->t_rxtshift = TCP_MAXRXTSHIFT;
@@ -184,7 +184,7 @@ tcp_KEEP_timo(struct timer *timer)
 	struct socket *so;
 	struct tcpcb *tp;
 
-	tp = container_of(timer, struct tcpcb, t_timer[TCPT_KEEP]);
+	tp = cg_container_of(timer, struct tcpcb, t_timer[TCPT_KEEP]);
 
 	counter64_inc(&tcpstat.tcps_keeptimeo);
 	if (tp->t_state < TCPS_ESTABLISHED) {
@@ -231,6 +231,6 @@ tcp_2MSL_timo(struct timer *timer)
 {
 	struct tcpcb *tp;
 
-	tp = container_of(timer, struct tcpcb, t_timer[TCPT_2MSL]);
+	tp = cg_container_of(timer, struct tcpcb, t_timer[TCPT_2MSL]);
 	tcp_close(tp);
 }

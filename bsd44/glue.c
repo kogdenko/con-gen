@@ -9,17 +9,8 @@ struct conn {
 static void udp_client(struct socket *, short, struct sockaddr_in *, void *, int);
 static void tcp_client(struct socket *, short, struct sockaddr_in *, void *, int);
 static void tcp_server(struct socket *, short, struct sockaddr_in *, void *, int);
+static void con_close(void);
 
-static void
-udp_send(struct socket *so)
-{
-	int rc;
-
-	do {
-		rc = sosend(so, "xx", 2, NULL, 0);
-	} while (rc == 0);
-	DLIST_INSERT_TAIL(&current->t_so_txq, so, so_txlist);
-}
 
 void
 bsd_flush(void)
@@ -41,7 +32,11 @@ bsd_flush(void)
 			}
 		} else {
 			DLIST_REMOVE(so, so_txlist);
-			udp_send(so);
+			sosend(so, "xx", 2, NULL, 0);
+			so->so_state &= ~SS_ISTXPENDING;
+
+			bsd_close(so);
+			con_close();
 		}
 	}
 }
@@ -66,7 +61,7 @@ bsd_client_connect(int proto)
 		panic(-rc, "bsd_connect() failed");
 	}
 	if (proto == IPPROTO_UDP) {
-		udp_send(so);
+		DLIST_INSERT_TAIL(&current->t_so_txq, so, so_txlist);
 	}
 }
 
@@ -113,12 +108,14 @@ bsd_server_listen(int proto)
 	}
 }
 
+extern int g_udp;
+
 static void
 con_close(void)
 {
 	int proto;
 
-	proto = current->t_udp ? IPPROTO_UDP : IPPROTO_TCP;
+	proto = g_udp ? IPPROTO_UDP : IPPROTO_TCP;
 
 	if (current->t_done) {
 		return;
@@ -171,7 +168,7 @@ tcp_client(struct socket *so, short events, struct sockaddr_in *addr, void *dat,
 	}
 	if (cp->cn_sent == 0) {
 		if (events & POLLERR) {
-			panic(so->so_error, "Could't connect to %s:%hu",
+			panic(so->so_error, "Couldn't connect to %s:%hu",
 				inet_ntop(AF_INET, &so->so_base.ipso_faddr, fb, sizeof(fb)),
 				ntohs(so->so_base.ipso_fport));
 		}
@@ -202,8 +199,10 @@ tcp_client(struct socket *so, short events, struct sockaddr_in *addr, void *dat,
 static void
 udp_client(struct socket *so, short events, struct sockaddr_in *addr, void *dat, int len)
 {
+	//if (events & POLLNVAL) {
+	//	con_close();
+	//}
 }
-
 
 static void
 tcp_server(struct socket *so, short events, struct sockaddr_in *addr, void *dat, int len)

@@ -112,51 +112,47 @@ xdp_init_queue(struct xdp_queue *q, const char *ifname, int queue_id)
 }
 
 static void
-xdp_init(const char *ifname_full)
+xdp_init_if(struct thread *t)
 {
-	int rc, i, ifindex, ifname_len;
-	char *sep, *endptr;
+	int rc, i, ifindex;
 
-	sep = strrchr(ifname_full, '-');
-	if (sep != NULL) {
-		ifname_len = sep -ifname_full;
-		current->t_rss_queue_id = strtoul(sep + 1, &endptr, 10);
-		if (*endptr != '\0') {
-			sep = NULL;
-		}
-	}
-	if (sep == NULL) {
-		current->t_rss_queue_id = RSS_QUEUE_ID_NONE;
-		strzcpy(current->t_ifname, ifname_full, sizeof(current->t_ifname));
-	} else {
-		memcpy(current->t_ifname, ifname_full, ifname_len);
-		current->t_ifname[ifname_len] = '\0';
-	}
-	ifindex = if_nametoindex(current->t_ifname);
+	ifindex = if_nametoindex(t->t_ifname);
 	if (ifindex == 0) {
-		panic(errno, "if_nametoindex('%s') failed", current->t_ifname);
+		panic(errno, "if_nametoindex('%s') failed", t->t_ifname);
 	}
-	current->t_rss_queue_num = get_interface_queue_num(current->t_ifname);
-	if (current->t_rss_queue_id != RSS_QUEUE_ID_NONE) {
-		current->t_xdp_queue_num = 1;
+	t->t_rss_queue_num = get_interface_queue_num(t->t_ifname);
+	if (t->t_rss_queue_id < RSS_QUEUE_ID_MAX) {
+		t->t_xdp_queue_num = 1;
+		if (t->t_rss_queue_num > 1) {
+			read_rss_key(t->t_ifname, t->t_rss_key);
+		}
 	} else {
-		current->t_xdp_queue_num = current->t_rss_queue_num;
+		t->t_xdp_queue_num = t->t_rss_queue_num;
 	}
-	rc = bpf_xdp_query_id(ifindex, 0, &current->t_xdp_prog_id);
+	rc = bpf_xdp_query_id(ifindex, 0, &t->t_xdp_prog_id);
 	if (rc < 0) {
 		panic(-rc, "bpf_xdp_query_id() failed");
 	}
-	current->t_xdp_queues = xmalloc(current->t_xdp_queue_num * sizeof(struct xdp_queue));
-	if (current->t_rss_queue_id != RSS_QUEUE_ID_NONE) {
-		xdp_init_queue(&current->t_xdp_queues[0],
-			current->t_ifname, current->t_rss_queue_id);
+	t->t_xdp_queues = xmalloc(t->t_xdp_queue_num * sizeof(struct xdp_queue));
+	if (t->t_rss_queue_id < RSS_QUEUE_ID_MAX) {
+		xdp_init_queue(&t->t_xdp_queues[0], t->t_ifname, t->t_rss_queue_id);
 	} else {
-		for (i = 0; i < current->t_xdp_queue_num; ++i) {
-			xdp_init_queue(&current->t_xdp_queues[i], current->t_ifname, i);
+		for (i = 0; i < t->t_xdp_queue_num; ++i) {
+			xdp_init_queue(&t->t_xdp_queues[i], t->t_ifname, i);
 		}
 	}
-	for (i = 0; i < current->t_xdp_queue_num; ++i) {
-		multiplexer_add(current->t_xdp_queues[i].xq_fd);
+	for (i = 0; i < t->t_xdp_queue_num; ++i) {
+		multiplexer_add(t->t_xdp_queues[i].xq_fd);
+	}
+}
+
+static void
+xdp_init(struct thread *threads, int n_threads)
+{
+	int i;
+
+	for (i = 0; i < n_threads; ++i) {
+		xdp_init_if(threads + i);
 	}
 }
 
@@ -317,7 +313,7 @@ xdp_rx(int queue_id)
 
 		addr = xsk_umem__add_offset_to_addr(addr);
 		len = xsk_ring_cons__rx_desc(&q->xq_rx, idx_rx + i)->len;
-		(*current->t_rx_op)(xsk_umem__get_data(q->xq_buf, addr), len);
+		io_process(xsk_umem__get_data(q->xq_buf, addr), len);
 		free_frame(q, frame);
 	}
 	xsk_ring_cons__release(&q->xq_rx, n);
@@ -339,14 +335,12 @@ xdp_rx(int queue_id)
 	return n;
 }
 
-void
-set_xdp_ops(struct thread *t)
-{
-	t->t_io_init_op = xdp_init;
-	t->t_io_is_tx_throttled_op = xdp_is_tx_throttled;
-	t->t_io_init_tx_packet_op = xdp_init_tx_packet;
-	t->t_io_deinit_tx_packet_op = xdp_deinit_tx_packet;
-	t->t_io_tx_packet_op = xdp_tx_packet;
-	t->t_io_rx_op = xdp_rx;
-	t->t_io_tx_op = xdp_tx;
-}
+struct transport_ops xdp_ops = {
+	.tr_io_init_op = xdp_init,
+	.tr_io_is_tx_throttled_op = xdp_is_tx_throttled,
+	.tr_io_init_tx_packet_op = xdp_init_tx_packet,
+	.tr_io_deinit_tx_packet_op = xdp_deinit_tx_packet,
+	.tr_io_tx_packet_op = xdp_tx_packet,
+	.tr_io_rx_op = xdp_rx,
+	.tr_io_tx_op = xdp_tx,
+};

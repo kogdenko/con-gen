@@ -119,9 +119,10 @@ in_pcbdetach(struct socket *so)
 	if (so->so_state & SS_ISATTACHED) {
 		so->so_state &= ~SS_ISATTACHED;
 		ip_disconnect(&so->so_base);
-		sofree(so);
+		return sofree(so);
+	} else {
+		return 0;
 	}
-	return 0;
 }
 
 void
@@ -149,7 +150,7 @@ bsd_get_so_info(void *e, struct socket_info *x)
 	struct socket *so;
 	struct tcpcb *tp;
 
-	so = container_of(e, struct socket, inp_list);
+	so = cg_container_of(e, struct socket, inp_list);
 	x->soi_laddr = so->inp_laddr;
 	x->soi_lport = so->inp_lport;
 	x->soi_faddr = so->inp_faddr;

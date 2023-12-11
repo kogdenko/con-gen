@@ -47,7 +47,6 @@ struct udp_hdr {
 	uint16_t uh_sum;    /* udp checksum */
 } __attribute__((packed));
 
-
 void udp_ctlinput(int, be32_t, struct ip *);
 void udp_init(void);
 void udp_input(struct ip *, int, int);
@@ -55,8 +54,6 @@ int udp_output(struct socket *, const void *, int, const struct sockaddr_in *);
 int udp_connect(struct socket *);
 int udp_send(struct socket *, const void *, int, const struct sockaddr_in *);
 int udp_disconnect(struct socket *);
-void udp_detach(struct socket *);
-//int udp_attach(struct socket *);
 void udp_abort(struct socket *);
 void udp_shutdown(struct socket *);
 
