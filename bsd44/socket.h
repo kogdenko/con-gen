@@ -87,7 +87,7 @@ struct socket {
 };
 
 #define	sototcpcb(so) (&((so)->inp_ppcb))
-#define tcpcbtoso(tp) container_of(tp, struct socket, inp_ppcb)
+#define tcpcbtoso(tp) cg_container_of(tp, struct socket, inp_ppcb)
 
 extern struct dlist so_txq;
 
@@ -145,7 +145,8 @@ int soconnect(struct socket *so, const struct sockaddr_in *);
 void soaccept(struct socket *so);
 
 int sodisconnect(struct socket *so);
-void sofree(struct socket *);
+int sofree2(struct socket *, const char *);
+#define sofree(so) sofree2(so, __func__)
 void soqremque(struct socket *so);
 void sbrelease(struct sockbuf *sb);
 void sorflush(struct socket *so);

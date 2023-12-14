@@ -164,14 +164,13 @@ udp_output(struct socket *so, const void *dat, int len,	const struct sockaddr_in
 		}
 	}
 //	}
+
 	io_init_tx_packet(&pkt);
-	//if (pkt == NULL) {
-	//	return -ENOBUFS;
-	//}
 	ip = (struct ip *)(pkt.pkt.buf + sizeof(struct ether_header));
 	uh = (struct udp_hdr *)(ip + 1);
 
 	ip->ip_len = sizeof(*ip) + sizeof(*uh) + len;
+
 	ip->ip_p = IPPROTO_UDP;
 	ip->ip_hl = sizeof(*ip) >> 2;
 	ip->ip_src.s_addr = so->inp_laddr;
@@ -185,10 +184,13 @@ udp_output(struct socket *so, const void *dat, int len,	const struct sockaddr_in
 
 	// Stuff checksum and output datagram.
 	uh->uh_sum = 0;
+
 	if (udpcksum) {
 		uh->uh_sum = udp_cksum(ip, sizeof(*uh) + len);
 	}
+
 	counter64_inc(&udpstat.udps_opackets);
+
 	rc = ip_output(&pkt, ip);
 //	if (addr) {
 //		in_pcbdisconnect(so);
@@ -221,8 +223,7 @@ udp_disconnect(struct socket *so)
 		return ENOTCONN;
 	}
 	soisdisconnected(so);
-	udp_detach(so);
-	return 0;
+	return in_pcbdetach(so);
 }
 
 void
@@ -232,14 +233,8 @@ udp_shutdown(struct socket *so)
 }
 
 void
-udp_detach(struct socket *so)
-{
-	in_pcbdetach(so);
-}
-
-void
 udp_abort(struct socket *so)
 {
 	soisdisconnected(so);
-	udp_detach(so);
+	in_pcbdetach(so);
 }

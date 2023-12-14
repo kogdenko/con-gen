@@ -8,9 +8,9 @@ struct dlist {
 	struct dlist *dls_prev;
 };
 
-#define field_off(type, field) ((intptr_t)&((type *)0)->field)
-#define container_of(ptr, type, field) \
-	((type *)((intptr_t)(ptr) - field_off(type, field)))
+#define cg_field_off(type, field) ((intptr_t)&((type *)0)->field)
+#define cg_container_of(ptr, type, field) \
+	((type *)((intptr_t)(ptr) - cg_field_off(type, field)))
 
 void dlist_init(struct  dlist *);
 int dlist_size(struct dlist *);
@@ -26,13 +26,13 @@ void dlist_remove(struct dlist *);
 #define DLIST_HEAD(name) struct dlist name = DLIST_HEAD_INIT(name)
 
 #define DLIST_FIRST(head, type, field) \
-	container_of((head)->dls_next, type, field)
+	cg_container_of((head)->dls_next, type, field)
 
 #define DLIST_LAST(head, type, field) \
-	container_of((head)->dls_prev, type, field)
+	cg_container_of((head)->dls_prev, type, field)
 
 #define DLIST_NEXT(var, field) \
-	container_of((var)->field.dls_next, __typeof__(*(var)), field)
+	cg_container_of((var)->field.dls_next, __typeof__(*(var)), field)
 
 #define DLIST_INSERT_HEAD(head, var, field) \
 	dlist_insert_head(head, &((var)->field))

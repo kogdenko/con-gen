@@ -27,24 +27,41 @@ not_empty_txr(struct netmap_slot **pslot)
 }
 
 static void
-netmap_init(const char *ifname)
+netmap_init_if(struct thread *t)
 {
-	char buf[IFNAMSIZ + 7];
+	char buf[IFNAMSIZ + 64];
 
-	snprintf(buf, sizeof(buf), "netmap:%s", ifname);
-	current->t_nmd = nm_open(buf, NULL, 0, NULL);
-	if (current->t_nmd == NULL) {
+	if (t->t_rss_queue_id < RSS_QUEUE_ID_MAX) {
+		snprintf(buf, sizeof(buf), "netmap:%s-%d", t->t_ifname, t->t_rss_queue_id);
+	} else {
+		snprintf(buf, sizeof(buf), "netmap:%s", t->t_ifname);
+	}
+	t->t_nmd = nm_open(buf, NULL, 0, NULL);
+	if (t->t_nmd == NULL) {
 		panic(errno, "nm_open('%s') failed", buf);
 	}
-	if (current->t_nmd->req.nr_rx_rings != current->t_nmd->req.nr_tx_rings) {
+	if (t->t_nmd->req.nr_rx_rings != t->t_nmd->req.nr_tx_rings) {
 		panic(0, "%s: nr_rx_rings != nr_tx_rings", buf);
 	}
-	current->t_rss_queue_num = current->t_nmd->req.nr_rx_rings;
-	if ((current->t_nmd->req.nr_flags & NR_REG_MASK) == NR_REG_ONE_NIC) {
-		current->t_rss_queue_id = current->t_nmd->first_rx_ring;
+	t->t_rss_queue_num = t->t_nmd->req.nr_rx_rings;
+	if (t->t_rss_queue_num > 1) {
+		read_rss_key(t->t_ifname, t->t_rss_key);
 	}
-	strzcpy(current->t_ifname, current->t_nmd->req.nr_name, sizeof(current->t_ifname));
-	multiplexer_add(current->t_nmd->fd);
+	if ((t->t_nmd->req.nr_flags & NR_REG_MASK) == NR_REG_ONE_NIC) {
+		t->t_rss_queue_id = t->t_nmd->first_rx_ring;
+	}
+	strzcpy(t->t_ifname, t->t_nmd->req.nr_name, sizeof(t->t_ifname));
+	multiplexer_add(t->t_nmd->fd);
+}
+
+static void
+netmap_init(struct thread *threads, int n_thread)
+{
+	int i;
+
+	for (i = 0; i < n_threads; ++i) {
+		netmap_init_if(threads + i);
+	}
 }
 
 bool
@@ -102,7 +119,7 @@ netmap_rx(int queue_id)
 		for (j = 0; j < n; ++j) {
 			DEV_PREFETCH(rxr);
 			slot = rxr->slot + rxr->cur;
-			(*current->t_rx_op)(NETMAP_BUF(rxr, slot->buf_idx) , slot->len);
+			io_process(NETMAP_BUF(rxr, slot->buf_idx) , slot->len);
 			rxr->head = rxr->cur = nm_ring_next(rxr, rxr->cur);
 		}
 		accum += n;
@@ -110,12 +127,10 @@ netmap_rx(int queue_id)
 	return accum;
 }
 
-void
-set_netmap_ops(struct thread *t)
-{
-	t->t_io_init_op = netmap_init;
-	t->t_io_is_tx_throttled_op = netmap_is_tx_throttled;
-	t->t_io_init_tx_packet_op = netmap_init_tx_packet;
-	t->t_io_tx_packet_op = netmap_tx_packet;
-	t->t_io_rx_op = netmap_rx;
-}
+struct transport_ops netmap_ops = {
+	.tr_io_init_op = netmap_init,
+	.tr_io_is_tx_throttled_op = netmap_is_tx_throttled,
+	.tr_io_init_tx_packet_op = netmap_init_tx_packet,
+	.tr_io_tx_packet_op = netmap_tx_packet,
+	.tr_io_rx_op = netmap_rx,
+};

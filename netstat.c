@@ -583,6 +583,8 @@ struct print_socket_udata {
 	FILE *prsud_file;
 };
 
+extern int g_toy;
+
 void
 print_socket(void *udata, void *e)
 {
@@ -596,7 +598,7 @@ print_socket(void *udata, void *e)
 	t = ((struct print_socket_udata *)udata)->prsud_thread;
 	file = ((struct print_socket_udata *)udata)->prsud_file;
 	memset(&x, 0, sizeof(x));
-	if (t->t_toy) {
+	if (g_toy) {
 		toy_get_so_info(e, &x);
 	} else {
 		bsd_get_so_info(e, &x);
