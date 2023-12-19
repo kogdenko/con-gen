@@ -127,7 +127,9 @@ g_ldflags = [
 	'-L.'
 ]
 
-g_libs = []
+g_libs = [
+	'pthread'
+]
 
 if platform.system() == 'Linux':
 	g_libs.append('dl')

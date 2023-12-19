@@ -1,10 +1,31 @@
 #include <rte_eal.h>
 #include <rte_ethdev.h>
+#include <rte_version.h>
 
 #include "global.h"
 #include "subr.h"
 
+#if RTE_VERSION <= RTE_VERSION_NUM(21, 8, 0, 99)
+#define DPDK_ETH_MQ_TX_NONE ETH_MQ_TX_NONE
+#define DPDK_ETH_TX_OFFLOAD_MBUF_FAST_FREE DEV_TX_OFFLOAD_MBUF_FAST_FREE
+#define DPDK_ETH_MQ_RX_RSS ETH_MQ_RX_RSS
+#define DPDK_ETH_RSS_IP ETH_RSS_IP
+#define DPDK_ETH_RSS_TCP ETH_RSS_TCP
+#define DPDK_ETH_RSS_UDP ETH_RSS_UDP
+#else
+#define DPDK_ETH_MQ_TX_NONE RTE_ETH_MQ_TX_NONE
+#define DPDK_ETH_TX_OFFLOAD_MBUF_FAST_FREE RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE
+#define DPDK_ETH_MQ_RX_RSS RTE_ETH_MQ_RX_RSS
+#define DPDK_ETH_RSS_IP RTE_ETH_RSS_IP
+#define DPDK_ETH_RSS_TCP RTE_ETH_RSS_TCP
+#define DPDK_ETH_RSS_UDP RTE_ETH_RSS_UDP
+#endif
+
 #define DPDK_MEMPOOL_CACHE_SIZE 128
+
+#if RTE_VERSION < RTE_VERSION_NUM(18, 5, 0, 16)
+#error "Too old DPDK version (not tested)"
+#endif
 
 struct dpdk_port {
 	int n_queues;
@@ -26,7 +47,11 @@ dpdk_port_name(struct dpdk_port *port, struct rte_eth_dev_info *dev_info)
 		return "???";
 	}
 
+#if RTE_VERSION <= RTE_VERSION_NUM(22, 7, 0, 99)
 	return dev_info->device->name;
+#else
+	return rte_dev_name(dev_info->device);
+#endif
 }
 
 int
@@ -81,15 +106,15 @@ dpdk_init(struct thread *threads, int n_threads)
 		port_name = dpdk_port_name(port, &dev_info);
 
 		memset(&port_conf, 0, sizeof(port_conf));
-		port_conf.txmode.mq_mode = RTE_ETH_MQ_TX_NONE;
+		port_conf.txmode.mq_mode = DPDK_ETH_MQ_TX_NONE;
 		if (port->n_queues > 1) {
-			port_conf.rxmode.mq_mode = RTE_ETH_MQ_RX_RSS;
+			port_conf.rxmode.mq_mode = DPDK_ETH_MQ_RX_RSS;
 			port_conf.rx_adv_conf.rss_conf.rss_hf =
-				RTE_ETH_RSS_IP | RTE_ETH_RSS_TCP | RTE_ETH_RSS_UDP;
+				DPDK_ETH_RSS_IP | DPDK_ETH_RSS_TCP | DPDK_ETH_RSS_UDP;
 			port_conf.rx_adv_conf.rss_conf.rss_hf &= dev_info.flow_type_rss_offloads;
 		}
-		if (dev_info.tx_offload_capa & RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE) {
-			port_conf.txmode.offloads |= RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE;
+		if (dev_info.tx_offload_capa & DPDK_ETH_TX_OFFLOAD_MBUF_FAST_FREE) {
+			port_conf.txmode.offloads |= DPDK_ETH_TX_OFFLOAD_MBUF_FAST_FREE;
 		}
 
 		rc = rte_eth_dev_configure(i, port->n_queues, port->n_queues, &port_conf);
@@ -146,10 +171,7 @@ dpdk_init(struct thread *threads, int n_threads)
 			panic(-rc, "rte_eth_dev_start('%s') failed", port_name);
 		}
 
-		rc = rte_eth_promiscuous_enable(i);
-		if (rc < 0) {
-			panic(-rc, "rte_eth_promiscuous_enable('%s') failed", port_name);
-		}
+		rte_eth_promiscuous_enable(i);
 	}
 
 	for (i = 0; i < n_threads; ++i) {
