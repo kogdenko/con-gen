@@ -46,7 +46,6 @@ extern struct transport_ops pcap_io_ops;
 #endif
 #ifdef HAVE_DPDK
 extern struct transport_ops dpdk_ops;
-int dpdk_parse_args(int argc, char **argv);
 #endif
 
 void bsd_eth_in(void *, int);
@@ -325,23 +324,6 @@ set_transport(int transport, int udp, int toy)
 	} else {
 		tr_ops->tr_io_process_op = bsd_eth_in;
 	}
-}
-
-int
-io_parse_args(int argc, char **argv)
-{
-#ifdef HAVE_DPDK
-	int rc;
-
-	rc = dpdk_parse_args(argc, argv);
-	if (rc < 0) {
-		return 0;
-	} else {
-		return rc;
-	}
-#else
-	return 0;
-#endif
 }
 
 void

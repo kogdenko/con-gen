@@ -386,7 +386,6 @@ void set_transport(int transport, int udp, int toy);
 
 void add_pending_packet(struct packet *);
 
-int io_parse_args(int argc, char **argv);
 void io_init(struct thread *threads, int n_threads);
 bool io_is_tx_throttled(void);
 void io_init_tx_packet(struct packet *);

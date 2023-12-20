@@ -11,7 +11,6 @@ static void tcp_client(struct socket *, short, struct sockaddr_in *, void *, int
 static void tcp_server(struct socket *, short, struct sockaddr_in *, void *, int);
 static void con_close(void);
 
-
 void
 bsd_flush(void)
 {
@@ -31,12 +30,12 @@ bsd_flush(void)
 				sofree(so);
 			}
 		} else {
-			DLIST_REMOVE(so, so_txlist);
+//			DLIST_REMOVE(so, so_txlist);
 			sosend(so, "xx", 2, NULL, 0);
-			so->so_state &= ~SS_ISTXPENDING;
+//			so->so_state &= ~SS_ISTXPENDING;
 
-			bsd_close(so);
-			con_close();
+//			bsd_close(so);
+//			con_close();
 		}
 	}
 }

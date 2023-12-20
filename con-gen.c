@@ -674,6 +674,57 @@ static struct option long_options[] = {
 
 static const char *short_options = "hvi:q:s:d:S:D:a:n:c:p:NL";
 
+#ifdef HAVE_DPDK
+int dpdk_parse_args(int argc, char **argv);
+
+static bool
+validate_args(int argc, char **argv)
+{
+	int save_opterr, opt, option_index;
+
+	save_opterr = opterr;
+	opterr = 0;
+	while ((opt = getopt_long(argc, argv, short_options,
+			long_options, &option_index)) != -1) {
+		if (opt != 0 && strchr(short_options, opt) == NULL) {
+			optind = 1;
+			opterr = save_opterr;
+			return false;
+		}
+	}
+
+	optind = 1;
+	opterr = save_opterr;
+	return true;
+}
+
+int
+io_parse_args(int argc, char **argv)
+{
+	int rc;
+	char *fake_argv[1];
+
+	if (validate_args(argc, argv)) {
+		fake_argv[0] = "con-gen";
+		dpdk_parse_args(ARRAY_SIZE(fake_argv), fake_argv);
+		return 0;
+	} else {
+		rc = dpdk_parse_args(argc, argv);
+		if (rc < 0) {
+			return 0;
+		} else {
+			return rc;
+		}
+	}
+}
+#else // HAVE_DPDK
+int
+io_parse_args(int argc, char **argv)
+{
+	return 0;
+}
+#endif // HAVE_DPDK
+
 static int
 thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char **argv)
 {
