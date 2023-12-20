@@ -242,7 +242,7 @@ toy_get_so_info(void *p, struct socket_info *x)
 {
 	struct sock *so;
 
-	so = container_of(p, struct sock, so_list);
+	so = cg_container_of(p, struct sock, so_list);
 	x->soi_laddr = so->so_laddr;
 	x->soi_faddr = so->so_faddr;
 	x->soi_lport = so->so_lport;
@@ -982,7 +982,7 @@ tcp_timeout_rexmit(struct timer *timer)
 {
 	struct sock *so;
 
-	so = container_of(timer, struct sock, timer);
+	so = cg_container_of(timer, struct sock, timer);
 	assert(so->used);
 	assert(so->sfin_acked == 0);
 	assert(TCP_IS_REXMIT(so));
@@ -1003,7 +1003,7 @@ tcp_timeout_delack(struct timer *timer)
 {
 	struct sock *so;
 
-	so = container_of(timer, struct sock, timer_delack);
+	so = cg_container_of(timer, struct sock, timer_delack);
 	assert(so->used);
 	counter64_inc(&tcpstat.tcps_delack);
 	tcp_into_ackq(so);
@@ -1014,7 +1014,7 @@ tcp_timeout_probe(struct timer *timer)
 {
 	struct sock *so;
 
-	so = container_of(timer, struct sock, timer);
+	so = cg_container_of(timer, struct sock, timer);
 	assert(so->used);
 	assert(so->sfin_acked == 0);
 	assert(TCP_IS_REXMIT(so) == 0);

@@ -37,7 +37,7 @@
 #include "ip_var.h"
 #include "if_ether.h"
 
-static uint16_t ip_id;				/* ip packet ctr, for ids */
+static __thread uint16_t ip_id;				/* ip packet ctr, for ids */
 
 int
 ip_output(struct packet *pkt, struct ip *ip)

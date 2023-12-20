@@ -43,6 +43,7 @@ somalloc(void)
 
 	if (dlist_is_empty(&current->t_so_pool)) {
 		so = malloc(sizeof(*so));
+		//dbg("newso %p", so);
 		if (so == NULL) {
 			return NULL;
 		}
@@ -132,12 +133,12 @@ bsd_listen(struct socket *so)
 		cp = "|"; \
 	}
 
-void
-sofree(struct socket *so)
+int
+sofree2(struct socket *so, const char *func)
 {
-/*	const char *cp = "ss=";
+	/*const char *cp = "ss=";
 
-	printf("%p: sofree: %s, ", so, f);
+	printf("%p: sofree %s ", so, func);
 	prss(SS_NOFDREF);
 	prss(SS_ISCONNECTED);
 	prss(SS_ISCONNECTING);
@@ -151,7 +152,7 @@ sofree(struct socket *so)
 
 	if ((so->so_state & SS_NOFDREF) == 0) {
 		// Don't free if referenced
-		return;
+		return 0;
 	}
 	if ((so->so_state & (SS_ISTXPENDING|
 	                     SS_ISPROCESSING|
@@ -159,7 +160,7 @@ sofree(struct socket *so)
 	                     SS_ISCONNECTED|
 	                     SS_ISDISCONNECTING|
 	                     SS_ISATTACHED))) {
-		return;
+		return 0;
 	}
 	if (so->so_head) {
 		soqremque(so);
@@ -170,6 +171,7 @@ sofree(struct socket *so)
 	so->so_userfn = NULL;
 	//tcp_canceltimers( &so->inp_ppcb  ); // ?????
 	somfree(so);
+	return 1;
 }
 
 /*
@@ -180,7 +182,7 @@ sofree(struct socket *so)
 int
 bsd_close(struct socket *so)
 {
-	int i, error;
+	int i, rc;
 	struct dlist *head;
 	struct socket *aso;
 
@@ -188,7 +190,6 @@ bsd_close(struct socket *so)
 		return -EINVAL;
 	}
 	so->so_state |= SS_NOFDREF;
-	error = 0;
 	if (so->so_options & SO_OPTION(SO_ACCEPTCONN)) {
 		for (i = 0; i < ARRAY_SIZE(so->so_q); ++i) {
 			head = so->so_q + i;
@@ -199,12 +200,16 @@ bsd_close(struct socket *so)
 		}
 	}
 	if (so->so_proto == IPPROTO_TCP) {
-		error = tcp_disconnect(so);
+		rc = tcp_disconnect(so);
 	} else {
-		error = udp_disconnect(so);
+		rc = udp_disconnect(so);
 	}
-	sofree(so);
-	return -error;
+	if (rc <= 0) {
+		sofree(so);
+		return -rc;
+	} else {
+		return 0;
+	}
 }
 
 void

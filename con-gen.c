@@ -44,12 +44,14 @@ struct thread threads[N_THREADS_MAX];
 int n_threads;
 __thread struct thread *current;
 
-void bsd_eth_in(void *, int);
+static int g_transport = TRANSPORT_DEFAULT;
+int g_udp;
+int g_toy;
+
 void bsd_flush(void);
 void bsd_server_listen(int);
 void bsd_client_connect(int proto);
 
-void toy_eth_in(void *, int);
 void toy_flush(void);
 void toy_server_listen(int);
 void toy_client_connect(void);
@@ -162,7 +164,7 @@ ip_socket_hash(struct dlist *p)
 	uint32_t h;
 	struct ip_socket *so;
 
-	so = container_of(p, struct ip_socket, ipso_list);
+	so = cg_container_of(p, struct ip_socket, ipso_list);
 	h = SO_HASH(so->ipso_faddr, so->ipso_lport, so->ipso_fport);
 	return h;
 }
@@ -303,15 +305,16 @@ thread_init_dst_cache(struct thread *t)
 
 	t->t_dst_cache = malloc(t->t_dst_cache_size * sizeof(struct ip_socket));
 	if (t->t_dst_cache == NULL) {
-		panic(0, "Not enough memory (%zu) for dst cache",
-			t->t_dst_cache_size * sizeof(struct ip_socket));
+		panic(0, "Not enough memory to allocate dst cache");
 	}
+
 	ip_laddr_connect = t->t_ip_laddr_min;
 	ip_lport_connect = EPHEMERAL_MIN;
 	ip_faddr_connect = t->t_ip_faddr_min;
 	dst_cache_size = 0;
 	n = (t->t_ip_laddr_max - t->t_ip_laddr_min + 1) * 
 		(t->t_ip_faddr_max - t->t_ip_faddr_min + 1) * NEPHEMERAL;
+
 	for (i = 0; i < n; ++i) {
 		laddr = htonl(ip_laddr_connect);
 		faddr = htonl(ip_faddr_connect);
@@ -332,12 +335,13 @@ thread_init_dst_cache(struct thread *t)
 				}
 			}
 		}
-		if (t->t_rss_queue_id != RSS_QUEUE_ID_NONE && t->t_rss_queue_num > 1) {
+		if (t->t_rss_queue_id < RSS_QUEUE_ID_MAX && t->t_rss_queue_num > 1) {
 			h = rss_hash4(laddr, faddr, lport, fport, t->t_rss_key);
 			if ((h % t->t_rss_queue_num) != t->t_rss_queue_id) {
 				continue;
 			}
 		}
+
 		so = t->t_dst_cache + dst_cache_size;
 		so->ipso_laddr = laddr;
 		so->ipso_faddr = faddr;
@@ -349,7 +353,11 @@ thread_init_dst_cache(struct thread *t)
 			break;
 		}
 	}
+
 	t->t_dst_cache_size = dst_cache_size;
+	if (t->t_dst_cache_size < t->t_concurrency) {
+		panic(0, "Not enough dst cache to perform concurrency (RSS is invalid)");
+	}
 }
 
 static void
@@ -484,10 +492,12 @@ thread_process(void)
 	struct pollfd pfds[ARRAY_SIZE(current->t_pfds)];
 
 	io_tx();
-	memcpy(pfds, current->t_pfds, current->t_pfd_num * sizeof(struct pollfd));
-	to.tv_sec = 0;
-	to.tv_nsec = 20;
-	ppoll(pfds, current->t_pfd_num, &to, NULL);
+	if (!current->t_busyloop) {
+		memcpy(pfds, current->t_pfds, current->t_pfd_num * sizeof(struct pollfd));
+		to.tv_sec = 0;
+		to.tv_nsec = 20;
+		ppoll(pfds, current->t_pfd_num, &to, NULL);
+	}
 	t = rdtsc();
 	if (t > current->t_tsc) {
 		current->t_time = 1000llu * t / tsc_mhz;
@@ -498,14 +508,18 @@ thread_process(void)
 		}
 	}
 	current->t_tsc = t;
-	for (i = 0; i < current->t_pfd_num; ++i) {
-		if (pfds[i].revents & POLLIN) {
-			spinlock_lock(&current->t_lock);
-			io_rx(i);
-			spinlock_unlock(&current->t_lock);
-		}
-		if (pfds[i].revents & POLLOUT) {
-			current->t_pfds[i].events &= ~POLLOUT;
+	if (current->t_busyloop) {
+		io_rx(INT_MAX);
+	} else {
+		for (i = 0; i < current->t_pfd_num; ++i) {
+			if (pfds[i].revents & POLLIN) {
+				spinlock_lock(&current->t_lock);
+				io_rx(i);
+				spinlock_unlock(&current->t_lock);
+			}
+			if (pfds[i].revents & POLLOUT) {
+				current->t_pfds[i].events &= ~POLLOUT;
+			}
 		}
 	}
 	check_timers();
@@ -517,7 +531,7 @@ thread_process(void)
 			DLIST_INSERT_HEAD(&current->t_available_head, pkt, pkt.list);
 		}
 	}
-	if (current->t_toy) {
+	if (g_toy) {
 		toy_flush();
 	} else {
 		bsd_flush();
@@ -535,13 +549,6 @@ thread_routine(void *udata)
 		set_affinity(current->t_affinity);
 	}
 
-	if (!current->t_Lflag) {
-		if (current->t_dst_cache_size < 2 * current->t_concurrency) {
-			current->t_dst_cache_size = 2 * current->t_concurrency;
-		}
-		thread_init_dst_cache(current);
-	}
-
 	current->t_tsc = rdtsc();
 	current->t_time = 1000 * current->t_tsc / tsc_mhz;
 	current->t_tcp_now = 1;
@@ -549,16 +556,16 @@ thread_routine(void *udata)
 
 	init_timers();
 
-	proto = current->t_udp ? IPPROTO_UDP : IPPROTO_TCP;
+	proto = g_udp ? IPPROTO_UDP : IPPROTO_TCP;
 
 	if (current->t_Lflag) {
-		if (current->t_toy) {
+		if (g_toy) {
 			toy_server_listen(proto);
 		} else {
 			bsd_server_listen(proto);
 		}
 	} else {
-		if (current->t_toy) {
+		if (g_toy) {
 			toy_client_connect();
 		} else {
 			bsd_client_connect(proto);
@@ -602,6 +609,9 @@ usage(void)
 #ifdef HAVE_XDP
 	"\t--xdp:  Use XDP transport\n"
 #endif
+#ifdef HAVE_DPDK
+	"\t--dpdk:  USE DPDK transport\n"
+#endif
 	"\t--udp:  Use UDP instead of TCP\n"
 	"\t--toy:  Use \"toy\" tcp/ip stack instead of bsd4.4 (it is a bit faster)\n"
 	"\t--dst-cache:  Number of precomputed connect tuples (default: 100000)\n"
@@ -640,6 +650,9 @@ static struct option long_options[] = {
 #ifdef HAVE_XDP
 	{ "xdp", no_argument, 0, 0 },
 #endif
+#ifdef HAVE_DPDK
+	{ "dpdk", no_argument, 0, 0 },
+#endif
 	{ "ip-in-cksum", required_argument, 0, 0 },
 	{ "ip-out-cksum", required_argument, 0, 0 },
 	{ "tcp-in-cksum", required_argument, 0, 0 },
@@ -659,33 +672,78 @@ static struct option long_options[] = {
 	{ 0, 0, 0, 0 }
 };
 
-static void
-udp_in(void *data, int len)
+static const char *short_options = "hvi:q:s:d:S:D:a:n:c:p:NL";
+
+#ifdef HAVE_DPDK
+int dpdk_parse_args(int argc, char **argv);
+
+static bool
+validate_args(int argc, char **argv)
 {
-	counter64_inc(&if_ipackets);
-	counter64_add(&if_ibytes, len);
+	int save_opterr, opt, option_index;
+
+	save_opterr = opterr;
+	opterr = 0;
+	while ((opt = getopt_long(argc, argv, short_options,
+			long_options, &option_index)) != -1) {
+		if (opt != 0 && strchr(short_options, opt) == NULL) {
+			optind = 1;
+			opterr = save_opterr;
+			return false;
+		}
+	}
+
+	optind = 1;
+	opterr = save_opterr;
+	return true;
 }
+
+int
+io_parse_args(int argc, char **argv)
+{
+	int rc;
+	char *fake_argv[1];
+
+	if (validate_args(argc, argv)) {
+		fake_argv[0] = "con-gen";
+		dpdk_parse_args(ARRAY_SIZE(fake_argv), fake_argv);
+		return 0;
+	} else {
+		rc = dpdk_parse_args(argc, argv);
+		if (rc < 0) {
+			return 0;
+		} else {
+			return rc;
+		}
+	}
+}
+#else // HAVE_DPDK
+int
+io_parse_args(int argc, char **argv)
+{
+	return 0;
+}
+#endif // HAVE_DPDK
 
 static int
 thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char **argv)
 {
 	int rc, opt, option_index;
+	char *endptr;
 	const char *optname;
-	const char *ifname;
 	long long optval;
 
 	spinlock_init(&t->t_lock);
 	t->t_id = t - threads;
 	t->t_tcp_rttdflt = TCPTV_SRTTDFLT / PR_SLOWHZ;
+	t->t_ifname[0] = '\0';
 	dlist_init(&t->t_available_head);
 	dlist_init(&t->t_pending_head);
 	dlist_init(&t->t_so_txq);
 	dlist_init(&t->t_so_pool);
 	dlist_init(&t->t_sob_pool);
-	t->t_rss_queue_id = RSS_QUEUE_ID_NONE;
+	t->t_rss_queue_id = RSS_QUEUE_ID_MAX;
 	if (pt == NULL) {
-		t->t_toy = 0;
-		t->t_transport = TRANSPORT_DEFAULT;
 		t->t_dst_cache_size = 100000;
 		t->t_ip_do_incksum = 2;
 		t->t_ip_do_outcksum = 2;
@@ -703,10 +761,8 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 		scan_ip_range(&t->t_ip_faddr_min, &t->t_ip_faddr_max, "10.1.0.1");
 		t->t_affinity = -1;
 	} else {
-		t->t_toy = pt->t_toy;
-		t->t_transport = pt->t_transport;
+		strzcpy(t->t_ifname, pt->t_ifname, sizeof(t->t_ifname));
 		t->t_dst_cache_size = pt->t_dst_cache_size;
-		t->t_Lflag = pt->t_Lflag;
 		t->t_so_debug = pt->t_so_debug;
 		t->t_ip_do_incksum = pt->t_ip_do_incksum;
 		t->t_ip_do_outcksum = pt->t_ip_do_outcksum;
@@ -726,59 +782,97 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 		t->t_ip_laddr_max = pt->t_ip_laddr_max;
 		t->t_ip_faddr_min = pt->t_ip_faddr_min;
 		t->t_ip_faddr_max = pt->t_ip_faddr_max;
-		t->t_udp = pt->t_udp;
 		t->t_affinity = pt->t_affinity;
 	}
-	ifname = NULL;
-	while ((opt = getopt_long(argc, argv,
-			"hvi:s:d:S:D:a:n:c:p:NL",
+
+	while ((opt = getopt_long(argc, argv, short_options,
 			long_options, &option_index)) != -1) {
-		optval = optarg ? strtoll(optarg, NULL, 10) : 0;
+		optval = -1;
+		if (optarg != NULL) {
+			optval = strtoll(optarg, &endptr, 10);
+			if (*endptr != '\0') {
+				optval = -1;
+			}
+		}
 		switch (opt) {
 		case 0:
 			optname = long_options[option_index].name;
 			if (!strcmp(optname, "udp")) {
-				t->t_udp = 1;
+				g_udp = 1;
 			} else if (!strcmp(optname, "toy")) {
-				t->t_toy = 1;
+				g_toy = 1;
 			} else if (!strcmp(optname, "dst-cache")) {
+				if (optval < 0) {
+					goto err;
+				}
 				t->t_dst_cache_size = optval;
 			} else if (!strcmp(optname, "so-debug")) {
 				t->t_so_debug = 1;
 #ifdef HAVE_NETMAP
 			} else if (!strcmp(optname, "netmap")) {
-				t->t_transport = TRANSPORT_NETMAP;
+				g_transport = TRANSPORT_NETMAP;
 #endif // HAVE_NETMAP
 #ifdef HAVE_PCAP
 			} else if (!strcmp(optname, "pcap")) {
-				t->t_transport = TRANSPORT_PCAP;
+				g_transport = TRANSPORT_PCAP;
 #endif // HAVE_PCAP
 #ifdef HAVE_XDP
 			} else if (!strcmp(optname, "xdp")) {
-				t->t_transport = TRANSPORT_XDP;
+				g_transport = TRANSPORT_XDP;
 #endif // HAVE_XDP
+#ifdef HAVE_DPDK
+			} else if (!strcmp(optname, "dpdk")) {
+				g_transport = TRANSPORT_DPDK;
+#endif // HAVE_DPDK
 			} else if (!strcmp(optname, "ip-in-cksum")) {
+				if (optval < 0) {
+					goto err;
+				}
 				t->t_ip_do_incksum = optval;
 			} else if (!strcmp(optname, "ip-out-cksum")) {
+				if (optval < 0) {
+					goto err;
+				}
 				t->t_ip_do_outcksum = optval;
 			} else if (!strcmp(optname, "tcp-in-cksum")) {
+				if (optval < 0) {
+					goto err;
+				}
 				t->t_tcp_do_incksum = optval;
 			} else if (!strcmp(optname, "tcp-out-cksum")) {
+				if (optval < 0) {
+					goto err;
+				}
 				t->t_tcp_do_outcksum = optval;
 			} else if (!strcmp(optname, "in-cksum")) {
+				if (optval < 0) {
+					goto err;
+				}
 				t->t_ip_do_incksum = optval;
 				t->t_tcp_do_incksum = optval;
 			} else if (!strcmp(optname, "out-cksum")) {
+				if (optval < 0) {
+					goto err;
+				}
 				t->t_ip_do_outcksum = optval;
 				t->t_tcp_do_outcksum = optval;
 			} else if (!strcmp(optname, "cksum")) {
+				if (optval < 0) {
+					goto err;
+				}
 				t->t_ip_do_incksum = optval;
 				t->t_tcp_do_incksum = optval;
 				t->t_ip_do_outcksum = optval;
 				t->t_tcp_do_outcksum = optval;
 			} else if (!strcmp(optname, "tcp-wscale")) {
+				if (optval < 0) {
+					goto err;
+				}
 				t->t_tcp_do_wscale = optval;
 			} else if (!strcmp(optname, "tcp-timestamps")) {
+				if (optval < 0) {
+					goto err;
+				}
 				t->t_tcp_do_timestamps = optval;
 			} else if (!strcmp(optname, "tcp-fin-timeout")) {
 				if (optval < 30) {
@@ -786,16 +880,31 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 				}
 				t->t_tcp_fintimo = optval * NANOSECONDS_SECOND;
 			} else if (!strcmp(optname, "tcp-timewait-timeout")) {
+				if (optval < 0) {
+					goto err;
+				}
 				t->t_tcp_twtimo = optval * NANOSECONDS_SECOND;
 			} else if (!strcmp(optname, "report-bytes")) {
 				report_bytes_flag = 1;
 			} else if (!strcmp(optname, "reports")) {
+				if (optval < 1) {
+					goto err;
+				}
 				n_reports_max = optval;
 			} else if (!strcmp(optname, "print-report")) {
+				if (optval < 0) {
+					goto err;
+				}
 				g_fprint_report = optval;
 			} else if (!strcmp(optname, "print-banner")) {
+				if (optval < 0) {
+					goto err;
+				}
 				print_banner = optval;
 			} else if (!strcmp(optname, "print-statistics")) {
+				if (optval < 0) {
+					goto err;
+				}
 				print_statistics = optval;
 			}
 			break;
@@ -806,7 +915,13 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 			verbose++;
 			break;
 		case 'i':
-			ifname = optarg;
+			strzcpy(t->t_ifname, optarg, sizeof(t->t_ifname));
+			break;
+		case 'q':
+			if (optval < 0 || optval >= RSS_QUEUE_ID_MAX) {
+				goto err;
+			}
+			t->t_rss_queue_id = optval;
 			break;
 		case 's':
 			rc = scan_ip_range(&t->t_ip_laddr_min, &t->t_ip_laddr_max, optarg);
@@ -833,9 +948,15 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 			}
 			break;
 		case 'a':
+			if (optval < 0) {
+				goto err;
+			}
 			t->t_affinity = optval;
 			break;
 		case 'n':
+			if (optval < 0) {
+				goto err;
+			}
 			t->t_nflag = optval;
 			break;
 		case 'c':
@@ -855,18 +976,20 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 			break;
 		default:
 err:
-			fprintf(stderr, "Invalid argument '-%c': %s\n", opt, optarg);
+			if (opt != 0) {
+				fprintf(stderr, "Invalid argument '-%c': %s\n", opt, optarg);
+			} else {
+				fprintf(stderr, "Invalid argument '--%s': %s\n", optname, optarg);
+			}
 			return -EINVAL;
 		}
 	}
-	if (ifname == NULL) {
+	if (t->t_ifname[0] == '\0') {
 		fprintf(stderr, "Interface (-i) not specified for thread %d\n", thread_idx);
 		usage();
 		return -EINVAL;
 	}
-	set_transport(t, t->t_transport);
 	current = t;
-	io_init(ifname);
 	htable_init(&t->t_in_htable, 4096, ip_socket_hash);
 	if (t->t_Lflag) {
 		t->t_http = http_reply;
@@ -874,17 +997,6 @@ err:
 	} else {
 		t->t_http = http_request;
 		t->t_http_len = http_request_len;
-	}
-	if (t->t_udp) {
-		t->t_rx_op = udp_in;
-		if (t->t_toy) {
-			fprintf(stderr, "\"toy\" tcp/ip stack doesn't support UDP\n");
-			return -EINVAL;
-		}
-	} else if (t->t_toy) {
-		t->t_rx_op = toy_eth_in;
-	} else {
-		t->t_rx_op = bsd_eth_in;
 	}
 	t->t_counters = xmalloc(n_counters * sizeof(uint64_t));
 	memset(t->t_counters, 0, n_counters * sizeof(uint64_t));
@@ -954,6 +1066,11 @@ main(int argc, char **argv)
 		"Content-Type: text/html\r\n"
 		"Connection: close\r\n"
 		"Hi\r\n\r\n");
+
+	rc = io_parse_args(argc, argv);
+	argc -= rc;
+	argv += rc;
+
 	pt = NULL;
 	opt_off = 0;
 	while (opt_off < argc - 1 && n_threads < N_THREADS_MAX) {
@@ -971,21 +1088,41 @@ main(int argc, char **argv)
 		usage();
 		return EXIT_FAILURE;
 	}
+
+	set_transport(g_transport, g_udp, g_toy);
+	io_init(threads, n_threads);
+
 	for (i = 0; i < n_threads; ++i) {
 		t = threads + i;
+
+		if (!t->t_Lflag) {
+			if (t->t_dst_cache_size < 2 * t->t_concurrency) {
+				t->t_dst_cache_size = 2 * t->t_concurrency;
+			}
+			thread_init_dst_cache(t);
+		}
+	}
+
+	for (i = 0; i < n_threads; ++i) {
+		t = threads + i;
+
 		rc = pthread_create(&t->t_pthread, NULL, thread_routine, t);
 		if (rc) {
 			fprintf(stderr, "pthread_create() failed (%s)\n", strerror(rc));
 			return EXIT_FAILURE;
 		}
 	}
+
 	main_routine();	
+
 	for (i = 0; i < n_threads; ++i) {
 		t = threads + i;
 		pthread_join(t->t_pthread, NULL);
 	}
+
 	if (print_statistics) {
 		print_stats(stdout, verbose);
 	}
+
 	return 0;
 }

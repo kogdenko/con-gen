@@ -43,17 +43,27 @@
 #include <pthread_np.h>
 #endif // __linux__
 
+#ifdef HAVE_DPDK
+#include <rte_ring.h>
+
+struct rte_mbuf;
+
+#define DPDK_MAX_PKT_BURST 256
+#endif
+
 #include "gbtcp/list.h"
 #include "gbtcp/htable.h"
 
 // Define
 #define N_THREADS_MAX 32
 
+#define CG_TX_PENDING_MAX 2048
+
 #define EPHEMERAL_MIN 5000
 #define EPHEMERAL_MAX 65535
 #define NEPHEMERAL (EPHEMERAL_MAX - EPHEMERAL_MIN + 1)
 
-#define RSS_QUEUE_ID_NONE 255
+#define RSS_QUEUE_ID_MAX 128
 #define RSS_KEY_SIZE 40
 
 #define	TCP_NSTATES	11
@@ -80,11 +90,14 @@
 #define TRANSPORT_NETMAP 0
 #define TRANSPORT_XDP 1
 #define TRANSPORT_PCAP 2
+#define TRANSPORT_DPDK 3
 
 #ifdef HAVE_NETMAP
 #define TRANSPORT_DEFAULT TRANSPORT_NETMAP
 #elif defined HAVE_XDP
 #define TRANSPORT_DEFAULT TRANSPORT_XDP
+#elif defined HAVE_DPDK
+#define TRANSPORT_DEFAULT TRANSPORT_DPDK
 #else
 #define TRANSPORT_DEFAULT TRANSPORT_PCAP
 #endif
@@ -232,6 +245,9 @@ struct packet {
 				int queue_idx;
 			};
 #endif
+#ifdef HAVE_DPDK
+			struct rte_mbuf *mbuf;
+#endif
 		};
 	} pkt;
 	u_char pkt_body[2048 - sizeof(struct packet_header)];
@@ -242,16 +258,8 @@ struct thread {
 	struct dlist t_available_head;
 	struct dlist t_pending_head;
 	unsigned t_n_pending;
-	void (*t_rx_op)(void *, int);
-	void (*t_io_init_op)(const char *);
-	bool (*t_io_is_tx_throttled_op)(void);
-	void (*t_io_init_tx_packet_op)(struct packet *);
-	void (*t_io_deinit_tx_packet_op)(struct packet *);
-	bool (*t_io_tx_packet_op)(struct packet *);
-	void (*t_io_tx_op)(void);
-	int (*t_io_rx_op)(int);
+	u_char t_busyloop;
 	u_char t_id;
-	u_char t_toy;
 	u_char t_done;
 	u_char t_Lflag;
 	u_char t_so_debug;
@@ -270,17 +278,32 @@ struct thread {
 	u_char t_rss_key[RSS_KEY_SIZE];
 	struct pollfd t_pfds[256];
 	int t_pfd_num;
+	union {
 #ifdef HAVE_NETMAP
-	struct nm_desc *t_nmd;
+		struct {
+			struct nm_desc *t_nmd;
+		};
 #endif
 #ifdef HAVE_PCAP
-	void *t_pcap;
+		struct {
+			void *t_pcap;
+		};
 #endif
 #ifdef HAVE_XDP
-	struct xdp_queue *t_xdp_queues;
-	int t_xdp_queue_num;
-	uint32_t t_xdp_prog_id;
+		struct {
+			struct xdp_queue *t_xdp_queues;
+			int t_xdp_queue_num;
+			uint32_t t_xdp_prog_id;
+		};
 #endif
+#ifdef HAVE_DPDK
+		struct {
+			uint16_t t_dpdk_port_id;
+			int t_dpdk_tx_bufsiz;
+			struct rte_mbuf *t_dpdk_tx_buf[DPDK_MAX_PKT_BURST];
+		};
+#endif
+	};
 	struct ip_socket *t_dst_cache;
 	int t_dst_cache_size;
 	int t_dst_cache_i;
@@ -309,13 +332,24 @@ struct thread {
 	int t_http_len;
 	htable_t t_in_htable;
 	void *t_in_binded[EPHEMERAL_MIN];
-	u_char t_udp;
-	u_char t_transport;
 	int t_affinity;
 	pthread_t t_pthread;
 	char t_ifname[IFNAMSIZ];
 	uint64_t *t_counters;
 };
+
+struct transport_ops {
+	void (*tr_io_process_op)(void *, int);
+	void (*tr_io_init_op)(struct thread *, int);
+	bool (*tr_io_is_tx_throttled_op)(void);
+	void (*tr_io_init_tx_packet_op)(struct packet *);
+	void (*tr_io_deinit_tx_packet_op)(struct packet *);
+	bool (*tr_io_tx_packet_op)(struct packet *);
+	void (*tr_io_tx_op)(void);
+	int (*tr_io_rx_op)(int);
+};
+
+extern uint8_t freebsd_rss_key[RSS_KEY_SIZE];
 
 // Function
 void dbg5(const char *, u_int, const char *, int, const char *, ...)
@@ -329,6 +363,9 @@ void panic3(const char *, int, int, const char *, ...)
 	__attribute__((format(printf, 4, 5)));
 
 char *strzcpy(char *, const char *, size_t);
+
+void read_rss_key(const char *ifname, u_char *rss_key);
+
 uint32_t toeplitz_hash(const u_char *, int, const u_char *);
 uint32_t rss_hash4(be32_t, be32_t, be16_t, be16_t, u_char *);
 
@@ -345,27 +382,18 @@ void spinlock_unlock(struct spinlock *);
 void counter64_init(counter64_t *);
 uint64_t counter64_get(counter64_t *);
 
-void set_transport(struct thread *, int);
+void set_transport(int transport, int udp, int toy);
 
 void add_pending_packet(struct packet *);
 
-#ifdef HAVE_NETMAP
-void set_netmap_ops(struct thread *);
-#endif
-#ifdef HAVE_XDP
-void set_xdp_ops(struct thread *);
-#endif
-#ifdef HAVE_PCAP
-void set_pcap_ops(struct thread *);
-#endif
-
-void io_init(const char *);
+void io_init(struct thread *threads, int n_threads);
 bool io_is_tx_throttled(void);
 void io_init_tx_packet(struct packet *);
 void io_deinit_tx_packet(struct packet *);
 int io_tx_packet(struct packet *);
 void io_tx(void);
 int io_rx(int);
+void io_process(void *pkt, int pkt_len);
 
 int multiplexer_add(int);
 void multiplexer_pollout(int);

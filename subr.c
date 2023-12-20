@@ -3,14 +3,6 @@
 
 #include <sys/resource.h>
 
-static struct spinlock panic_lock;
-
-int verbose;
-struct udpstat udpstat;
-struct tcpstat tcpstat;
-struct ipstat ipstat;
-struct icmpstat icmpstat;
-
 const char *tcpstates[TCP_NSTATES] = {
 	[TCPS_CLOSED] = "CLOSED",
 	[TCPS_LISTEN] = "LISTEN",
@@ -25,18 +17,55 @@ const char *tcpstates[TCP_NSTATES] = {
 	[TCPS_TIME_WAIT] = "TIME_WAIT",
 };
 
-static void read_rss_key(const char *, u_char *) __attribute__((unused));
+static struct spinlock panic_lock;
+
+int verbose;
+struct udpstat udpstat;
+struct tcpstat tcpstat;
+struct ipstat ipstat;
+struct icmpstat icmpstat;
+struct transport_ops *tr_ops;
+
+uint8_t freebsd_rss_key[RSS_KEY_SIZE] = {
+	0x6d, 0x5a, 0x56, 0xda, 0x25, 0x5b, 0x0e, 0xc2,
+	0x41, 0x67, 0x25, 0x3d, 0x43, 0xa3, 0x8f, 0xb0,
+	0xd0, 0xca, 0x2b, 0xcb, 0xae, 0x7b, 0x30, 0xb4,
+	0x77, 0xcb, 0x2d, 0xa3, 0x80, 0x30, 0xf2, 0x0c,
+	0x6a, 0x42, 0xb7, 0x3b, 0xbe, 0xac, 0x01, 0xfa,
+};
+
+
+#ifdef HAVE_NETMAP
+extern struct transport_ops netmap_ops;
+#endif
+#ifdef HAVE_XDP
+extern struct transport_ops xdp_ops;
+#endif
+#ifdef HAVE_PCAP
+extern struct transport_ops pcap_io_ops;
+#endif
+#ifdef HAVE_DPDK
+extern struct transport_ops dpdk_ops;
+#endif
+
+void bsd_eth_in(void *, int);
+void toy_eth_in(void *, int);
 
 void
-dbg5(const char *file, u_int line, const char *func, int suppressed,
+dbg5(const char *filename, u_int linenum, const char *func, int suppressed,
      const char *fmt, ...)
 {
 	int len;
 	char buf[BUFSIZ];
 	va_list ap;
+	static FILE *file = NULL;
+
+	if (file == NULL) {
+		file = fopen("/tmp/con-gen.log", "w");
+	}
 
 	len = snprintf(buf, sizeof(buf), "%-6d: %-20s: %-4d: %-20s: ",
-		getpid(), file, line, func);
+			getpid(), filename, linenum, func);
 	va_start(ap, fmt);
 	len += vsnprintf(buf + len, sizeof(buf) - len, fmt, ap);
 	va_end(ap);
@@ -45,6 +74,17 @@ dbg5(const char *file, u_int line, const char *func, int suppressed,
 			suppressed);
 	}
 	printf("%s\n", buf);
+	if (file != NULL) {
+		fprintf(file, "%s\n", buf);
+		fflush(file);
+	}
+}
+
+static void
+udp_in(void *data, int len)
+{
+	counter64_inc(&if_ipackets);
+	counter64_add(&if_ibytes, len);
 }
 
 void
@@ -83,7 +123,6 @@ struct pseudo {
 	uint8_t ph_proto;
 	be16_t ph_len;
 } __attribute__((packed));
-
 
 static inline uint64_t
 cksum_add(uint64_t sum, uint64_t x)
@@ -227,8 +266,9 @@ add_pending_packet(struct packet *pkt)
 	struct packet *cp;
 
 	if (dlist_is_empty(&current->t_available_head)) {
-		if (current->t_n_pending < 2048) {
+		if (current->t_n_pending < CG_TX_PENDING_MAX) {
 			cp = xmalloc(sizeof(*pkt));
+			memset(cp, 0, sizeof(*cp));
 		} else {
 			cp = DLIST_FIRST(&current->t_pending_head, struct packet, pkt.list);
 			current->t_n_pending--;
@@ -243,61 +283,73 @@ add_pending_packet(struct packet *pkt)
 	cp->pkt.buf = cp->pkt_body;
 	DLIST_INSERT_TAIL(&current->t_pending_head, cp, pkt.list);
 	current->t_n_pending++;
-
 }
 
 void
-set_transport(struct thread *t, int transport)
+set_transport(int transport, int udp, int toy)
 {
 	switch (transport) {
 #ifdef HAVE_NETMAP
 	case TRANSPORT_NETMAP:
-		set_netmap_ops(t);
+		tr_ops = &netmap_ops;
 		break;
 #endif
 #ifdef HAVE_PCAP
 	case TRANSPORT_PCAP:
-		set_pcap_ops(t);
+		tr_ops = &pcap_io_ops;
 		break;
 #endif
 #ifdef HAVE_XDP
 	case TRANSPORT_XDP:
-		set_xdp_ops(t);
+		tr_ops = &xdp_ops;
+		break;
+#endif
+#ifdef HAVE_DPDK
+	case TRANSPORT_DPDK:
+		tr_ops = &dpdk_ops;
 		break;
 #endif
 	default:
 		panic(0, "Transport %d not supported", transport);
 		break;
 	}
+
+	if (udp) {
+		tr_ops->tr_io_process_op = udp_in;
+		if (toy) {
+			panic(0, "'toy' tcp/ip stack doesn't support UDP\n");
+		}
+	} else if (toy) {
+		tr_ops->tr_io_process_op = toy_eth_in;
+	} else {
+		tr_ops->tr_io_process_op = bsd_eth_in;
+	}
 }
 
 void
-io_init(const char *ifname)
+io_init(struct thread *threads, int n_threads)
 {
-	(*current->t_io_init_op)(ifname);
-	if (current->t_rss_queue_num > 1 && current->t_rss_queue_id != RSS_QUEUE_ID_NONE) {
-		read_rss_key(current->t_ifname, current->t_rss_key);
-	}
+	(*tr_ops->tr_io_init_op)(threads, n_threads);
 }
 
 void
 io_init_tx_packet(struct packet *pkt)
 {
-	return (*current->t_io_init_tx_packet_op)(pkt);
+	return (*tr_ops->tr_io_init_tx_packet_op)(pkt);
 }
 
 void
 io_deinit_tx_packet(struct packet *pkt)
 {
-	if (current->t_io_deinit_tx_packet_op != NULL) {
-		(*current->t_io_deinit_tx_packet_op)(pkt);
+	if (tr_ops->tr_io_deinit_tx_packet_op != NULL) {
+		(*tr_ops->tr_io_deinit_tx_packet_op)(pkt);
 	}
 }
 
 bool
 io_is_tx_throttled(void)
 {
-	return (*current->t_io_is_tx_throttled_op)();
+	return (*tr_ops->tr_io_is_tx_throttled_op)();
 }
 
 int
@@ -307,7 +359,7 @@ io_tx_packet(struct packet *pkt)
 	bool sent;
 
 	len = pkt->pkt.len;
-	sent = (*current->t_io_tx_packet_op)(pkt);
+	sent = (*tr_ops->tr_io_tx_packet_op)(pkt);
 	if (sent) {
 		counter64_add(&if_obytes, len);
 		counter64_inc(&if_opackets);
@@ -320,15 +372,21 @@ io_tx_packet(struct packet *pkt)
 int
 io_rx(int queue_id)
 {
-	return (*current->t_io_rx_op)(queue_id);
+	return (*tr_ops->tr_io_rx_op)(queue_id);
 }
 
 void
 io_tx(void)
 {
-	if (current->t_io_tx_op != NULL) {
-		(*current->t_io_tx_op)();
+	if (tr_ops->tr_io_tx_op != NULL) {
+		(*tr_ops->tr_io_tx_op)();
 	}
+}
+
+void
+io_process(void *pkt, int pkt_len)
+{
+	(*tr_ops->tr_io_process_op)(pkt, pkt_len);
 }
 
 int
@@ -368,7 +426,7 @@ strzcpy(char *dest, const char *src, size_t n)
 }
 
 #ifdef __linux__
-static void
+void
 read_rss_key(const char *ifname, u_char *rss_key)
 {
 	int fd, rc, size, off;
@@ -413,13 +471,6 @@ read_rss_key(const char *ifname, u_char *rss_key)
 void
 read_rss_key(const char *ifname, u_char *rss_key)
 {
-	static uint8_t freebsd_rss_key[RSS_KEY_SIZE] = {
-		0x6d, 0x5a, 0x56, 0xda, 0x25, 0x5b, 0x0e, 0xc2,
-		0x41, 0x67, 0x25, 0x3d, 0x43, 0xa3, 0x8f, 0xb0,
-		0xd0, 0xca, 0x2b, 0xcb, 0xae, 0x7b, 0x30, 0xb4,
-		0x77, 0xcb, 0x2d, 0xa3, 0x80, 0x30, 0xf2, 0x0c,
-		0x6a, 0x42, 0xb7, 0x3b, 0xbe, 0xac, 0x01, 0xfa,
-	};
 	memcpy(rss_key, freebsd_rss_key, RSS_KEY_SIZE);
 }
 #endif // __linux__
@@ -529,6 +580,7 @@ ip_socket_get(struct ip_socket *x, uint32_t h)
 				so->ipso_fport == x->ipso_fport) {
 			return so;
 		}
+		
 	}
 	return NULL;
 }
