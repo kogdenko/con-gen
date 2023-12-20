@@ -712,7 +712,6 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 	} else {
 		strzcpy(t->t_ifname, pt->t_ifname, sizeof(t->t_ifname));
 		t->t_dst_cache_size = pt->t_dst_cache_size;
-		t->t_Lflag = pt->t_Lflag;
 		t->t_so_debug = pt->t_so_debug;
 		t->t_ip_do_incksum = pt->t_ip_do_incksum;
 		t->t_ip_do_outcksum = pt->t_ip_do_outcksum;

@@ -36,24 +36,6 @@ struct dpdk_port {
 static struct dpdk_port g_ports[RTE_MAX_ETHPORTS];
 static struct rte_mempool *g_pktmbuf_pool;
 
-static const char *
-dpdk_port_name(struct dpdk_port *port, struct rte_eth_dev_info *dev_info)
-{
-	int port_id;
-
-	port_id = port - g_ports;
-	rte_eth_dev_info_get(port_id, dev_info);
-	if (dev_info->device == NULL) {
-		return "???";
-	}
-
-#if RTE_VERSION <= RTE_VERSION_NUM(22, 7, 0, 99)
-	return dev_info->device->name;
-#else
-	return rte_dev_name(dev_info->device);
-#endif
-}
-
 int
 dpdk_parse_args(int argc, char **argv)
 {
@@ -67,8 +49,8 @@ dpdk_parse_args(int argc, char **argv)
 static void
 dpdk_init(struct thread *threads, int n_threads)
 {
-	int i, j, rc, n_mbufs;
-	const char *port_name;
+	int i, rc, n_mbufs, port_id, socket_id;
+	char port_name[RTE_ETH_NAME_MAX_LEN];
 	struct rte_eth_dev_info dev_info;
 	struct rte_eth_conf port_conf;
 	struct rte_eth_rxconf rxq_conf;
@@ -97,13 +79,17 @@ dpdk_init(struct thread *threads, int n_threads)
 
 	n_mbufs = CG_TX_PENDING_MAX;
 
-	for (i = 0; i < ARRAY_SIZE(g_ports); ++i) {
-		port = g_ports + i;
+	RTE_ETH_FOREACH_DEV(port_id) {
+		port = g_ports + port_id;
 		if (port->n_queues == 0) {
 			continue;
 		}
 
-		port_name = dpdk_port_name(port, &dev_info);
+		rte_eth_dev_get_name_by_port(port_id, port_name);
+		rc = rte_eth_dev_info_get(port_id, &dev_info);
+		if (rc < 0) {
+			panic(-rc, "rte_eth_dev_info_get('%s') failed", port_name);
+		}
 
 		memset(&port_conf, 0, sizeof(port_conf));
 		port_conf.txmode.mq_mode = DPDK_ETH_MQ_TX_NONE;
@@ -117,7 +103,7 @@ dpdk_init(struct thread *threads, int n_threads)
 			port_conf.txmode.offloads |= DPDK_ETH_TX_OFFLOAD_MBUF_FAST_FREE;
 		}
 
-		rc = rte_eth_dev_configure(i, port->n_queues, port->n_queues, &port_conf);
+		rc = rte_eth_dev_configure(port_id, port->n_queues, port->n_queues, &port_conf);
 		if (rc < 0) {
 			panic(-rc, "rte_eth_dev_configure('%s', %d, %d) failed",
 					port_name, port->n_queues, port->n_queues);
@@ -125,7 +111,7 @@ dpdk_init(struct thread *threads, int n_threads)
 
 		port->n_rxd = 4096;
 		port->n_txd = 4096;
-		rc = rte_eth_dev_adjust_nb_rx_tx_desc(i, &port->n_rxd, &port->n_txd);
+		rc = rte_eth_dev_adjust_nb_rx_tx_desc(port_id, &port->n_rxd, &port->n_txd);
 		if (rc < 0) {
 			panic(-rc, "rte_eth_dev_adjust_nb_rx_tx_desc('%s') failed", port_name);
 		}
@@ -140,38 +126,42 @@ dpdk_init(struct thread *threads, int n_threads)
 		panic(rte_errno, "rte_pktmbuf_pool_create(%d) failed", n_mbufs);
 	}
 
-	for (i = 0; i < ARRAY_SIZE(g_ports); ++i) {
-		port = g_ports + i;
+	RTE_ETH_FOREACH_DEV(port_id) {
+		port = g_ports + port_id;
 		if (port->n_queues == 0) {
 			continue;
 		}
 
-		port_name = dpdk_port_name(port, &dev_info);
+		rte_eth_dev_get_name_by_port(port_id, port_name);
+		rc = rte_eth_dev_info_get(port_id, &dev_info);
+		if (rc < 0) {
+			panic(-rc, "rte_eth_dev_info_get('%s') failed", port_name);
+		}
 
-		for (j = 0; j < port->n_queues; ++j) {
+		for (i = 0; i < port->n_queues; ++i) {
 			rxq_conf = dev_info.default_rxconf;
-			rc = rte_eth_rx_queue_setup(i, j, port->n_rxd,
-					rte_eth_dev_socket_id(i), &rxq_conf, g_pktmbuf_pool);
+			socket_id = rte_eth_dev_socket_id(port_id);
+			rc = rte_eth_rx_queue_setup(port_id, i, port->n_rxd,
+					socket_id, &rxq_conf, g_pktmbuf_pool);
 			if (rc < 0) {
 				panic(-rc, "rte_eth_rx_queue_setup('%s', %d, %d) failed",
-						port_name, i, j);
+						port_name, port_id, i);
 			}
 
 			txq_conf = dev_info.default_txconf;
-			rc = rte_eth_tx_queue_setup(i, j, port->n_txd,
-					rte_eth_dev_socket_id(i), &txq_conf);
+			rc = rte_eth_tx_queue_setup(port_id, i, port->n_txd, socket_id, &txq_conf);
 			if (rc < 0) {
 				panic(-rc, "rte_eth_tx_queue_setup('%s', %d, %d) failed",
-						port_name, i, j);
+						port_name, port_id, i);
 			}
 		}
 
-		rc = rte_eth_dev_start(i);
+		rc = rte_eth_dev_start(port_id);
 		if (rc < 0) {
 			panic(-rc, "rte_eth_dev_start('%s') failed", port_name);
 		}
 
-		rte_eth_promiscuous_enable(i);
+		rte_eth_promiscuous_enable(port_id);
 	}
 
 	for (i = 0; i < n_threads; ++i) {
@@ -184,7 +174,7 @@ dpdk_init(struct thread *threads, int n_threads)
 			continue;
 		}
 
-		port_name = dpdk_port_name(port, &dev_info);
+		rte_eth_dev_get_name_by_port(port_id, port_name);
 
 		memset(&rss_conf, 0, sizeof(rss_conf));
 		rss_conf.rss_key = t->t_rss_key;
