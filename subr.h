@@ -52,8 +52,8 @@ struct rte_mbuf;
 #define DPDK_MAX_PKT_BURST 128
 #endif
 
-#include "gbtcp/list.h"
-#include "gbtcp/htable.h"
+#include "list.h"
+#include "htable.h"
 
 // Define
 #define N_THREADS_MAX 32
@@ -384,8 +384,6 @@ void spinlock_unlock(struct spinlock *);
 void counter64_init(counter64_t *);
 uint64_t counter64_get(counter64_t *);
 
-void set_transport(int transport, int udp, int toy);
-
 void add_pending_packet(struct packet *);
 
 void io_init(struct thread *threads, int n_threads);
@@ -412,5 +410,8 @@ int alloc_ephemeral_port(uint32_t *, uint16_t *);
 void free_ephemeral_port(uint32_t, uint16_t);
 
 uint32_t select_faddr(void);
+
+void set_transport(int transport, int udp);
+
 
 #endif // CON_GEN__SUBR_H

@@ -1,6 +1,7 @@
-// gpl2 license
+// SPDX-License-Identifier: GPL-2.0-only
+
 #include "timer.h"
-#include "../global.h"
+#include "global.h"
 
 #define TIMER_RING_ID_MASK (((uintptr_t)1 << TIMER_RING_ID_SHIFT) - 1)
 #define TIMER_RING_MAX (1 << TIMER_RING_ID_SHIFT)

@@ -2,7 +2,7 @@ import platform
 import subprocess
 
 
-COMPILER = 'clang'
+COMPILER = 'gcc'
 
 
 def die(s):
@@ -32,6 +32,12 @@ def system(cmd, failure_tollerance=False):
 		die("Command '%s' failed, return code: %d" % (cmd, rc))
 
 	return rc, out, err
+
+
+def check_netmap(conf):
+	if not conf.CheckHeader('net/netmap_user.h'):
+		return False
+	return True
 
 
 def check_xdp(conf):
@@ -100,11 +106,11 @@ g_srcs = [
 	'bsd44/tcp_timer.c',
 	'bsd44/if_ether.c',
 	'bsd44/glue.c',
-	'gbtcp/list.c',
-	'gbtcp/htable.c',
-	'gbtcp/timer.c',
-	'gbtcp/inet.c',
-	'gbtcp/tcp.c',
+	'list.c',
+	'htable.c',
+	'timer.c',
+#	'gbtcp/inet.c',
+#	'gbtcp/tcp.c',
 	'subr.c',
 	'netstat.c',
 	'con-gen.c'
@@ -152,7 +158,7 @@ env=Environment(CC = COMPILER)
 conf = Configure(env)
 have_transport = False
 if not GetOption('without_netmap'):
-	if conf.CheckHeader('net/netmap_user.h'):
+	if (check_netmap(conf)):
 		g_cflags.append('-DHAVE_NETMAP')
 		have_transport = True
 		g_srcs.append('netmap.c')

@@ -286,7 +286,7 @@ add_pending_packet(struct packet *pkt)
 }
 
 void
-set_transport(int transport, int udp, int toy)
+set_transport(int transport, int udp)
 {
 	switch (transport) {
 #ifdef HAVE_NETMAP
@@ -316,11 +316,6 @@ set_transport(int transport, int udp, int toy)
 
 	if (udp) {
 		tr_ops->tr_io_process_op = udp_in;
-		if (toy) {
-			panic(0, "'toy' tcp/ip stack doesn't support UDP\n");
-		}
-	} else if (toy) {
-		tr_ops->tr_io_process_op = toy_eth_in;
 	} else {
 		tr_ops->tr_io_process_op = bsd_eth_in;
 	}

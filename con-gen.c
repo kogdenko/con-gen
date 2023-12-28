@@ -1,7 +1,7 @@
 #include "./bsd44/socket.h"
 #include "./bsd44/if_ether.h"
 #include "./bsd44/ip.h"
-#include "./gbtcp/timer.h"
+#include "timer.h"
 #include "netstat.h"
 #include <getopt.h>
 
@@ -46,7 +46,6 @@ __thread struct thread *current;
 
 static int g_transport = TRANSPORT_DEFAULT;
 int g_udp;
-int g_toy;
 
 void bsd_flush(void);
 void bsd_server_listen(int);
@@ -156,7 +155,6 @@ set_affinity(int cpu_id)
 	}
 	return 0;
 }
-
 
 uint32_t
 ip_socket_hash(struct dlist *p)
@@ -531,11 +529,7 @@ thread_process(void)
 			DLIST_INSERT_HEAD(&current->t_available_head, pkt, pkt.list);
 		}
 	}
-	if (g_toy) {
-		toy_flush();
-	} else {
-		bsd_flush();
-	}
+	bsd_flush();
 }
 
 static void *
@@ -559,17 +553,9 @@ thread_routine(void *udata)
 	proto = g_udp ? IPPROTO_UDP : IPPROTO_TCP;
 
 	if (current->t_Lflag) {
-		if (g_toy) {
-			toy_server_listen(proto);
-		} else {
-			bsd_server_listen(proto);
-		}
+		bsd_server_listen(proto);
 	} else {
-		if (g_toy) {
-			toy_client_connect();
-		} else {
-			bsd_client_connect(proto);
-		}
+		bsd_client_connect(proto);
 	}
 
 	while (!current->t_done) {
@@ -800,8 +786,6 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 			optname = long_options[option_index].name;
 			if (!strcmp(optname, "udp")) {
 				g_udp = 1;
-			} else if (!strcmp(optname, "toy")) {
-				g_toy = 1;
 			} else if (!strcmp(optname, "dst-cache")) {
 				if (optval < 0) {
 					goto err;
@@ -1090,7 +1074,7 @@ main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
-	set_transport(g_transport, g_udp, g_toy);
+	set_transport(g_transport, g_udp);
 	io_init(threads, n_threads);
 
 	for (i = 0; i < n_threads; ++i) {

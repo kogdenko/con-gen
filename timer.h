@@ -1,8 +1,8 @@
-// gpl2 license
-#ifndef CON_GEN__GBTCP__TIMER_H
-#define CON_GEN__GBTCP__TIMER_H
+// SPDX-License-Identifier: GPL-2.0-only
+#ifndef CON_GEN_TIMER_H
+#define CON_GEN_TIMER_H
 
-#include "../subr.h"
+#include "subr.h"
 #include "list.h"
 
 #define TIMER_RING_SIZE 4096llu
@@ -26,4 +26,4 @@ int timer_is_running(struct timer *);
 void timer_set(struct timer *, uint64_t, timer_f);
 void timer_cancel(struct timer *);
 
-#endif // CON_GEN__GBTCP__TIMER_H
+#endif // CON_GEN__TIMER_H

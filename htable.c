@@ -1,6 +1,7 @@
-// GPL v2 license
+// SPDX-License-Identifier: GPL-2.0-only
+
 #include "htable.h"
-#include "../subr.h"
+#include "subr.h"
 
 static int htable_print = 0;
 
