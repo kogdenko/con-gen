@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-4-Clause
 
-#include "global.h"
+#include "netstat.h"
+#include "../global.h"
 
 static const char *icmpnames[ICMP_MAXTYPE + 1] = {
 	[ICMP_ECHOREPLY] = "echo reply",
@@ -16,6 +17,20 @@ static const char *icmpnames[ICMP_MAXTYPE + 1] = {
 	[ICMP_IREQREPLY] = "information request reply",
 	[ICMP_MASKREQ] = "address mask request",
 	[ICMP_MASKREPLY] = "address mask reply",
+};
+
+const char *tcpstates[TCP_NSTATES] = {
+	[TCPS_CLOSED] = "CLOSED",
+	[TCPS_LISTEN] = "LISTEN",
+	[TCPS_SYN_SENT] = "SYN_SENT",
+	[TCPS_SYN_RECEIVED] = "SYN_RCVD",
+	[TCPS_ESTABLISHED] = "ESTABLISHED",
+	[TCPS_CLOSE_WAIT] = "CLOSE_WAIT",
+	[TCPS_FIN_WAIT_1] = "FIN_WAIT_1",
+	[TCPS_CLOSING] = "CLOSING",
+	[TCPS_LAST_ACK] = "LAST_ACK",
+	[TCPS_FIN_WAIT_2] = "FIN_WAIT_2",
+	[TCPS_TIME_WAIT] = "TIME_WAIT",
 };
 
 void

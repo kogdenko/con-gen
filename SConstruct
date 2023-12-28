@@ -90,31 +90,30 @@ if platform.system() == "Linux":
 AddOption("--without-dpdk", action = 'store_true',
 	help = "Don't use dpdk", default = False)
 
-
 g_srcs = [
-	'bsd44/uipc_socket.c',
+	'con-gen.c',
+	'htable.c',
+	'list.c',
+	'subr.c',
+	'timer.c',
+]
+
+g_srcs.append([
+	'bsd44/glue.c',
+	'bsd44/if_ether.c',
 	'bsd44/in_pcb.c',
+	'bsd44/ip_icmp.c',
 	'bsd44/ip_input.c',
 	'bsd44/ip_output.c',
-	'bsd44/ip_icmp.c',
-	'bsd44/udp_usrreq.c',
+	'bsd44/netstat.c',
 	'bsd44/tcp_debug.c',
-	'bsd44/tcp_subr.c',
-	'bsd44/tcp_usrreq.c',
 	'bsd44/tcp_input.c',
 	'bsd44/tcp_output.c',
+	'bsd44/tcp_subr.c',
 	'bsd44/tcp_timer.c',
-	'bsd44/if_ether.c',
-	'bsd44/glue.c',
-	'list.c',
-	'htable.c',
-	'timer.c',
-#	'gbtcp/inet.c',
-#	'gbtcp/tcp.c',
-	'subr.c',
-	'netstat.c',
-	'con-gen.c'
-]
+	'bsd44/tcp_usrreq.c',
+	'bsd44/uipc_socket.c',
+])
 
 g_cflags = [
 	'-g',

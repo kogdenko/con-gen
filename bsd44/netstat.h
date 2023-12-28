@@ -1,39 +1,9 @@
-/*
- * Copyright (c) 1982, 1986, 1989, 1993
- *	The Regents of the University of California.  All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * 3. All advertising materials mentioning features or use of this software
- *    must display the following acknowledgement:
- *	This product includes software developed by the University of
- *	California, Berkeley and its contributors.
- * 4. Neither the name of the University nor the names of its contributors
- *    may be used to endorse or promote products derived from this software
- *    without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
- */
-#ifndef CON_GEN__NETSTAT_H
-#define CON_GEN__NETSTAT_H
+// SPDX-License-Identifier: BSD-4-Clause
 
-#include "subr.h"
+#ifndef CON_GEN_BSD44_NETSTAT_H
+#define CON_GEN_BSD44_NETSTAT_H
+
+#include "../subr.h"
 
 struct ipstat {
 	counter64_t ips_total;             /* total packets received */
@@ -62,11 +32,9 @@ struct ipstat {
 	counter64_t ips_rawout;            /* total raw ip packets generated */
 };
 
-/*
- * TCP statistics.
- * Many of these should be kept per connection,
- * but that's inconvenient at the moment.
- */
+// TCP statistics.
+// Many of these should be kept per connection,
+// but that's inconvenient at the moment.
 struct tcpstat {
 	counter64_t tcps_connattempt;      /* connections initiated */
 	counter64_t tcps_accepts;          /* connections accepted */
@@ -135,10 +103,9 @@ struct udpstat {
 	counter64_t udps_opackets;	        /* total output packets */
 };
 
-/*
- * Variables related to this implementation
- * of the internet control message protocol.
- */
+
+// Variables related to this implementation
+// of the internet control message protocol.
 struct	icmpstat {
 	/* statistics related to icmp packets generated */
 	counter64_t icps_error;            /* # of calls to icmp_error */
@@ -153,7 +120,13 @@ struct	icmpstat {
 	counter64_t icps_inhist[ICMP_MAXTYPE + 1];
 };
 
+extern struct udpstat udpstat;
+extern struct tcpstat tcpstat;
+extern struct ipstat ipstat;
+extern struct icmpstat icmpstat;
+extern const char *tcpstates[TCP_NSTATES];
+
 void print_sockets(FILE *);
 void print_stats(FILE *, int);
 
-#endif // CON_GEN__NETSTAT_H
+#endif // CON_GEN_BSD44_NETSTAT_H

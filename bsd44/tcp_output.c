@@ -8,6 +8,7 @@
 #include "tcp.h"
 #include "tcp_timer.h"
 #include "tcp_var.h"
+#include "netstat.h"
 
 #define MAX_TCPOPTLEN	32	/* max # bytes that go in options */
 

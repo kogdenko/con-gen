@@ -5,18 +5,15 @@
 #include "in_pcb.h"
 #include "ip_var.h"
 #include "tcp_var.h"
-#include "udp_var.h"
 #include "ip_icmp.h"
+#include "netstat.h"
 
-/*
- * IP initialization: fill in IP protocol switch table.
- * All protocols not implemented in kernel go to raw IP protocol handler.
- */
 
-/*
- * Ip input routine.  Checksum and byte swap header.  If fragmented
- * try to reassemble.  Process options.  Pass to next level.
- */
+// IP initialization: fill in IP protocol switch table.
+// All protocols not implemented in kernel go to raw IP protocol handler.
+
+// Ip input routine.  Checksum and byte swap header.  If fragmented
+// try to reassemble.  Process options.  Pass to next level.
 void
 ip_input(struct ip *ip, int len, int eth_flags)
 {
@@ -100,9 +97,6 @@ ours:
 	switch (ip->ip_p) {
 	case IPPROTO_TCP:
 		tcp_input(ip, hlen, eth_flags);
-		break;
-	case IPPROTO_UDP:
-		udp_input(ip, hlen, eth_flags);
 		break;
 	case IPPROTO_ICMP:
 		icmp_input(ip, hlen);

@@ -202,12 +202,4 @@ ether_sprintf(u_char *ap)
 	return (etherbuf);
 }
 
-int
-ether_scanf(u_char *ap, const char *s)
-{
-	int rc;
 
-	rc = sscanf(s, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
-	            ap + 0, ap + 1, ap + 2, ap + 3, ap + 4, ap + 5);
-	return rc == 6 ? 0 : -EINVAL;
-}

@@ -4,7 +4,6 @@
 #include "ip.h"
 #include "in_pcb.h"
 #include "ip_var.h"
-#include "udp_var.h"
 #include "../htable.h"
 
 int

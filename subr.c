@@ -3,27 +3,10 @@
 
 #include <sys/resource.h>
 
-const char *tcpstates[TCP_NSTATES] = {
-	[TCPS_CLOSED] = "CLOSED",
-	[TCPS_LISTEN] = "LISTEN",
-	[TCPS_SYN_SENT] = "SYN_SENT",
-	[TCPS_SYN_RECEIVED] = "SYN_RCVD",
-	[TCPS_ESTABLISHED] = "ESTABLISHED",
-	[TCPS_CLOSE_WAIT] = "CLOSE_WAIT",
-	[TCPS_FIN_WAIT_1] = "FIN_WAIT_1",
-	[TCPS_CLOSING] = "CLOSING",
-	[TCPS_LAST_ACK] = "LAST_ACK",
-	[TCPS_FIN_WAIT_2] = "FIN_WAIT_2",
-	[TCPS_TIME_WAIT] = "TIME_WAIT",
-};
 
 static struct spinlock panic_lock;
 
 int verbose;
-struct udpstat udpstat;
-struct tcpstat tcpstat;
-struct ipstat ipstat;
-struct icmpstat icmpstat;
 struct transport_ops *tr_ops;
 
 uint8_t freebsd_rss_key[RSS_KEY_SIZE] = {
@@ -49,7 +32,6 @@ extern struct transport_ops dpdk_ops;
 #endif
 
 void bsd_eth_in(void *, int);
-void toy_eth_in(void *, int);
 
 void
 dbg5(const char *filename, u_int linenum, const char *func, int suppressed,
@@ -78,13 +60,6 @@ dbg5(const char *filename, u_int linenum, const char *func, int suppressed,
 		fprintf(file, "%s\n", buf);
 		fflush(file);
 	}
-}
-
-static void
-udp_in(void *data, int len)
-{
-	counter64_inc(&if_ipackets);
-	counter64_add(&if_ibytes, len);
 }
 
 void
@@ -251,7 +226,6 @@ panic3(const char *file, int line, int errnum, const char *format, ...)
 		fprintf(stderr, " (%d:%s)", errnum, strerror(errnum));
 	}
 	fprintf(stderr, "\n");
-	print_stats(stderr, 0);
 #ifndef NDEBUG
 	abort();
 #else
@@ -286,7 +260,7 @@ add_pending_packet(struct packet *pkt)
 }
 
 void
-set_transport(int transport, int udp)
+set_transport(int transport)
 {
 	switch (transport) {
 #ifdef HAVE_NETMAP
@@ -314,11 +288,7 @@ set_transport(int transport, int udp)
 		break;
 	}
 
-	if (udp) {
-		tr_ops->tr_io_process_op = udp_in;
-	} else {
-		tr_ops->tr_io_process_op = bsd_eth_in;
-	}
+	tr_ops->tr_io_process_op = bsd_eth_in;
 }
 
 void
@@ -641,4 +611,14 @@ ip_disconnect(struct ip_socket *so)
 	assert(current->t_n_conns);
 	current->t_n_conns--;
 	htable_del(&current->t_in_htable, &so->ipso_list);
+}
+
+int
+ether_scanf(u_char *ap, const char *s)
+{
+	int rc;
+
+	rc = sscanf(s, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+	            ap + 0, ap + 1, ap + 2, ap + 3, ap + 4, ap + 5);
+	return rc == 6 ? 0 : -EINVAL;
 }

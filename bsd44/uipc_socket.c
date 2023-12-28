@@ -2,7 +2,6 @@
 
 #include "socket.h"
 #include "tcp_var.h"
-#include "udp_var.h"
 #include "../list.h"
 
 static struct socket *
@@ -168,11 +167,7 @@ bsd_close(struct socket *so)
 			}
 		}
 	}
-	if (so->so_proto == IPPROTO_TCP) {
-		rc = tcp_disconnect(so);
-	} else {
-		rc = udp_disconnect(so);
-	}
+	rc = tcp_disconnect(so);
 	if (rc <= 0) {
 		sofree(so);
 		return -rc;
@@ -184,11 +179,7 @@ bsd_close(struct socket *so)
 void
 soabort(struct socket *so)
 {
-	if (so->so_proto == IPPROTO_TCP) {
-		tcp_abort(so);
-	} else {
-		udp_abort(so);
-	}
+	tcp_abort(so);
 }
 
 void
@@ -220,11 +211,7 @@ bsd_connect(struct socket *so)
 	} else if (so->so_state & SS_ISCONNECTED) {
 		rc = -EISCONN;
 	} else {
-		if (so->so_proto == IPPROTO_TCP) {
-			rc = tcp_connect(so);
-		} else {
-			rc = udp_connect(so);
-		}
+		rc = tcp_connect(so);
 	}
 	return rc;
 }
@@ -271,11 +258,7 @@ sosend(struct socket *so, const void *dat, int datlen, const struct sockaddr_in 
 	if (atomic && space < datlen) {
 		return -EWOULDBLOCK;
 	}
-	if (so->so_proto == IPPROTO_TCP) {
-		rc = tcp_send(so, dat, datlen);
-	} else {
-		rc = udp_send(so, dat, datlen, addr);
-	}
+	rc = tcp_send(so, dat, datlen);
 	return rc;
 }
 
@@ -286,11 +269,7 @@ bsd_shutdown(struct socket *so, int how)
 		sorflush(so);
 	}
 	if (how & SHUT_WR) {
-		if (so->so_proto == IPPROTO_TCP) {
-			tcp_shutdown(so);
-		} else {
-			udp_shutdown(so);
-		}
+		tcp_shutdown(so);
 	}
 	return 0;
 }

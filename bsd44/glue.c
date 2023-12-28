@@ -1,15 +1,85 @@
+#include "../global.h"
 #include "socket.h"
 #include "tcp_var.h"
+#include "netstat.h"
+
+#define INIT_STAT(s) \
+	init_counters((counter64_t *)&s, sizeof(s)/sizeof(counter64_t))
 
 struct conn {
 	u_char cn_sent;
 	u_char cn_http;
 };
 
-static void udp_client(struct socket *, short, struct sockaddr_in *, void *, int);
 static void tcp_client(struct socket *, short, struct sockaddr_in *, void *, int);
 static void tcp_server(struct socket *, short, struct sockaddr_in *, void *, int);
 static void con_close(void);
+static void bsd_server_listen(int);
+static void bsd_client_connect(int proto);
+
+
+
+struct udpstat udpstat;
+struct tcpstat tcpstat;
+struct ipstat ipstat;
+struct icmpstat icmpstat;
+
+static void
+init_counters(counter64_t *a, int n)
+{
+	int i;
+
+	for (i = 0; i < n; ++i) {
+		counter64_init(a + i);
+	}
+}
+
+void
+bsd_init(void)
+{
+	INIT_STAT(udpstat);
+	INIT_STAT(tcpstat);
+	INIT_STAT(ipstat);
+	INIT_STAT(icmpstat);
+}
+
+void
+bsd_current_init(void)
+{
+	current->t_tcp_now = 1;
+	current->t_tcp_rttdflt = TCPTV_SRTTDFLT / PR_SLOWHZ;
+	if (current->t_Lflag) {
+		bsd_server_listen(IPPROTO_TCP);
+	} else {
+		bsd_client_connect(IPPROTO_TCP);
+	}
+}
+
+void
+bsd_command(int command, FILE *out, int verbose)
+{
+	switch (command) {
+	case 's':
+		print_stats(out, verbose);
+		break;
+
+	case 'c':
+		print_sockets(out);
+		break;
+	}
+}
+
+void
+bsd_update(uint64_t tsc)
+{
+	uint64_t age;
+
+	age = current->t_tcp_nowage + NANOSECONDS_SECOND/PR_SLOWHZ;
+	if (current->t_time >= age) {
+		current->t_tcp_now++;
+		current->t_tcp_nowage += NANOSECONDS_SECOND/PR_SLOWHZ;
+	}
+}
 
 void
 bsd_flush(void)
@@ -40,7 +110,7 @@ bsd_flush(void)
 	}
 }
 
-void
+static void
 bsd_client_connect(int proto)
 {
 	int rc;
@@ -50,7 +120,7 @@ bsd_client_connect(int proto)
 	if (rc < 0) {
 		panic(-rc, "bsd_socket() failed");
 	}
-	so->so_userfn = proto == IPPROTO_TCP ? tcp_client : udp_client;
+	so->so_userfn = tcp_client;
 	so->so_user = 0;
 	if (current->t_so_debug) {
 		sosetopt(so, SO_DEBUG);
@@ -58,9 +128,6 @@ bsd_client_connect(int proto)
 	rc = bsd_connect(so);
 	if (rc < 0) {
 		panic(-rc, "bsd_connect() failed");
-	}
-	if (proto == IPPROTO_UDP) {
-		DLIST_INSERT_TAIL(&current->t_so_txq, so, so_txlist);
 	}
 }
 
@@ -79,43 +146,34 @@ srv_accept(struct socket *so, short events, struct sockaddr_in *addr, void *dat,
 	} while (rc != -EWOULDBLOCK);
 }
 
-void
+static void
 bsd_server_listen(int proto)
 {
 	int rc;
 	struct socket *so;
 
-	rc = bsd_socket(proto, &so);
+	rc = bsd_socket(IPPROTO_TCP, &so);
 	if (rc < 0) {
 		panic(-rc, "bsd_socket() failed");
 	}
 	if (current->t_so_debug) {
 		sosetopt(so, SO_DEBUG);
 	}
-	assert(proto == IPPROTO_TCP);
 	so->so_userfn = srv_accept;
 	so->so_user = 0;
 	rc = bsd_bind(so, current->t_port);
 	if (rc) {
 		panic(-rc, "bsd_bind(%u) failed", ntohs(current->t_port));
 	}
-	if (proto == IPPROTO_TCP) {
-		rc = bsd_listen(so);
-		if (rc) {
-			panic(-rc, "bsd_listen() failed");
-		}
+	rc = bsd_listen(so);
+	if (rc) {
+		panic(-rc, "bsd_listen() failed");
 	}
 }
-
-extern int g_udp;
 
 static void
 con_close(void)
 {
-	int proto;
-
-	proto = g_udp ? IPPROTO_UDP : IPPROTO_TCP;
-
 	if (current->t_done) {
 		return;
 	}
@@ -128,7 +186,7 @@ con_close(void)
 	}
 	if (!current->t_Lflag) {
 		while (current->t_n_conns < current->t_concurrency) {
-			bsd_client_connect(proto);
+			bsd_client_connect(IPPROTO_TCP);
 		}
 	}
 }
@@ -193,14 +251,6 @@ tcp_client(struct socket *so, short events, struct sockaddr_in *addr, void *dat,
 			return;
 		}
 	}
-}
-
-static void
-udp_client(struct socket *so, short events, struct sockaddr_in *addr, void *dat, int len)
-{
-	//if (events & POLLNVAL) {
-	//	con_close();
-	//}
 }
 
 static void

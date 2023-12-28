@@ -8,6 +8,7 @@
 #include "tcp_timer.h"
 #include "tcp_var.h"
 #include "tcp_timer.h"
+#include "netstat.h"
 
 char *prurequests[] = {
 	[PRU_DETACH] = "DETACH",

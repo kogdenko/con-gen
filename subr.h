@@ -28,6 +28,7 @@
 #include <netinet/tcp.h>
 #include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
+#include <sched.h>
 #include <sys/types.h>
 #include <sys/fcntl.h>
 #include <sys/un.h>
@@ -411,7 +412,8 @@ void free_ephemeral_port(uint32_t, uint16_t);
 
 uint32_t select_faddr(void);
 
-void set_transport(int transport, int udp);
+void set_transport(int transport);
+int ether_scanf(u_char *ap, const char *s);
 
 
 #endif // CON_GEN__SUBR_H

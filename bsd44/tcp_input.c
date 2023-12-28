@@ -7,6 +7,7 @@
 #include "tcp.h"
 #include "tcp_timer.h"
 #include "tcp_var.h"
+#include "netstat.h"
 
 int tcprexmtthresh = 3;
 
