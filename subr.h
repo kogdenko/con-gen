@@ -48,7 +48,8 @@
 
 struct rte_mbuf;
 
-#define DPDK_MAX_PKT_BURST 256
+// NOTE: DPDK memif use uint8_t for nb_pkts, so buf size should be less then 256
+#define DPDK_MAX_PKT_BURST 128
 #endif
 
 #include "gbtcp/list.h"
