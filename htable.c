@@ -17,9 +17,9 @@ htable_static_init(struct htable_static *t, int size, htable_f hash_fn)
 	t->hts_size = size;
 	t->hts_mask = size - 1;
 	t->hts_hash_fn = hash_fn;
-	t->hts_array = xmalloc(size * sizeof(struct dlist));
+	t->hts_array = xmalloc(size * sizeof(struct cg_dlist));
 	for (i = 0; i < size; ++i) {
-		dlist_init(t->hts_array + i);
+		cg_dlist_init(t->hts_array + i);
 	}
 }
 
@@ -30,36 +30,36 @@ htable_static_deinit(struct htable_static *t)
 	t->hts_array = NULL;
 }
 
-struct dlist *
+struct cg_dlist *
 htable_static_bucket_get(struct htable_static *t, uint32_t h) 
 {
 	return t->hts_array + ((h) & (t)->hts_mask);
 }
 
 void
-htable_static_add(struct htable_static *t, struct dlist *elem, uint32_t h)
+htable_static_add(struct htable_static *t, struct cg_dlist *elem, uint32_t h)
 {
-	struct dlist *bucket;
+	struct cg_dlist *bucket;
 
 	bucket = htable_static_bucket_get(t, h);
-	dlist_insert_tail(bucket, elem);
+	cg_dlist_insert_tail(bucket, elem);
 }
 
 void
-htable_static_del(struct htable_static *t, struct dlist *elem)
+htable_static_del(struct htable_static *t, struct cg_dlist *elem)
 {
-	dlist_remove(elem);
+	cg_dlist_remove(elem);
 }
 
 void
 htable_static_foreach(struct htable_static *t, void *udata, htable_foreach_f fn)
 {
 	int i;
-	struct dlist *b, *e;
+	struct cg_dlist *b, *e;
 
 	for (i = 0; i < t->hts_size; ++i) {
 		b = t->hts_array + i;
-		dlist_foreach(e, b) {
+		cg_dlist_foreach(e, b) {
 			(*fn)(udata, e);
 		}
 	}
@@ -86,11 +86,11 @@ htable_dynamic_deinit(struct htable_dynamic *t)
 	}
 }
 
-struct dlist *
+struct cg_dlist *
 htable_dynamic_bucket_get(struct htable_dynamic *t, uint32_t h) 
 {
 	int i;
-	struct dlist *bucket;
+	struct cg_dlist *bucket;
 	struct htable_static *ts;
 
 	if (t->htd_old == NULL) {
@@ -111,13 +111,13 @@ void
 htable_dynamic_foreach(struct htable_dynamic *t, void *udata, htable_foreach_f fn)
 {
 	int i;
-	struct dlist *b, *e;
+	struct cg_dlist *b, *e;
 
 	htable_static_foreach(t->htd_new, udata, fn);
 	if (t->htd_old != NULL) {
 		for (i = t->htd_resize_progress; i < t->htd_old->hts_size; ++i) {
 			b = t->htd_old->hts_array + i;
-			dlist_foreach(e, b) {
+			cg_dlist_foreach(e, b) {
 				(*fn)(udata, e);
 			}
 		}
@@ -125,21 +125,21 @@ htable_dynamic_foreach(struct htable_dynamic *t, void *udata, htable_foreach_f f
 }
 
 void
-htable_dynamic_add(struct htable_dynamic *t, struct dlist *elem, uint32_t h)
+htable_dynamic_add(struct htable_dynamic *t, struct cg_dlist *elem, uint32_t h)
 {
-	struct dlist *bucket;
+	struct cg_dlist *bucket;
 
 	bucket = htable_dynamic_bucket_get(t, h);
-	dlist_insert_tail(bucket, elem);
+	cg_dlist_insert_tail(bucket, elem);
 	t->htd_nr_elems++;
 	htable_dynamic_resize(t);
 }
 
 void
-htable_dynamic_del(struct htable_dynamic *t, struct dlist *elem)
+htable_dynamic_del(struct htable_dynamic *t, struct cg_dlist *elem)
 {
 	assert(t->htd_nr_elems > 0);
-	dlist_remove(elem);
+	cg_dlist_remove(elem);
 	t->htd_nr_elems--;
 	htable_dynamic_resize(t);
 }
@@ -163,7 +163,7 @@ htable_dynamic_resize(struct htable_dynamic *t)
 {
 	uint32_t h;
 	int size, new_size;
-	struct dlist *elem, *bucket;
+	struct cg_dlist *elem, *bucket;
 	struct htable_static *tmp;
 
 	if (t->htd_old == NULL) {
@@ -181,21 +181,20 @@ htable_dynamic_resize(struct htable_dynamic *t)
 			return;
 		}
 		tmp = htable_dynamic_new(t);
-		htable_static_init(tmp, new_size,
-		                   t->htd_new->hts_hash_fn);
+		htable_static_init(tmp, new_size, t->htd_new->hts_hash_fn);
 		t->htd_old = t->htd_new;
 		t->htd_new = tmp;
 		t->htd_resize_progress = 0;
 		if (htable_print) {
-			dbg("htable resize; size=%d->%d, elements=%d\n",
+			dbg("htable resize: size=%d->%d, elements=%d\n",
 				size, new_size, t->htd_nr_elems);
 		}
 	} else {
 		assert(t->htd_old->hts_size > t->htd_resize_progress);
 		bucket = t->htd_old->hts_array + t->htd_resize_progress;
-		while (!dlist_is_empty(bucket)) {
-			elem = dlist_first(bucket);
-			dlist_remove(elem);
+		while (!cg_dlist_is_empty(bucket)) {
+			elem = cg_dlist_first(bucket);
+			cg_dlist_remove(elem);
 			h = (*t->htd_new->hts_hash_fn)(elem);
 			htable_static_add(t->htd_new, elem, h);
 		}
@@ -204,8 +203,7 @@ htable_dynamic_resize(struct htable_dynamic *t)
 			htable_static_deinit(t->htd_old);
 			t->htd_old = NULL;
 			if (htable_print) {
-				dbg("htable resize done; elements=%d\n",
-					t->htd_nr_elems);
+				dbg("htable resize done: elements=%d\n", t->htd_nr_elems);
 			}
 		}
 	}

@@ -91,14 +91,14 @@ AddOption("--without-dpdk", action = 'store_true',
 	help = "Don't use dpdk", default = False)
 
 g_srcs = [
-	'con-gen.c',
 	'htable.c',
 	'list.c',
+	'main.c',
 	'subr.c',
 	'timer.c',
 ]
 
-g_srcs.append([
+g_plugin_srcs = [
 	'bsd44/glue.c',
 	'bsd44/if_ether.c',
 	'bsd44/in_pcb.c',
@@ -113,7 +113,7 @@ g_srcs.append([
 	'bsd44/tcp_timer.c',
 	'bsd44/tcp_usrreq.c',
 	'bsd44/uipc_socket.c',
-])
+]
 
 g_cflags = [
 	'-g',
@@ -190,6 +190,8 @@ env.Append(CFLAGS = ' '.join(g_cflags))
 env.Append(LINKFLAGS = ' '.join(g_ldflags))
 env.Append(LIBS = g_libs)
 
-con_gen = env.Program('con-gen', g_srcs)
+env.SharedLibrary('libcongen-bsd44-plugin.so', g_plugin_srcs)
+
+con_gen = env.Program('congen', g_srcs)
 env.Install('/usr/local/bin', con_gen)
 env.Alias('install', '/usr/local/bin')

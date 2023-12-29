@@ -137,17 +137,17 @@ in_pcblookup(int proto, be32_t laddr, be16_t lport, be32_t faddr, be16_t fport)
 {
 	int i;
 	uint32_t h;
-	struct dlist *b;
+	struct cg_dlist *b;
 	struct socket *so;
 
 	h = SO_HASH(faddr, lport, fport);
 	b = htable_bucket_get(&current->t_in_htable, h);
-	DLIST_FOREACH(so, b, inp_list) {	
+	CG_DLIST_FOREACH(so, b, inp_list) {	
 		if (so->so_proto == proto &&
-		    so->inp_laddr == laddr &&
-		    so->inp_lport == lport &&
-		    so->inp_faddr == faddr &&
-		    so->inp_fport == fport) {
+				so->inp_laddr == laddr &&
+				so->inp_lport == lport &&
+				so->inp_faddr == faddr &&
+				so->inp_fport == fport) {
 			return so;
 		}
 	}

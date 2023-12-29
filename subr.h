@@ -1,5 +1,7 @@
-#ifndef CON_GEN__SUBR_H
-#define CON_GEN__SUBR_H
+// SPDX-License-Identifier: GPL-2.0-only
+
+#ifndef CONGEN_SUBR_H
+#define CONGEN_SUBR_H
 
 #define _GNU_SOURCE
 #include <ctype.h>
@@ -12,6 +14,7 @@
 #include <stdarg.h>
 #include <stdbool.h>
 #include <assert.h>
+#include <dlfcn.h>
 #include <limits.h>
 #include <stdint.h>
 #include <inttypes.h>
@@ -57,8 +60,6 @@ struct rte_mbuf;
 #include "htable.h"
 
 // Define
-#define N_THREADS_MAX 32
-
 #define CG_TX_PENDING_MAX 2048
 
 #define EPHEMERAL_MIN 5000
@@ -213,12 +214,12 @@ struct socket_info {
 };
 
 struct if_addr {
-	struct dlist *ifa_ports;
-	struct dlist ifa_port_head;
+	struct cg_dlist *ifa_ports;
+	struct cg_dlist ifa_port_head;
 };
 
 struct ip_socket {
-	struct dlist ipso_list;
+	struct cg_dlist ipso_list;
 	union {
 		struct ip_socket *ipso_cache;
 		uint32_t ipso_hash;
@@ -231,7 +232,7 @@ struct ip_socket {
 
 struct packet {
 	struct packet_header {
-		struct dlist list;
+		struct cg_dlist list;
 		u_char *buf;
 		int len;
 		union {
@@ -255,20 +256,16 @@ struct packet {
 	u_char pkt_body[2048 - sizeof(struct packet_header)];
 };
 
-struct thread {
+struct cg_thread {
 	struct spinlock t_lock;
-	struct dlist t_available_head;
-	struct dlist t_pending_head;
+	struct cg_dlist t_available_head;
+	struct cg_dlist t_pending_head;
 	unsigned t_n_pending;
 	u_char t_busyloop;
-	u_char t_id;
+//	u_char t_id;
 	u_char t_done;
 	u_char t_Lflag;
 	u_char t_so_debug;
-	u_char t_ip_do_incksum;
-	u_char t_ip_do_outcksum;
-	u_char t_tcp_do_incksum;
-	u_char t_tcp_do_outcksum;
 	int t_tcp_rttdflt;
 	u_char t_tcp_do_wscale;
 	u_char t_tcp_do_timestamps;
@@ -310,9 +307,9 @@ struct thread {
 	struct ip_socket *t_dst_cache;
 	int t_dst_cache_size;
 	int t_dst_cache_i;
-	struct dlist t_so_pool;
-	struct dlist t_so_txq;
-	struct dlist t_sob_pool;
+	struct cg_dlist t_so_pool;
+	struct cg_dlist t_so_txq;
+	struct cg_dlist t_sob_pool;
 	int t_n_conns;
 	int t_n_requests;
 	int t_concurrency;
@@ -338,12 +335,12 @@ struct thread {
 	int t_affinity;
 	pthread_t t_pthread;
 	char t_ifname[IFNAMSIZ];
+	struct cg_dlist t_list;
 	uint64_t *t_counters;
 };
 
 struct transport_ops {
-	void (*tr_io_process_op)(void *, int);
-	void (*tr_io_init_op)(struct thread *, int);
+	void (*tr_io_init_op)(void);
 	bool (*tr_io_is_tx_throttled_op)(void);
 	void (*tr_io_init_tx_packet_op)(struct packet *);
 	void (*tr_io_deinit_tx_packet_op)(struct packet *);
@@ -387,7 +384,7 @@ uint64_t counter64_get(counter64_t *);
 
 void add_pending_packet(struct packet *);
 
-void io_init(struct thread *threads, int n_threads);
+void io_init(void);
 bool io_is_tx_throttled(void);
 void io_init_tx_packet(struct packet *);
 void io_deinit_tx_packet(struct packet *);
@@ -396,7 +393,7 @@ void io_tx(void);
 int io_rx(int);
 void io_process(void *pkt, int pkt_len);
 
-int multiplexer_add(struct thread *, int);
+int multiplexer_add(struct cg_thread *, int);
 void multiplexer_pollout(int);
 int multiplexer_get_events(int);
 
@@ -415,5 +412,4 @@ uint32_t select_faddr(void);
 void set_transport(int transport);
 int ether_scanf(u_char *ap, const char *s);
 
-
-#endif // CON_GEN__SUBR_H
+#endif // CONGEN_SUBR_H

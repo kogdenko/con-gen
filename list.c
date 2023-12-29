@@ -1,45 +1,46 @@
-/* GPL2 license */
+// SPDX-License-Identifier: GPL-2.0-only
+
 #include "list.h"
 
 void
-dlist_init(struct  dlist *head)
+cg_dlist_init(struct  cg_dlist *head)
 {
 	head->dls_next = head->dls_prev = head;
 }
 
 int
-dlist_size(struct dlist *head)
+cg_dlist_size(struct cg_dlist *head)
 {
 	int size;
-	struct dlist *cur;
+	struct cg_dlist *cur;
 
 	size = 0;
-	dlist_foreach(cur, head) {
+	cg_dlist_foreach(cur, head) {
 		size++;
 	}
 	return size;
 }
 
 int
-dlist_is_empty(struct dlist *head)
+cg_dlist_is_empty(struct cg_dlist *head)
 {
 	return head->dls_next == head;
 }
 
-struct dlist *
-dlist_first(struct dlist *head)
+struct cg_dlist *
+cg_dlist_first(struct cg_dlist *head)
 {
 	return head->dls_next;
 }
 
-struct dlist *
-dlist_last(struct dlist *head)
+struct cg_dlist *
+cg_dlist_last(struct cg_dlist *head)
 {
 	return head->dls_prev;
 }
 
 void
-dlist_insert_head(struct dlist *head, struct dlist *l)
+cg_dlist_insert_head(struct cg_dlist *head, struct cg_dlist *l)
 {
 	l->dls_next = head->dls_next;
 	l->dls_prev = head;
@@ -48,7 +49,7 @@ dlist_insert_head(struct dlist *head, struct dlist *l)
 }
 
 void
-dlist_insert_tail(struct dlist *head, struct dlist *l)
+cg_dlist_insert_tail(struct cg_dlist *head, struct cg_dlist *l)
 {
 	l->dls_next = head;
 	l->dls_prev = head->dls_prev;
@@ -57,7 +58,7 @@ dlist_insert_tail(struct dlist *head, struct dlist *l)
 }
 
 void
-dlist_remove(struct dlist *list)
+cg_dlist_remove(struct cg_dlist *list)
 {
 	list->dls_next->dls_prev = list->dls_prev;
 	list->dls_prev->dls_next = list->dls_next;

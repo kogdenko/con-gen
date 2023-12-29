@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
+
 #include "global.h"
-
-#include "./bsd44/plugin.h"
-
 
 #include "timer.h"
 //#include "netstat.h"
@@ -28,6 +27,7 @@ static int n_reports;
 static int n_reports_max;
 static int g_fprint_report = 1;
 static int print_banner = 1;
+static void *g_cg_plugin;
 
 counter64_t if_ibytes;
 counter64_t if_ipackets;
@@ -39,11 +39,18 @@ uint64_t cg_tsc_mhz;
 
 int n_counters = 1;
 
-struct thread threads[N_THREADS_MAX];
-int n_threads;
-__thread struct thread *current;
+struct cg_dlist g_cg_threads_head;
+__thread struct cg_thread *current;
 
 static int g_transport = TRANSPORT_DEFAULT;
+
+
+void (*congen_plugin_init)(void);
+void (*congen_plugin_current_init)(void);
+void (*congen_plugin_update)(uint64_t tsc);
+void (*congen_plugin_flush)(void);
+void (*congen_plugin_command)(int command, FILE *out, int verbose);
+void (*congen_plugin_rx)(void *data, int len);
 
 
 static const char *
@@ -90,6 +97,47 @@ rdtsc(void)
 		"=d" (tsc.hi_32));
 	return tsc.u_64;
 }
+
+#define CG_DLSYM(handle, symbol) \
+	if ((congen_plugin_##symbol = dlsym(handle, "congen_plugin_" #symbol)) == NULL) { \
+		panic(0, "dlsym('%s', 'conngen_plugin_"#symbol"') failed (%s)\n", \
+				filename, dlerror()); \
+	}
+
+static void
+cg_load_plugin(const char *plugin_name)
+{
+	char filename[PATH_MAX];
+
+	snprintf(filename, sizeof(filename), "./libcongen-%s-plugin.so", plugin_name);
+	g_cg_plugin = dlopen(filename, RTLD_NOW|RTLD_LOCAL);
+	if (g_cg_plugin != NULL) {
+		goto loaded;
+	}
+
+	snprintf(filename, sizeof(filename), "libcongen-%s-plugin.so", plugin_name);
+	g_cg_plugin = dlopen(filename, RTLD_NOW|RTLD_LOCAL);
+	if (g_cg_plugin != NULL) {
+		goto loaded;
+	}
+
+	panic(0, "dlopen('%s') failed (%s)", filename, dlerror());
+	
+
+loaded:
+	CG_DLSYM(g_cg_plugin, init);
+	CG_DLSYM(g_cg_plugin, current_init);
+	CG_DLSYM(g_cg_plugin, update);
+	CG_DLSYM(g_cg_plugin, flush);
+	CG_DLSYM(g_cg_plugin, command);
+	CG_DLSYM(g_cg_plugin, rx);
+
+//	congen_plugin_init = dlsym(g_cg_plugin, "congen_plugin_init");
+//	if (congen_plugin_init == NULL) {
+//		panic(0, "dlsym('%s', 'conngen_plugin_init') failed (%s)\n", filename, dlerror());
+//	}
+}
+
 
 static int
 scan_ip_range(uint32_t *pmin, uint32_t *pmax, const char *s)
@@ -148,7 +196,7 @@ set_affinity(int cpu_id)
 }
 
 uint32_t
-ip_socket_hash(struct dlist *p)
+ip_socket_hash(struct cg_dlist *p)
 {
 	uint32_t h;
 	struct ip_socket *so;
@@ -197,10 +245,11 @@ print_report_diffs(struct report_data *new, struct report_data *old)
 static void
 print_report(void)
 {
-	int i;
 	static int n;
-	struct report_data new;
+
 	int conns;
+	struct report_data new;
+	struct cg_thread *t;
 
 	if (!g_fprint_report) {
 		return;
@@ -221,8 +270,8 @@ print_report(void)
 		printf("%s\n", "conns");
 	}
 	conns = 0;
-	for (i = 0; i < n_threads; ++i) {
-		conns += threads[i].t_n_conns;
+	CG_DLIST_FOREACH(t, &g_cg_threads_head, t_list) {
+		conns += t->t_n_conns;
 	}
 	gettimeofday(&new.rd_tv, NULL);
 	new.rd_ipackets = counter64_get(&if_ipackets);
@@ -241,11 +290,11 @@ print_report(void)
 static void
 quit(void)
 {
-	int i;
+	struct cg_thread *t;
 
 	m_done = 1;
-	for (i = 0; i < n_threads; ++i) {
-		threads[i].t_done = 1;
+	CG_DLIST_FOREACH(t, &g_cg_threads_head, t_list) {
+		t->t_done = 1;
 	}
 }
 
@@ -270,7 +319,7 @@ sighandler(int signum)
 }
 
 static void
-thread_init_dst_cache(struct thread *t)
+thread_init_dst_cache(struct cg_thread *t)
 {
 	uint64_t i, n;
 	int dst_cache_size;
@@ -369,7 +418,7 @@ main_process_req(int fd, FILE *out)
 			break;
 
 		default:
-			bsd_command(command, out, verbose);
+			congen_plugin_command(command, out, verbose);
 			break;
 		}
 	}
@@ -429,7 +478,7 @@ main_routine(void)
 }
 
 int
-multiplexer_add(struct thread *t, int fd)
+multiplexer_add(struct cg_thread *t, int fd)
 {
 	int index;
 
@@ -458,6 +507,12 @@ multiplexer_get_events(int index)
 	return current->t_pfds[index].events;
 }
 
+void
+io_process(void *pkt, int pkt_len)
+{
+	congen_plugin_rx(pkt, pkt_len);
+}
+
 static void
 thread_process(void)
 {
@@ -468,6 +523,7 @@ thread_process(void)
 	struct pollfd pfds[ARRAY_SIZE(current->t_pfds)];
 
 	io_tx();
+
 	if (!current->t_busyloop) {
 		memcpy(pfds, current->t_pfds, current->t_pfd_num * sizeof(struct pollfd));
 		to.tv_sec = 0;
@@ -478,7 +534,7 @@ thread_process(void)
 	tsc = rdtsc();
 	if (tsc > current->t_tsc) {
 		current->t_time += 1000llu * (tsc - current->t_tsc) / cg_tsc_mhz;
-		bsd_update(tsc);
+		congen_plugin_update(tsc);
 
 	}
 	current->t_tsc = tsc;
@@ -500,16 +556,16 @@ thread_process(void)
 
 	check_timers();
 
-	while (!io_is_tx_throttled() && !dlist_is_empty(&current->t_pending_head)) {
-		pkt = DLIST_FIRST(&current->t_pending_head, struct packet, pkt.list);
-		DLIST_REMOVE(pkt, pkt.list);
+	while (!io_is_tx_throttled() && !cg_dlist_is_empty(&current->t_pending_head)) {
+		pkt = CG_DLIST_FIRST(&current->t_pending_head, struct packet, pkt.list);
+		CG_DLIST_REMOVE(pkt, pkt.list);
 		current->t_n_pending--;
 		if (!io_tx_packet(pkt)) {
-			DLIST_INSERT_HEAD(&current->t_available_head, pkt, pkt.list);
+			CG_DLIST_INSERT_HEAD(&current->t_available_head, pkt, pkt.list);
 		}
 	}
 
-	bsd_flush();
+	congen_plugin_flush();
 }
 
 static void *
@@ -525,7 +581,7 @@ thread_routine(void *udata)
 
 	init_timers();
 
-	bsd_current_init();
+	congen_plugin_current_init();
 
 	while (!current->t_done) {
 		thread_process();
@@ -569,13 +625,6 @@ usage(void)
 #endif
 	"\t--udp:  Use UDP instead of TCP\n"
 	"\t--dst-cache:  Number of precomputed connect tuples (default: 100000)\n"
-	"\t--ip-in-cksum {0|1}:  On/Off IP input checksum calculation\n"
-	"\t--ip-out-cksum {0|1}:  On/Off IP output checksum calculation\n"
-	"\t--tcp-in-cksum {0|1}:  On/Off TCP input checksum calculation\n"
-	"\t--tcp-out-cksum {0|1}: On/Off TCP output checksum calculation\n"
-	"\t--in-cksum {0|1}:  On/Off input checksum calculation\n"
-	"\t--out-cksum {0|1}:  On/Off output checksum calculation\n"
-	"\t--cksum {0|1}:  On/Off checksum calculation\n"
 	"\t--tcp-wscale {0|1}:  On/Off wscale TCP option\n"
 	"\t--tcp-timestamps {0|1}:  On/Off timestamp TCP option\n"
 	"\t--tcp-fin-timeout {seconds}:  Specify FIN timeout\n"
@@ -584,12 +633,14 @@ usage(void)
 	"\t--reports {num}:  Number of reports of con-gen (0 meaning infinite)\n"
 	"\t--print-report {0|1}:  On/Off printing report\n"
 	"\t--print-banner {0|1}:  On/Off printing report banner every 20 seconds\n"
+	"\t--plugin {name}: Specify plugin\n"
 	);
 }
 
 static struct option long_options[] = {
 	{ "help", no_argument, 0, 'h' },
 	{ "verbose", no_argument, 0, 'v' },
+	{ "plugin", required_argument, 0, 0 },
 	{ "dst-cache", required_argument, 0, 0 },
 	{ "so-debug", no_argument, 0, 0 },
 #ifdef HAVE_NETMAP
@@ -604,13 +655,6 @@ static struct option long_options[] = {
 #ifdef HAVE_DPDK
 	{ "dpdk", no_argument, 0, 0 },
 #endif
-	{ "ip-in-cksum", required_argument, 0, 0 },
-	{ "ip-out-cksum", required_argument, 0, 0 },
-	{ "tcp-in-cksum", required_argument, 0, 0 },
-	{ "tcp-out-cksum", required_argument, 0, 0 },
-	{ "in-cksum", required_argument, 0, 0 },
-	{ "out-cksum", required_argument, 0, 0 },
-	{ "cksum", required_argument, 0, 0 },
 	{ "tcp-wscale", required_argument, 0, 0 },
 	{ "tcp-timestamps", required_argument, 0, 0 },
 	{ "tcp-fin-timeout", required_argument, 0, 0 },
@@ -675,29 +719,30 @@ io_parse_args(int argc, char **argv)
 }
 #endif // HAVE_DPDK
 
-static int
-thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char **argv)
+static struct cg_thread *
+thread_init(struct cg_thread *tmpl, int argc, char **argv)
 {
 	int rc, opt, option_index;
 	char *endptr;
-	const char *optname;
+	const char *optname, *plugin_name;
 	long long optval;
+	struct cg_thread *t;
+
+	plugin_name = NULL;
+
+	t = malloc(sizeof(struct cg_thread));
 
 	spinlock_init(&t->t_lock);
-	t->t_id = t - threads;
+//	t->t_id = t - threads;
 	t->t_ifname[0] = '\0';
-	dlist_init(&t->t_available_head);
-	dlist_init(&t->t_pending_head);
-	dlist_init(&t->t_so_txq);
-	dlist_init(&t->t_so_pool);
-	dlist_init(&t->t_sob_pool);
+	cg_dlist_init(&t->t_available_head);
+	cg_dlist_init(&t->t_pending_head);
+	cg_dlist_init(&t->t_so_txq);
+	cg_dlist_init(&t->t_so_pool);
+	cg_dlist_init(&t->t_sob_pool);
 	t->t_rss_queue_id = RSS_QUEUE_ID_MAX;
-	if (pt == NULL) {
+	if (tmpl == NULL) {
 		t->t_dst_cache_size = 100000;
-		t->t_ip_do_incksum = 2;
-		t->t_ip_do_outcksum = 2;
-		t->t_tcp_do_incksum = 2;
-		t->t_tcp_do_outcksum = 2;
 		t->t_tcp_do_wscale = 1;
 		t->t_tcp_do_timestamps = 1;
 		t->t_tcp_fintimo = 60 * NANOSECONDS_SECOND;
@@ -710,29 +755,25 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 		scan_ip_range(&t->t_ip_faddr_min, &t->t_ip_faddr_max, "10.1.0.1");
 		t->t_affinity = -1;
 	} else {
-		strzcpy(t->t_ifname, pt->t_ifname, sizeof(t->t_ifname));
-		t->t_dst_cache_size = pt->t_dst_cache_size;
-		t->t_so_debug = pt->t_so_debug;
-		t->t_ip_do_incksum = pt->t_ip_do_incksum;
-		t->t_ip_do_outcksum = pt->t_ip_do_outcksum;
-		t->t_tcp_do_incksum = pt->t_tcp_do_incksum;
-		t->t_tcp_do_outcksum = pt->t_tcp_do_outcksum;
-		t->t_tcp_do_wscale = pt->t_tcp_do_wscale;
-		t->t_tcp_do_timestamps = pt->t_tcp_do_wscale;
-		t->t_tcp_twtimo = pt->t_tcp_twtimo;
-		t->t_tcp_fintimo = pt->t_tcp_fintimo;
-		t->t_nflag = pt->t_nflag;
-		t->t_port = pt->t_port;
-		t->t_mtu = pt->t_mtu;
-		t->t_concurrency = pt->t_concurrency;
-		memcpy(t->t_eth_laddr, pt->t_eth_laddr, 6);
-		memcpy(t->t_eth_faddr, pt->t_eth_faddr, 6);
-		t->t_ip_laddr_min = pt->t_ip_laddr_min;
-		t->t_ip_laddr_max = pt->t_ip_laddr_max;
-		t->t_ip_faddr_min = pt->t_ip_faddr_min;
-		t->t_ip_faddr_max = pt->t_ip_faddr_max;
-		t->t_affinity = pt->t_affinity;
-		t->t_Lflag = pt->t_Lflag;
+		strzcpy(t->t_ifname, tmpl->t_ifname, sizeof(t->t_ifname));
+		t->t_dst_cache_size = tmpl->t_dst_cache_size;
+		t->t_so_debug = tmpl->t_so_debug;
+		t->t_tcp_do_wscale = tmpl->t_tcp_do_wscale;
+		t->t_tcp_do_timestamps = tmpl->t_tcp_do_wscale;
+		t->t_tcp_twtimo = tmpl->t_tcp_twtimo;
+		t->t_tcp_fintimo = tmpl->t_tcp_fintimo;
+		t->t_nflag = tmpl->t_nflag;
+		t->t_port = tmpl->t_port;
+		t->t_mtu = tmpl->t_mtu;
+		t->t_concurrency = tmpl->t_concurrency;
+		memcpy(t->t_eth_laddr, tmpl->t_eth_laddr, 6);
+		memcpy(t->t_eth_faddr, tmpl->t_eth_faddr, 6);
+		t->t_ip_laddr_min = tmpl->t_ip_laddr_min;
+		t->t_ip_laddr_max = tmpl->t_ip_laddr_max;
+		t->t_ip_faddr_min = tmpl->t_ip_faddr_min;
+		t->t_ip_faddr_max = tmpl->t_ip_faddr_max;
+		t->t_affinity = tmpl->t_affinity;
+		t->t_Lflag = tmpl->t_Lflag;
 	}
 
 	while ((opt = getopt_long(argc, argv, short_options,
@@ -747,7 +788,9 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 		switch (opt) {
 		case 0:
 			optname = long_options[option_index].name;
-			if (!strcmp(optname, "dst-cache")) {
+			if (!strcmp(optname, "plugin")) {
+				plugin_name = optarg;
+			} else if (!strcmp(optname, "dst-cache")) {
 				if (optval < 0) {
 					goto err;
 				}
@@ -770,46 +813,6 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 			} else if (!strcmp(optname, "dpdk")) {
 				g_transport = TRANSPORT_DPDK;
 #endif // HAVE_DPDK
-			} else if (!strcmp(optname, "ip-in-cksum")) {
-				if (optval < 0) {
-					goto err;
-				}
-				t->t_ip_do_incksum = optval;
-			} else if (!strcmp(optname, "ip-out-cksum")) {
-				if (optval < 0) {
-					goto err;
-				}
-				t->t_ip_do_outcksum = optval;
-			} else if (!strcmp(optname, "tcp-in-cksum")) {
-				if (optval < 0) {
-					goto err;
-				}
-				t->t_tcp_do_incksum = optval;
-			} else if (!strcmp(optname, "tcp-out-cksum")) {
-				if (optval < 0) {
-					goto err;
-				}
-				t->t_tcp_do_outcksum = optval;
-			} else if (!strcmp(optname, "in-cksum")) {
-				if (optval < 0) {
-					goto err;
-				}
-				t->t_ip_do_incksum = optval;
-				t->t_tcp_do_incksum = optval;
-			} else if (!strcmp(optname, "out-cksum")) {
-				if (optval < 0) {
-					goto err;
-				}
-				t->t_ip_do_outcksum = optval;
-				t->t_tcp_do_outcksum = optval;
-			} else if (!strcmp(optname, "cksum")) {
-				if (optval < 0) {
-					goto err;
-				}
-				t->t_ip_do_incksum = optval;
-				t->t_tcp_do_incksum = optval;
-				t->t_ip_do_outcksum = optval;
-				t->t_tcp_do_outcksum = optval;
 			} else if (!strcmp(optname, "tcp-wscale")) {
 				if (optval < 0) {
 					goto err;
@@ -918,17 +921,20 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 		default:
 err:
 			if (opt != 0) {
-				fprintf(stderr, "Invalid argument '-%c': %s\n", opt, optarg);
+				panic(0, "Invalid argument '-%c': %s", opt, optarg);
 			} else {
-				fprintf(stderr, "Invalid argument '--%s': %s\n", optname, optarg);
+				panic(0, "Invalid argument '--%s': %s", optname, optarg);
 			}
-			return -EINVAL;
 		}
 	}
 	if (t->t_ifname[0] == '\0') {
-		fprintf(stderr, "Interface (-i) not specified for thread %d\n", thread_idx);
-		usage();
-		return -EINVAL;
+		panic(0, "Interface (-i) not specified");
+	}
+	if (g_cg_plugin == NULL) {
+		if (plugin_name == NULL) {
+			panic(0, "Plugin (--plugin) not specified");
+		}
+		cg_load_plugin(plugin_name);
 	}
 	current = t;
 	htable_init(&t->t_in_htable, 4096, ip_socket_hash);
@@ -941,7 +947,8 @@ err:
 	}
 	t->t_counters = xmalloc(n_counters * sizeof(uint64_t));
 	memset(t->t_counters, 0, n_counters * sizeof(uint64_t));
-	return 0;
+	CG_DLIST_INSERT_TAIL(&g_cg_threads_head, t, t_list);
+	return t;
 }
 
 static void
@@ -960,9 +967,9 @@ sleep_compute_hz(void)
 int
 main(int argc, char **argv)
 {
-	int i, rc, opt_off;
+	int rc, opt_off;
 	char hostname[64];
-	struct thread *t, *pt;
+	struct cg_thread *t, *tmpl;
 
 	srand48(getpid() ^ time(NULL));
 	counter64_init(&if_ibytes);
@@ -971,7 +978,6 @@ main(int argc, char **argv)
 	counter64_init(&if_opackets);
 	counter64_init(&if_imcasts);
 	sleep_compute_hz();
-	bsd_init();
 	rc = gethostname(hostname, sizeof(hostname));
 	if (rc == -1) {
 		fprintf(stderr, "gethostname() failed (%s)\n", strerror(errno));
@@ -996,30 +1002,26 @@ main(int argc, char **argv)
 	argc -= rc;
 	argv += rc;
 
-	pt = NULL;
+	cg_dlist_init(&g_cg_threads_head);
+	tmpl = NULL;
 	opt_off = 0;
-	while (opt_off < argc - 1 && n_threads < N_THREADS_MAX) {
-		t = threads + n_threads;
-		rc = thread_init(t, pt, n_threads, argc - opt_off, argv + opt_off);
-		if (rc) {
-			return EXIT_FAILURE;
-		}
+	while (opt_off < argc - 1) {
+		t = thread_init(tmpl, argc - opt_off, argv + opt_off);
 		opt_off += (optind - 1);
 		optind = 1;
-		pt = t;
-		n_threads++;
+		tmpl = t;
 	}
-	if (n_threads == 0) {
+	if (cg_dlist_is_empty(&g_cg_threads_head)) {
 		usage();
 		return EXIT_FAILURE;
 	}
 
+	congen_plugin_init();
+
 	set_transport(g_transport);
-	io_init(threads, n_threads);
+	io_init();
 
-	for (i = 0; i < n_threads; ++i) {
-		t = threads + i;
-
+	CG_DLIST_FOREACH(t, &g_cg_threads_head, t_list) {
 		if (!t->t_Lflag) {
 			if (t->t_dst_cache_size < 2 * t->t_concurrency) {
 				t->t_dst_cache_size = 2 * t->t_concurrency;
@@ -1028,9 +1030,7 @@ main(int argc, char **argv)
 		}
 	}
 
-	for (i = 0; i < n_threads; ++i) {
-		t = threads + i;
-
+	CG_DLIST_FOREACH(t, &g_cg_threads_head, t_list) {
 		rc = pthread_create(&t->t_pthread, NULL, thread_routine, t);
 		if (rc) {
 			fprintf(stderr, "pthread_create() failed (%s)\n", strerror(rc));
@@ -1040,8 +1040,7 @@ main(int argc, char **argv)
 
 	main_routine();	
 
-	for (i = 0; i < n_threads; ++i) {
-		t = threads + i;
+	CG_DLIST_FOREACH(t, &g_cg_threads_head, t_list) {
 		pthread_join(t->t_pthread, NULL);
 	}
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
-#ifndef CON_GEN_TIMER_H
-#define CON_GEN_TIMER_H
+
+#ifndef CONGEN_TIMER_H
+#define CONGEN_TIMER_H
 
 #include "subr.h"
 #include "list.h"
@@ -11,7 +12,7 @@
 #define TIMER_EXPIRE_MAX (5 * 60 * 60 * NANOSECONDS_SECOND) // 5 Hours
 
 struct timer {
-	struct dlist tm_list;
+	struct cg_dlist tm_list;
 	uintptr_t tm_data;
 };
 
@@ -26,4 +27,4 @@ int timer_is_running(struct timer *);
 void timer_set(struct timer *, uint64_t, timer_f);
 void timer_cancel(struct timer *);
 
-#endif // CON_GEN__TIMER_H
+#endif // CONGEN_TIMER_H

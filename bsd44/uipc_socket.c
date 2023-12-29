@@ -9,20 +9,20 @@ somalloc(void)
 {
 	struct socket *so;
 
-	if (dlist_is_empty(&current->t_so_pool)) {
+	if (cg_dlist_is_empty(&current->t_so_pool)) {
 		so = malloc(sizeof(*so));
 		//dbg("newso %p", so);
 		if (so == NULL) {
 			return NULL;
 		}
 	} else {
-		so = DLIST_FIRST(&current->t_so_pool, struct socket, inp_list);
-		DLIST_REMOVE(so, inp_list);
+		so = CG_DLIST_FIRST(&current->t_so_pool, struct socket, inp_list);
+		CG_DLIST_REMOVE(so, inp_list);
 	}
 	so->so_head = 0;
 	so->so_base.ipso_cache = NULL;
-	dlist_init(so->so_q + 0);
-	dlist_init(so->so_q + 1);
+	cg_dlist_init(so->so_q + 0);
+	cg_dlist_init(so->so_q + 1);
 	so->so_events = 0;
 	so->so_error = 0;
 	so->inp_laddr = 0;
@@ -39,16 +39,14 @@ static void
 somfree(struct socket *so)
 {
 	assert(!(so->so_state & SS_ISATTACHED));
-	DLIST_INSERT_HEAD(&current->t_so_pool, so, inp_list);
+	CG_DLIST_INSERT_HEAD(&current->t_so_pool, so, inp_list);
 }
 
-/*
- * Socket operation routines.
- * These routines are called by the routines in
- * sys_socket.c or from a system process, and
- * implement the semantics of socket operations by
- * switching out to the protocol specific routines.
- */
+// Socket operation routines.
+// These routines are called by the routines in
+// sys_socket.c or from a system process, and
+// implement the semantics of socket operations by
+// switching out to the protocol specific routines.
 int
 bsd_socket(int proto, struct socket **aso)
 {
@@ -151,7 +149,7 @@ int
 bsd_close(struct socket *so)
 {
 	int i, rc;
-	struct dlist *head;
+	struct cg_dlist *head;
 	struct socket *aso;
 
 	if (so->so_state & SS_NOFDREF) {
@@ -161,8 +159,8 @@ bsd_close(struct socket *so)
 	if (so->so_options & SO_OPTION(SO_ACCEPTCONN)) {
 		for (i = 0; i < ARRAY_SIZE(so->so_q); ++i) {
 			head = so->so_q + i;
-			while (!dlist_is_empty(head)) {
-				aso = DLIST_FIRST(head, struct socket, so_ql);
+			while (!cg_dlist_is_empty(head)) {
+				aso = CG_DLIST_FIRST(head, struct socket, so_ql);
 				soabort(aso);
 			}
 		}
@@ -404,38 +402,32 @@ bsd_getsockopt(struct socket *so, int level, int optname,
 	return 0;
 }
 
-/*
- * Primitive routines for operating on sockets and socket buffers
- */
 
-//u_long	sb_max = SB_MAX;		/* patchable */
+// Primitive routines for operating on sockets and socket buffers
 
-/*
- * Procedures to manipulate state flags of socket
- * and do appropriate wakeups.  Normal sequence from the
- * active (originating) side is that soisconnecting() is
- * called during processing of connect() call,
- * resulting in an eventual call to soisconnected() if/when the
- * connection is established.  When the connection is torn down
- * soisdisconnecting() is called during processing of disconnect() call,
- * and soisdisconnected() is called when the connection to the peer
- * is totally severed.  The semantics of these routines are such that
- * connectionless protocols can call soisconnected() and soisdisconnected()
- * only, bypassing the in-progress calls when setting up a ``connection''
- * takes no time.
- *
- * From the passive side, a socket is created with
- * two queues of sockets: so_q0 for connections in progress
- * and so_q for connections already made and awaiting user acceptance.
- * As a protocol is preparing incoming connections, it creates a socket
- * structure queued on so_q0 by calling sonewconn().  When the connection
- * is established, soisconnected() is called, and transfers the
- * socket structure to so_q, making it available to accept().
- * 
- * If a socket is closed with sockets on either
- * so_q0 or so_q, these sockets are dropped.
- */
-
+// Procedures to manipulate state flags of socket
+// and do appropriate wakeups.  Normal sequence from the
+// active (originating) side is that soisconnecting() is
+// called during processing of connect() call,
+// resulting in an eventual call to soisconnected() if/when the
+// connection is established.  When the connection is torn down
+// soisdisconnecting() is called during processing of disconnect() call,
+// and soisdisconnected() is called when the connection to the peer
+// is totally severed.  The semantics of these routines are such that
+// connectionless protocols can call soisconnected() and soisdisconnected()
+// only, bypassing the in-progress calls when setting up a ``connection''
+// takes no time.
+//
+// From the passive side, a socket is created with
+// two queues of sockets: so_q0 for connections in progress
+// and so_q for connections already made and awaiting user acceptance.
+// As a protocol is preparing incoming connections, it creates a socket
+// structure queued on so_q0 by calling sonewconn().  When the connection
+// is established, soisconnected() is called, and transfers the
+// socket structure to so_q, making it available to accept().
+// 
+// If a socket is closed with sockets on either
+// so_q0 or so_q, these sockets are dropped.
 void
 soisconnecting(struct socket *so)
 {
@@ -487,7 +479,7 @@ int
 soreadable(struct socket *so)
 {
 	return (so->so_state & SS_CANTRCVMORE) ||
-	       !dlist_is_empty(so->so_q + 1);
+	       !cg_dlist_is_empty(so->so_q + 1);
 }
 
 int
@@ -569,27 +561,24 @@ soqinsque(struct socket *head, struct socket *so, int q)
 {
 	assert(so->so_head == NULL);
 	so->so_head = head;
-	DLIST_INSERT_HEAD(head->so_q + q, so, so_ql);
+	CG_DLIST_INSERT_HEAD(head->so_q + q, so, so_ql);
 }
 
 void
 soqremque(struct socket *so)
 {
 	assert(so->so_head != NULL);
-	DLIST_REMOVE(so, so_ql);
+	CG_DLIST_REMOVE(so, so_ql);
 	so->so_head = NULL;
 }
 
-/*
- * Socantsendmore indicates that no more data will be sent on the
- * socket; it would normally be applied to a socket when the user
- * informs the system that no more data is to be sent, by the protocol
- * code (in case PRU_SHUTDOWN).  Socantrcvmore indicates that no more data
- * will be received, and will normally be applied to the socket by a
- * protocol when it detects that the peer will send no more data.
- * Data queued for reading in the socket may yet be read.
- */
-
+// Socantsendmore indicates that no more data will be sent on the
+// socket; it would normally be applied to a socket when the user
+// informs the system that no more data is to be sent, by the protocol
+// code (in case PRU_SHUTDOWN).  Socantrcvmore indicates that no more data
+// will be received, and will normally be applied to the socket by a
+// protocol when it detects that the peer will send no more data.
+// Data queued for reading in the socket may yet be read.
 void
 socantsendmore(struct socket *so)
 {
@@ -604,14 +593,12 @@ socantrcvmore(struct socket *so)
 	so->so_state |= SS_CANTRCVMORE;
 }
 
-/*
- * Socket buffer (struct sockbuf) utility routines.
- */
+// Socket buffer (struct sockbuf) utility routines.
 #define SBCHUNK_SIZE 1024
 #define SBCHUNK_DATASIZE (SBCHUNK_SIZE - sizeof(struct sockbuf_chunk))
 
 struct sockbuf_chunk {
-	struct dlist sbc_list;
+	struct cg_dlist sbc_list;
 	int sbc_len;
 	int sbc_off;
 };
@@ -623,7 +610,7 @@ struct sockbuf_chunk {
 static void
 sbchfree(struct sockbuf_chunk *ch)
 {
-	DLIST_INSERT_HEAD(&current->t_sob_pool, ch, sbc_list);
+	CG_DLIST_INSERT_HEAD(&current->t_sob_pool, ch, sbc_list);
 }
 
 static struct sockbuf_chunk *
@@ -631,19 +618,19 @@ sbchalloc(struct sockbuf *sb)
 {
 	struct sockbuf_chunk *ch;
 
-	if (dlist_is_empty(&current->t_sob_pool)) {
+	if (cg_dlist_is_empty(&current->t_sob_pool)) {
 		ch = malloc(SBCHUNK_SIZE);
 		if (ch == NULL) {
 			return NULL;
 		}
 	} else {
-		ch = DLIST_FIRST(&current->t_sob_pool,
+		ch = CG_DLIST_FIRST(&current->t_sob_pool,
 		                 struct sockbuf_chunk, sbc_list);
-		DLIST_REMOVE(ch, sbc_list);
+		CG_DLIST_REMOVE(ch, sbc_list);
 	}
 	ch->sbc_len = 0;
 	ch->sbc_off = 0;
-	DLIST_INSERT_TAIL(&sb->sb_head, ch, sbc_list);
+	CG_DLIST_INSERT_TAIL(&sb->sb_head, ch, sbc_list);
 	return ch;
 }
 
@@ -653,7 +640,7 @@ sbinit(struct sockbuf *sb, u_long cc)
 	sb->sb_cc = 0;
 	sb->sb_hiwat = cc;
 	sb->sb_lowat  = 0;
-	dlist_init(&sb->sb_head);
+	cg_dlist_init(&sb->sb_head);
 }
 
 void
@@ -672,9 +659,9 @@ sbfree_n(struct sockbuf *sb, int n)
 	struct sockbuf_chunk *ch;
 
 	for (i = 0; i < n; ++i) {
-		assert(!dlist_is_empty(&sb->sb_head));
-		ch = DLIST_LAST(&sb->sb_head, struct sockbuf_chunk, sbc_list);
-		DLIST_REMOVE(ch, sbc_list);
+		assert(!cg_dlist_is_empty(&sb->sb_head));
+		ch = CG_DLIST_LAST(&sb->sb_head, struct sockbuf_chunk, sbc_list);
+		CG_DLIST_REMOVE(ch, sbc_list);
 		sbchfree(ch);
 	}
 }
@@ -684,17 +671,16 @@ sbrelease(struct sockbuf *sb)
 {
 	struct sockbuf_chunk *ch;
 
-	while (!dlist_is_empty(&sb->sb_head)) {
-		ch = DLIST_FIRST(&sb->sb_head, struct sockbuf_chunk, sbc_list);
-		DLIST_REMOVE(ch, sbc_list);
+	while (!cg_dlist_is_empty(&sb->sb_head)) {
+		ch = CG_DLIST_FIRST(&sb->sb_head, struct sockbuf_chunk, sbc_list);
+		CG_DLIST_REMOVE(ch, sbc_list);
 		sbchfree(ch);		
 	}
 	sb->sb_cc = 0;
 }
 
 static void
-sbwrite(struct sockbuf *sb, struct sockbuf_chunk *pos,
-        const void *src, int cnt)
+sbwrite(struct sockbuf *sb, struct sockbuf_chunk *pos, const void *src, int cnt)
 {
 	int n, rem, space;
 	u_char *data;
@@ -702,7 +688,7 @@ sbwrite(struct sockbuf *sb, struct sockbuf_chunk *pos,
 
 	ptr = src;
 	rem = cnt;
-	DLIST_FOREACH_CONTINUE(pos, &sb->sb_head, sbc_list) {
+	CG_DLIST_FOREACH_CONTINUE(pos, &sb->sb_head, sbc_list) {
 		assert(rem > 0);
 		space = sbchspace(pos);
 		n = MIN(rem, space);
@@ -729,14 +715,14 @@ sbappend(struct sockbuf *sb, const u_char *buf, int len)
 		return 0;
 	}
 	n = 0;
-	if (dlist_is_empty(&sb->sb_head)) {
+	if (cg_dlist_is_empty(&sb->sb_head)) {
 		ch = sbchalloc(sb);
 		if (ch == NULL) {
 			return -ENOMEM;
 		}
 		n++;
 	} else {
-		ch = DLIST_LAST(&sb->sb_head, struct sockbuf_chunk, sbc_list);
+		ch = CG_DLIST_LAST(&sb->sb_head, struct sockbuf_chunk, sbc_list);
 	}
 	pos = ch;
 	rem = appended;
@@ -754,13 +740,10 @@ sbappend(struct sockbuf *sb, const u_char *buf, int len)
 	}
 	sbwrite(sb, pos, buf, appended);
 	return appended;
-
-
 }
 
-/*
- * Drop data from (the front of) a sockbuf.
- */
+
+// Drop data from (the front of) a sockbuf.
 void
 sbdrop(struct sockbuf *sb, int len)
 {
@@ -768,7 +751,7 @@ sbdrop(struct sockbuf *sb, int len)
 	struct sockbuf_chunk *pos, *tmp;
 
 	off = 0;
-	DLIST_FOREACH_SAFE(pos, &sb->sb_head, sbc_list, tmp) {
+	CG_DLIST_FOREACH_SAFE(pos, &sb->sb_head, sbc_list, tmp) {
 		assert(pos->sbc_len);
 		assert(sb->sb_cc >= pos->sbc_len);
 		n = pos->sbc_len;
@@ -779,7 +762,7 @@ sbdrop(struct sockbuf *sb, int len)
 		pos->sbc_off += n;
 		pos->sbc_len -= n;
 		if (pos->sbc_len == 0) {
-			DLIST_REMOVE(pos, sbc_list);
+			CG_DLIST_REMOVE(pos, sbc_list);
 			sbchfree(pos);
 		}
 		off += n;
@@ -787,7 +770,6 @@ sbdrop(struct sockbuf *sb, int len)
 			break;
 		}
 	}
-//	return off;
 }
 
 void
@@ -798,14 +780,14 @@ sbcopy(struct sockbuf *sb, int off, int len, u_char *dst)
 	struct sockbuf_chunk *ch;
 
 	assert(sb->sb_cc >= off + len);
-	DLIST_FOREACH(ch, &sb->sb_head, sbc_list) {
+	CG_DLIST_FOREACH(ch, &sb->sb_head, sbc_list) {
 		assert(ch->sbc_len);
 		if (off < ch->sbc_len) {
 			break;
 		}
 		off -= ch->sbc_len;
 	}
-	for (; len != 0; ch = DLIST_NEXT(ch, sbc_list)) {
+	for (; len != 0; ch = CG_DLIST_NEXT(ch, sbc_list)) {
 		assert(&ch->sbc_list != &sb->sb_head);
 		assert(off < ch->sbc_len);
 		n = MIN(len, ch->sbc_len - off);
@@ -826,7 +808,7 @@ bsd_accept(struct socket *so, struct socket **paso)
 	if ((so->so_options & SO_OPTION(SO_ACCEPTCONN)) == 0) {
 		return -EINVAL;
 	}
-	if (dlist_is_empty(so->so_q + 1)) {
+	if (cg_dlist_is_empty(so->so_q + 1)) {
 		return -EWOULDBLOCK;
 	}
 	if (so->so_error) {
@@ -834,7 +816,7 @@ bsd_accept(struct socket *so, struct socket **paso)
 		so->so_error = 0;
 		return -error;
 	}
-	aso = DLIST_FIRST(so->so_q + 1, struct socket, so_ql);
+	aso = CG_DLIST_FIRST(so->so_q + 1, struct socket, so_ql);
 	soaccept(aso);
 	*paso = aso;
 	return 0;

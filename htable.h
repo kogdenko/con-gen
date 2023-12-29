@@ -1,18 +1,19 @@
-// GPL v2 license
-#ifndef CON_GEN__GBTCP__HTABLE_H
-#define CON_GEN__GBTCP__HTABLE_H
+// SPDX-License-Identifier: GPL-2.0-only
+
+#ifndef CONGEN_HTABLE_H
+#define CONGEN_HTABLE_H
 
 #include <stdint.h>
 #include "list.h"
 
-typedef uint32_t (*htable_f)(struct dlist *);
+typedef uint32_t (*htable_f)(struct cg_dlist *);
 typedef void (*htable_foreach_f)(void *, void *);
 
 struct htable_static {
 	int hts_size;
 	int hts_mask;
 	htable_f hts_hash_fn;
-	struct dlist *hts_array;
+	struct cg_dlist *hts_array;
 };
 
 struct htable_dynamic {
@@ -46,16 +47,16 @@ typedef struct htable_dynamic htable_t;
 
 void htable_static_init(struct htable_static *, int, htable_f);
 void htable_static_deinit(struct htable_static *);
-struct dlist *htable_static_bucket_get(struct htable_static *, uint32_t);
-void htable_static_add(struct htable_static *, struct dlist *, uint32_t);
-void htable_static_del(struct htable_static *, struct dlist *);
+struct cg_dlist *htable_static_bucket_get(struct htable_static *, uint32_t);
+void htable_static_add(struct htable_static *, struct cg_dlist *, uint32_t);
+void htable_static_del(struct htable_static *, struct cg_dlist *);
 void htable_static_foreach(struct htable_static *, void *, htable_foreach_f);
 
 void htable_dynamic_init(struct htable_dynamic *, int, htable_f);
 void htable_dynamic_deinit(struct htable_dynamic *);
-struct dlist * htable_dynamic_bucket_get(struct htable_dynamic *, uint32_t);
-void htable_dynamic_add(struct htable_dynamic *, struct dlist *, uint32_t);
-void htable_dynamic_del(struct htable_dynamic *, struct dlist *);
+struct cg_dlist *htable_dynamic_bucket_get(struct htable_dynamic *, uint32_t);
+void htable_dynamic_add(struct htable_dynamic *, struct cg_dlist *, uint32_t);
+void htable_dynamic_del(struct htable_dynamic *, struct cg_dlist *);
 void htable_dynamic_foreach(struct htable_dynamic *, void *, htable_foreach_f);
 
-#endif // CON_GEN__GBTCP__HTABLE_H
+#endif // CONGEN_HTABLE_H

@@ -70,25 +70,17 @@ tcp_input(struct ip *ip, int iphlen, int eth_flags)
 		return;
 	}
 
-	/*
-	 * Checksum extended TCP header and data.
-	 */
+	// Checksum extended TCP header and data.
 	th_sum = th->th_sum;
 	th->th_sum = 0;
-	if (current->t_tcp_do_incksum) {
-		th->th_sum = tcp_cksum(ip, ip->ip_len);
-		if (th_sum != th->th_sum) {
-			counter64_inc(&tcpstat.tcps_rcvbadsum);
-			if (current->t_tcp_do_incksum > 1) {
-				goto drop;
-			}
-		}
+	th->th_sum = tcp_cksum(ip, ip->ip_len);
+	if (th_sum != th->th_sum) {
+		counter64_inc(&tcpstat.tcps_rcvbadsum);
+		goto drop;
 	}
 
-	/*
-	 * Check that TCP offset makes sense,
-	 * pull out TCP options and adjust length.
-	 */
+	// Check that TCP offset makes sense,
+	// pull out TCP options and adjust length.
 	off = (th->th_off & 0xf0) >> 2;
 	if (off < sizeof(struct tcp_hdr) || off > ip->ip_len) {
 		counter64_inc(&tcpstat.tcps_rcvbadoff);
@@ -102,9 +94,7 @@ tcp_input(struct ip *ip, int iphlen, int eth_flags)
 		optp = (u_char *)(th + 1);
 	}
 
-	/*
-	 * Convert TCP protocol specific fields to host format.
-	 */
+	// Convert TCP protocol specific fields to host format.
 	NTOHL(th->th_seq);
 	NTOHL(th->th_ack);
 	NTOHS(th->th_win);

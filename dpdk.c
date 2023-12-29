@@ -47,7 +47,7 @@ dpdk_parse_args(int argc, char **argv)
 }
 
 static void
-dpdk_init(struct thread *threads, int n_threads)
+dpdk_init(void)
 {
 	int i, rc, n_mbufs, port_id, socket_id;
 	char port_name[RTE_ETH_NAME_MAX_LEN];
@@ -56,12 +56,10 @@ dpdk_init(struct thread *threads, int n_threads)
 	struct rte_eth_rxconf rxq_conf;
 	struct rte_eth_txconf txq_conf;
 	struct rte_eth_rss_conf rss_conf;
-	struct thread *t;
+	struct cg_thread *t;
 	struct dpdk_port *port;
 
-	for (i = 0; i < n_threads; ++i) {
-		t = threads + i;
-
+	CG_FOREACH_TASK(t) {
 		t->t_busyloop = 1;
 
 		rc = rte_eth_dev_get_port_by_name(t->t_ifname, &t->t_dpdk_port_id);
@@ -164,9 +162,7 @@ dpdk_init(struct thread *threads, int n_threads)
 		rte_eth_promiscuous_enable(port_id);
 	}
 
-	for (i = 0; i < n_threads; ++i) {
-		t = threads + i;
-
+	CG_FOREACH_TASK(t) {
 		port = g_ports + t->t_dpdk_port_id;
 
 		t->t_rss_queue_num = port->n_queues;

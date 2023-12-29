@@ -35,7 +35,7 @@ init_counters(counter64_t *a, int n)
 }
 
 void
-bsd_init(void)
+congen_plugin_init(void)
 {
 	INIT_STAT(udpstat);
 	INIT_STAT(tcpstat);
@@ -44,7 +44,7 @@ bsd_init(void)
 }
 
 void
-bsd_current_init(void)
+congen_plugin_current_init(void)
 {
 	current->t_tcp_now = 1;
 	current->t_tcp_rttdflt = TCPTV_SRTTDFLT / PR_SLOWHZ;
@@ -56,7 +56,7 @@ bsd_current_init(void)
 }
 
 void
-bsd_command(int command, FILE *out, int verbose)
+congen_plugin_command(int command, FILE *out, int verbose)
 {
 	switch (command) {
 	case 's':
@@ -70,7 +70,7 @@ bsd_command(int command, FILE *out, int verbose)
 }
 
 void
-bsd_update(uint64_t tsc)
+congen_plugin_update(uint64_t tsc)
 {
 	uint64_t age;
 
@@ -82,30 +82,21 @@ bsd_update(uint64_t tsc)
 }
 
 void
-bsd_flush(void)
+congen_plugin_flush(void)
 {
 	int rc;
 	struct socket *so;
 
-	while (!dlist_is_empty(&current->t_so_txq)) {
-		so = DLIST_FIRST(&current->t_so_txq, struct socket, so_txlist);
+	while (!cg_dlist_is_empty(&current->t_so_txq)) {
+		so = CG_DLIST_FIRST(&current->t_so_txq, struct socket, so_txlist);
 		if (io_is_tx_throttled()) {
 			break;
 		}
-		if (so->so_proto == IPPROTO_TCP) {
-			rc = tcp_output_real(sototcpcb(so));
-			if (rc <= 0) {
-				DLIST_REMOVE(so, so_txlist);
-				so->so_state &= ~SS_ISTXPENDING;
-				sofree(so);
-			}
-		} else {
-//			DLIST_REMOVE(so, so_txlist);
-			sosend(so, "xx", 2, NULL, 0);
-//			so->so_state &= ~SS_ISTXPENDING;
-
-//			bsd_close(so);
-//			con_close();
+		rc = tcp_output_real(sototcpcb(so));
+		if (rc <= 0) {
+			CG_DLIST_REMOVE(so, so_txlist);
+			so->so_state &= ~SS_ISTXPENDING;
+			sofree(so);
 		}
 	}
 }

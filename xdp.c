@@ -112,7 +112,7 @@ xdp_init_queue(struct xdp_queue *q, const char *ifname, int queue_id)
 }
 
 static void
-xdp_init_if(struct thread *t)
+xdp_init_if(struct cg_thread *t)
 {
 	int rc, i, ifindex;
 
@@ -147,12 +147,12 @@ xdp_init_if(struct thread *t)
 }
 
 static void
-xdp_init(struct thread *threads, int n_threads)
+xdp_init(void)
 {
-	int i;
+	struct cg_thread *t;
 
-	for (i = 0; i < n_threads; ++i) {
-		xdp_init_if(threads + i);
+	CG_FOREACH_TASK(t) {
+		xdp_init_if(t);
 	}
 }
 

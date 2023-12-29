@@ -3,7 +3,7 @@
 #include <pcap/pcap.h>
 
 static void
-pcap_init_if(struct thread *t)
+pcap_init_if(struct cg_thread *t)
 {
 	int i, rc, fd, *dlt_buf, snaplen;
 	char errbuf[PCAP_ERRBUF_SIZE];
@@ -63,12 +63,12 @@ pcap_init_if(struct thread *t)
 }
 
 void
-pcap_init_threads(struct thread *threads, int n_threads)
+pcap_init_threads(void)
 {
-	int i;
+	struct cg_thread *t;
 
-	for (i = 0; i < n_threads; ++i) {
-		pcap_init_if(threads + i);
+	CG_FOREACH_TASK(t) {
+		pcap_init_if(t);
 	}
 }
 

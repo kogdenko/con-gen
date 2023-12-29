@@ -148,9 +148,9 @@ out:
 	io_tx_packet(&pkt);
 }
 
-/* Process a received Ethernet packet; */
+// Process a received Ethernet packet
 void
-bsd_eth_in(void *data, int len)
+congen_plugin_rx(void *data, int len)
 {
 	int eth_flags;
 	struct ether_header *eh;
@@ -201,5 +201,3 @@ ether_sprintf(u_char *ap)
 	*--cp = 0;
 	return (etherbuf);
 }
-
-

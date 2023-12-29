@@ -12,20 +12,19 @@ struct socket;
 struct sockbuf;
 
 struct sockbuf {
-	u_int sb_cc; /* actual chars in buffer */
-	u_int sb_hiwat;	/* max actual char count */
-	u_int sb_lowat;	/* low water mark */
-	struct dlist sb_head;
+	u_int sb_cc; // actual chars in buffer
+	u_int sb_hiwat;	// max actual char count
+	u_int sb_lowat;	// low water mark
+	struct cg_dlist sb_head;
 };
 
 #define	SB_MAX (256*1024) /* default for max chars in sockbuf */
 
-/*
- * Kernel structure per socket.
- * Contains send and receive buffer queues,
- * handle on protocol and pointer to protocol
- * private data and error information.
- */
+
+// Kernel structure per socket.
+// Contains send and receive buffer queues,
+// handle on protocol and pointer to protocol
+// private data and error information.
 #define inp_list so_base.ipso_list
 #define inp_laddr so_base.ipso_laddr
 #define inp_faddr so_base.ipso_faddr
@@ -35,15 +34,15 @@ struct sockbuf {
 struct socket {
 	struct ip_socket so_base;
 
-	uint32_t so_options;		/* from socket call, see socket.h */
-	u_char	so_proto;
-	short   so_events;
-	u_short	so_error;		/* error affecting connection */
-	short	so_linger;		/* time to linger while closing */
-	short	so_state;		/* internal state flags SS_*, below */
+	uint32_t so_options;	// from socket call, see socket.h
+	u_char so_proto;
+	short so_events;
+	u_short so_error;	// error affecting connection
+	short so_linger;	// time to linger while closing
+	short so_state;		// internal state flags SS_*, below
 
-	struct	socket *so_head;	/* back pointer to accept socket */
-	struct	dlist so_q[2];		/* queue of partial/incoming connections */
+	struct socket *so_head;	// back pointer to accept socket
+	struct cg_dlist so_q[2];// queue of partial/incoming connections
 #define so_ql so_q[0]
 
 
@@ -51,14 +50,14 @@ struct socket {
 	int so_rcv_hiwat;
 	void (*so_userfn)(struct socket *, short, struct sockaddr_in *, void *, int);
 	uint64_t so_user;
-	struct dlist so_txlist;
+	struct cg_dlist so_txlist;
 	struct tcpcb inp_ppcb;
 };
 
 #define	sototcpcb(so) (&((so)->inp_ppcb))
 #define tcpcbtoso(tp) cg_container_of(tp, struct socket, inp_ppcb)
 
-extern struct dlist so_txq;
+//extern struct cg_dlist so_txq;
 
 #ifdef __linux__
 #define SO_OPTION(optname) (1 << (optname))

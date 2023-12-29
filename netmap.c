@@ -27,7 +27,7 @@ not_empty_txr(struct netmap_slot **pslot)
 }
 
 static void
-netmap_init_if(struct thread *t)
+netmap_init_if(struct cg_thread *t)
 {
 	char buf[IFNAMSIZ + 64];
 
@@ -55,12 +55,12 @@ netmap_init_if(struct thread *t)
 }
 
 static void
-netmap_init(struct thread *threads, int n_thread)
+netmap_init(void)
 {
-	int i;
+	struct cg_thread *t;
 
-	for (i = 0; i < n_threads; ++i) {
-		netmap_init_if(threads + i);
+	CG_FOREACH_TASK(t) {
+		netmap_init_if(t);
 	}
 }
 

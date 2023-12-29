@@ -239,23 +239,23 @@ add_pending_packet(struct packet *pkt)
 {
 	struct packet *cp;
 
-	if (dlist_is_empty(&current->t_available_head)) {
+	if (cg_dlist_is_empty(&current->t_available_head)) {
 		if (current->t_n_pending < CG_TX_PENDING_MAX) {
 			cp = xmalloc(sizeof(*pkt));
 			memset(cp, 0, sizeof(*cp));
 		} else {
-			cp = DLIST_FIRST(&current->t_pending_head, struct packet, pkt.list);
+			cp = CG_DLIST_FIRST(&current->t_pending_head, struct packet, pkt.list);
 			current->t_n_pending--;
 		}
 	} else {
-		cp = DLIST_FIRST(&current->t_available_head, struct packet, pkt.list);
-		DLIST_REMOVE(cp, pkt.list);
+		cp = CG_DLIST_FIRST(&current->t_available_head, struct packet, pkt.list);
+		CG_DLIST_REMOVE(cp, pkt.list);
 	}
 
 	memcpy(cp->pkt_body, pkt->pkt.buf, pkt->pkt.len);
 	cp->pkt.len = pkt->pkt.len;
 	cp->pkt.buf = cp->pkt_body;
-	DLIST_INSERT_TAIL(&current->t_pending_head, cp, pkt.list);
+	CG_DLIST_INSERT_TAIL(&current->t_pending_head, cp, pkt.list);
 	current->t_n_pending++;
 }
 
@@ -287,14 +287,12 @@ set_transport(int transport)
 		panic(0, "Transport %d not supported", transport);
 		break;
 	}
-
-	tr_ops->tr_io_process_op = bsd_eth_in;
 }
 
 void
-io_init(struct thread *threads, int n_threads)
+io_init()
 {
-	(*tr_ops->tr_io_init_op)(threads, n_threads);
+	(*tr_ops->tr_io_init_op)();
 }
 
 void
@@ -346,12 +344,6 @@ io_tx(void)
 	if (tr_ops->tr_io_tx_op != NULL) {
 		(*tr_ops->tr_io_tx_op)();
 	}
-}
-
-void
-io_process(void *pkt, int pkt_len)
-{
-	(*tr_ops->tr_io_process_op)(pkt, pkt_len);
 }
 
 int
@@ -503,14 +495,16 @@ counter64_init(counter64_t *c)
 uint64_t
 counter64_get(counter64_t *c)
 {
-	int i;
 	uint64_t accum;
+	struct cg_thread *t;
 
 	accum = 0;
-	for (i = 0; i < n_threads; ++i) {
-		assert(*c != 0);
-		accum += threads[i].t_counters[*c];
+	assert(*c != 0);
+
+	CG_FOREACH_TASK(t) {
+		accum += t->t_counters[*c];
 	}
+
 	return accum;
 }
 
@@ -545,11 +539,11 @@ spinlock_unlock(struct spinlock *sl)
 static struct ip_socket *
 ip_socket_get(struct ip_socket *x, uint32_t h)
 {
-	struct dlist *b;
+	struct cg_dlist *b;
 	struct ip_socket *so;
 
 	b = htable_bucket_get(&current->t_in_htable, h);
-	DLIST_FOREACH(so, b, ipso_list) {
+	CG_DLIST_FOREACH(so, b, ipso_list) {
 		if (so->ipso_laddr == x->ipso_laddr && so->ipso_faddr == x->ipso_faddr &&
 				so->ipso_lport == x->ipso_lport &&
 				so->ipso_fport == x->ipso_fport) {
