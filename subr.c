@@ -3,9 +3,6 @@
 
 #include <sys/resource.h>
 
-
-static struct spinlock panic_lock;
-
 int verbose;
 struct transport_ops *tr_ops;
 
@@ -31,20 +28,18 @@ extern struct transport_ops pcap_io_ops;
 extern struct transport_ops dpdk_ops;
 #endif
 
-void bsd_eth_in(void *, int);
-
 void
 dbg5(const char *filename, u_int linenum, const char *func, int suppressed,
-     const char *fmt, ...)
+	     const char *fmt, ...)
 {
 	int len;
 	char buf[BUFSIZ];
 	va_list ap;
 	static FILE *file = NULL;
 
-	if (file == NULL) {
-		file = fopen("/tmp/con-gen.log", "w");
-	}
+//	if (file == NULL) {
+//		file = fopen("/tmp/congen.log", "w");
+//	}
 
 	len = snprintf(buf, sizeof(buf), "%-6d: %-20s: %-4d: %-20s: ",
 			getpid(), filename, linenum, func);
@@ -52,10 +47,11 @@ dbg5(const char *filename, u_int linenum, const char *func, int suppressed,
 	len += vsnprintf(buf + len, sizeof(buf) - len, fmt, ap);
 	va_end(ap);
 	if (len < sizeof(buf) && suppressed) {
-		snprintf(buf + len, sizeof(buf) - len, " (suppressed %d)",
-			suppressed);
+		snprintf(buf + len, sizeof(buf) - len, " (suppressed %d)", suppressed);
 	}
+
 	printf("%s\n", buf);
+
 	if (file != NULL) {
 		fprintf(file, "%s\n", buf);
 		fflush(file);
@@ -213,6 +209,8 @@ xmalloc(size_t size)
 void
 panic3(const char *file, int line, int errnum, const char *format, ...)
 {
+	static struct spinlock panic_lock;
+
 	va_list ap;
 
 	spinlock_lock(&panic_lock);
@@ -392,7 +390,7 @@ read_rss_key(const char *ifname, u_char **rss_key)
 
 	rc = socket(AF_INET, SOCK_DGRAM, 0);
 	if (rc < 0) {
-		panic(errno, "Reading %s RSS key error: socket() failed", ifname);
+		panic(errno, "%s: Read RSS key: socket() failed", ifname);
 	}
 	fd = rc;
 	memset(&rss, 0, sizeof(rss));
@@ -402,7 +400,7 @@ read_rss_key(const char *ifname, u_char **rss_key)
 	ifr.ifr_data = (void *)&rss;
 	rc = ioctl(fd, SIOCETHTOOL, (uintptr_t)&ifr);
 	if (rc < 0) {
-		panic(errno, "Reading %s RSS key error: ioctl(SIOCETHTOOL) failed", ifname);
+		panic(errno, "%s: Read RSS key: ioctl(SIOCETHTOOL) failed", ifname);
 	}
 	size = (sizeof(rss) + rss.key_size +
 	       rss.indir_size * sizeof(rss.rss_config[0]));
@@ -414,7 +412,7 @@ read_rss_key(const char *ifname, u_char **rss_key)
 	ifr.ifr_data = (void *)rss2;
 	rc = ioctl(fd, SIOCETHTOOL, (uintptr_t)&ifr);
 	if (rc) {
-		panic(errno, "Reading %s RSS key error: ioctl(SIOCETHTOOL) failed", ifname);
+		panic(errno, "%s: Read RSS key: ioctl(SIOCETHTOOL) failed", ifname);
 	}
 	off = rss2->indir_size * sizeof(rss2->rss_config[0]);
 	*rss_key = xmalloc(rss.key_size);
@@ -598,10 +596,6 @@ out:
 void
 ip_disconnect(struct ip_socket *so)
 {
-//	if (so->ipso_cache != NULL) {
-//		DLIST_INSERT_TAIL(&current->t_dst_cache, so->ipso_cache, ipso_list);
-//		so->ipso_cache = NULL;
-//	}
 	assert(current->t_n_conns);
 	current->t_n_conns--;
 	htable_del(&current->t_in_htable, &so->ipso_list);
@@ -615,4 +609,17 @@ ether_scanf(u_char *ap, const char *s)
 	rc = sscanf(s, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
 	            ap + 0, ap + 1, ap + 2, ap + 3, ap + 4, ap + 5);
 	return rc == 6 ? 0 : -EINVAL;
+}
+
+uint32_t
+cg_upper_pow2_32(uint32_t x)
+{
+        x--;
+        x |= x >>  1lu;
+        x |= x >>  2lu;
+        x |= x >>  4lu;
+        x |= x >>  8lu;
+        x |= x >> 16lu;
+        x++;
+        return x;
 }

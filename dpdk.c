@@ -72,7 +72,7 @@ dpdk_init(void)
 		}
 
 		port = g_ports + t->t_dpdk_port_id;
-		port->n_queues = MAX(port->n_queues, t->t_rss_queue_id + 1);
+		port->n_queues = CG_MAX(port->n_queues, t->t_rss_queue_id + 1);
 	}
 
 	n_mbufs = CG_TX_PENDING_MAX;
@@ -251,7 +251,7 @@ dpdk_rx(int unused)
 	struct rte_mbuf *m, *pkts[DPDK_MAX_PKT_BURST];
 
 	n = rte_eth_rx_burst(current->t_dpdk_port_id, current->t_rss_queue_id,
-			pkts, ARRAY_SIZE(pkts));
+			pkts, CG_ARRAY_SIZE(pkts));
 	for (i = 0; i < n; ++i) {
 		m = pkts[i];
 		io_process(rte_pktmbuf_mtod(m, void *), m->data_len);

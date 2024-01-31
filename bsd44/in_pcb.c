@@ -14,16 +14,20 @@ in_pcbbind(struct socket *so, be16_t lport)
 	if (!lport) {
 		return EINVAL;
 	}
+
 	if (so->inp_lport || so->inp_laddr != INADDR_ANY) {
 		return EINVAL;
 	}
+
 	i = ntohs(lport);
-	if (i >= ARRAY_SIZE(current->t_in_binded)) {
+	if (i >= CG_ARRAY_SIZE(current->t_in_binded)) {
 		return EADDRINUSE;
 	}
+
 	if (current->t_in_binded[i] != NULL) {
 		return EADDRINUSE;
 	}
+
 	current->t_in_binded[i] = so;
 	so->inp_laddr = htonl(current->t_ip_laddr_min);
 	so->inp_lport = lport;
@@ -38,6 +42,7 @@ in_pcbattach(struct socket *so, uint32_t *ph)
 	if (so->so_state & SS_ISATTACHED) {
 		return -EALREADY;
 	}
+
 	rc = ip_connect(&so->so_base, ph);
 	if (rc == 0) {
 		so->so_state |= SS_ISATTACHED;

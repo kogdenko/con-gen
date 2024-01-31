@@ -32,7 +32,7 @@ free_timer_rings(void)
 {
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(timer_rings); ++i) {
+	for (i = 0; i < CG_ARRAY_SIZE(timer_rings); ++i) {
 		free(timer_rings[i]);
 		timer_rings[i] = NULL;
 	}

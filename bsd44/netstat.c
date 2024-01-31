@@ -587,7 +587,7 @@ print_socket(void *udata, void *e)
 	snprintf(bf, sizeof(bf), "%s:%hu", inet_ntoa(tmp), ntohs(x.soi_fport));
 	if (x.soi_ipproto == IPPROTO_TCP) {
 		proto = "TCP";
-		if (x.soi_state < ARRAY_SIZE(tcpstates)) {
+		if (x.soi_state < CG_ARRAY_SIZE(tcpstates)) {
 			state = tcpstates[x.soi_state];
 		} else {
 			state = "???";
@@ -608,7 +608,7 @@ print_sockets(FILE *file)
 
 	fprintf(file, "%-5.5s %-22.22s %-22.22s %-11.11s %-5.5s %s\n",
 		       "Proto", "Local Address", "Foreign Address", "State ", "Idle", "Debug");
-	CG_DLIST_FOREACH(t, &g_cg_threads_head, t_list) {
+	CG_DLIST_FOREACH(t, &cg_threads_head, t_list) {
 		udata.prsud_thread = t;
 		udata.prsud_file = file;
 		spinlock_lock(&t->t_lock);

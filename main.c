@@ -14,6 +14,13 @@ struct report_data {
 	struct timeval rd_tv;
 };
 
+struct cg_core {
+	struct cg_dlist cor_list;
+	struct cg_dlist cor_tasks_head;
+	int cor_affinity;
+	pthread_t cor_pthread;
+};
+
 static int m_done;
 static int Nflag = 1;
 static struct timeval report_tv;
@@ -39,7 +46,10 @@ uint64_t cg_tsc_mhz;
 
 int n_counters = 1;
 
-struct cg_dlist g_cg_threads_head;
+static struct cg_core cg_cores[CG_CORE_MAX];
+static int cg_n_cores;
+
+struct cg_dlist cg_threads_head;
 __thread struct cg_thread *current;
 
 static int g_transport = TRANSPORT_DEFAULT;
@@ -131,13 +141,7 @@ loaded:
 	CG_DLSYM(g_cg_plugin, flush);
 	CG_DLSYM(g_cg_plugin, command);
 	CG_DLSYM(g_cg_plugin, rx);
-
-//	congen_plugin_init = dlsym(g_cg_plugin, "congen_plugin_init");
-//	if (congen_plugin_init == NULL) {
-//		panic(0, "dlsym('%s', 'conngen_plugin_init') failed (%s)\n", filename, dlerror());
-//	}
 }
-
 
 static int
 scan_ip_range(uint32_t *pmin, uint32_t *pmax, const char *s)
@@ -270,7 +274,7 @@ print_report(void)
 		printf("%s\n", "conns");
 	}
 	conns = 0;
-	CG_DLIST_FOREACH(t, &g_cg_threads_head, t_list) {
+	CG_DLIST_FOREACH(t, &cg_threads_head, t_list) {
 		conns += t->t_n_conns;
 	}
 	gettimeofday(&new.rd_tv, NULL);
@@ -293,7 +297,7 @@ quit(void)
 	struct cg_thread *t;
 
 	m_done = 1;
-	CG_DLIST_FOREACH(t, &g_cg_threads_head, t_list) {
+	CG_DLIST_FOREACH(t, &cg_threads_head, t_list) {
 		t->t_done = 1;
 	}
 }
@@ -482,9 +486,9 @@ multiplexer_add(struct cg_thread *t, int fd)
 {
 	int index;
 
-	index = t->t_pfd_num;
-	if (index == ARRAY_SIZE(t->t_pfds)) {
-		panic(0, "Too many RSS queues");
+	index = current->t_pfd_num;
+	if (index == CG_ARRAY_SIZE(current->t_pfds)) {
+		panic(0, "Queues limit exceeded (%zu)", CG_ARRAY_SIZE(current->t_pfds));
 	}
 	t->t_pfd_num++;
 	t->t_pfds[index].fd = fd;
@@ -520,7 +524,7 @@ thread_process(void)
 	uint64_t tsc;
 	struct packet *pkt;
 	struct timespec to;
-	struct pollfd pfds[ARRAY_SIZE(current->t_pfds)];
+	struct pollfd pfds[CG_ARRAY_SIZE(current->t_pfds)];
 
 	io_tx();
 
@@ -571,11 +575,15 @@ thread_process(void)
 static void *
 thread_routine(void *udata)
 {
+	struct cg_core *core;
+
+	core = udata;
+
+	set_affinity(core->cor_affinity);
+
+
 	current = udata;
 
-	if (current->t_affinity >= 0) {
-		set_affinity(current->t_affinity);
-	}
 
 	current->t_tsc = rdtsc();
 
@@ -672,7 +680,7 @@ static const char *short_options = "hvi:q:s:d:S:D:a:n:c:p:NL";
 int dpdk_parse_args(int argc, char **argv);
 
 static bool
-validate_args(int argc, char **argv)
+cg_validate_args(int argc, char **argv)
 {
 	int save_opterr, opt, option_index;
 
@@ -698,9 +706,9 @@ io_parse_args(int argc, char **argv)
 	int rc;
 	char *fake_argv[1];
 
-	if (validate_args(argc, argv)) {
+	if (cg_validate_args(argc, argv)) {
 		fake_argv[0] = "con-gen";
-		dpdk_parse_args(ARRAY_SIZE(fake_argv), fake_argv);
+		dpdk_parse_args(CG_ARRAY_SIZE(fake_argv), fake_argv);
 		return 0;
 	} else {
 		rc = dpdk_parse_args(argc, argv);
@@ -719,8 +727,35 @@ io_parse_args(int argc, char **argv)
 }
 #endif // HAVE_DPDK
 
+static void
+cg_task_set(struct cg_thread *t)
+{
+	int i;
+	struct cg_core *core;
+
+	core = NULL;
+	for (i = 0; i < cg_n_cores; ++i) {
+		core = cg_cores + i;
+		if (core->cor_affinity == t->t_affinity) {
+			break;
+		}
+	}
+
+	if (i == cg_n_cores) {
+		if (cg_n_cores == CG_ARRAY_SIZE(cg_cores)) {
+			panic(0, "Cores limit exceeded, see CG_CORE_MAX");
+		}
+		core = cg_cores + cg_n_cores;
+		cg_n_cores++;
+		cg_dlist_init(&core->cor_tasks_head);
+		core->cor_affinity = t->t_affinity;
+	}
+
+	CG_DLIST_INSERT_TAIL(&core->cor_tasks_head, t, t_core_list);
+}
+
 static struct cg_thread *
-thread_init(struct cg_thread *tmpl, int argc, char **argv)
+cg_task_init(struct cg_thread *tmpl, int argc, char **argv)
 {
 	int rc, opt, option_index;
 	char *endptr;
@@ -730,10 +765,9 @@ thread_init(struct cg_thread *tmpl, int argc, char **argv)
 
 	plugin_name = NULL;
 
-	t = malloc(sizeof(struct cg_thread));
+	t = xmalloc(sizeof(struct cg_thread));
 
 	spinlock_init(&t->t_lock);
-//	t->t_id = t - threads;
 	t->t_ifname[0] = '\0';
 	cg_dlist_init(&t->t_available_head);
 	cg_dlist_init(&t->t_pending_head);
@@ -741,6 +775,7 @@ thread_init(struct cg_thread *tmpl, int argc, char **argv)
 	cg_dlist_init(&t->t_so_pool);
 	cg_dlist_init(&t->t_sob_pool);
 	t->t_rss_queue_id = RSS_QUEUE_ID_MAX;
+
 	if (tmpl == NULL) {
 		t->t_dst_cache_size = 100000;
 		t->t_tcp_do_wscale = 1;
@@ -753,7 +788,7 @@ thread_init(struct cg_thread *tmpl, int argc, char **argv)
 		ether_scanf(t->t_eth_faddr, "ff:ff:ff:ff:ff:ff");
 		scan_ip_range(&t->t_ip_laddr_min, &t->t_ip_laddr_max, "10.0.0.1");
 		scan_ip_range(&t->t_ip_faddr_min, &t->t_ip_faddr_max, "10.1.0.1");
-		t->t_affinity = -1;
+		t->t_affinity = 0;
 	} else {
 		strzcpy(t->t_ifname, tmpl->t_ifname, sizeof(t->t_ifname));
 		t->t_dst_cache_size = tmpl->t_dst_cache_size;
@@ -785,6 +820,7 @@ thread_init(struct cg_thread *tmpl, int argc, char **argv)
 				optval = -1;
 			}
 		}
+
 		switch (opt) {
 		case 0:
 			optname = long_options[option_index].name;
@@ -852,72 +888,87 @@ thread_init(struct cg_thread *tmpl, int argc, char **argv)
 				print_banner = optval;
 			}
 			break;
+
 		case 'h':
 			usage();
 			exit(0);
+
 		case 'v':
 			verbose++;
 			break;
+
 		case 'i':
 			strzcpy(t->t_ifname, optarg, sizeof(t->t_ifname));
 			break;
+
 		case 'q':
 			if (optval < 0 || optval >= RSS_QUEUE_ID_MAX) {
 				goto err;
 			}
 			t->t_rss_queue_id = optval;
 			break;
+
 		case 's':
 			rc = scan_ip_range(&t->t_ip_laddr_min, &t->t_ip_laddr_max, optarg);
 			if (rc) {
 				goto err;
 			}
 			break;
+
 		case 'd':
 			rc = scan_ip_range(&t->t_ip_faddr_min, &t->t_ip_faddr_max, optarg);
 			if (rc) {
 				goto err;
 			}
 			break;
+
 		case 'S':
 			rc = ether_scanf(t->t_eth_laddr, optarg);
 			if (rc) {
 				goto err;
 			}
 			break;
+
 		case 'D':
 			rc = ether_scanf(t->t_eth_faddr, optarg);
 			if (rc) {
 				goto err;
 			}
 			break;
+
 		case 'a':
 			if (optval < 0) {
 				goto err;
 			}
 			t->t_affinity = optval;
 			break;
+
 		case 'n':
 			if (optval < 0) {
 				goto err;
 			}
 			t->t_nflag = optval;
 			break;
+
 		case 'c':
 			t->t_concurrency = strtoul(optarg, NULL, 10);
 			if (!t->t_concurrency) {
 				goto err;
 			}
 			break;
+
 		case 'p':
 			t->t_port = htons(strtoul(optarg, NULL, 10));
 			break;
+
 		case 'N':
 			Nflag = 0;
 			break;
+
 		case 'L':
 			t->t_Lflag = 1;
 			break;
+
 		default:
 err:
 			if (opt != 0) {
@@ -927,17 +978,24 @@ err:
 			}
 		}
 	}
+
 	if (t->t_ifname[0] == '\0') {
 		panic(0, "Interface (-i) not specified");
 	}
+
 	if (g_cg_plugin == NULL) {
 		if (plugin_name == NULL) {
 			panic(0, "Plugin (--plugin) not specified");
 		}
 		cg_load_plugin(plugin_name);
 	}
+
+	cg_task_set(t);
+
 	current = t;
 	htable_init(&t->t_in_htable, 4096, ip_socket_hash);
+
+	// FIXME: to bsd44
 	if (t->t_Lflag) {
 		t->t_http = http_reply;
 		t->t_http_len = http_reply_len;
@@ -945,9 +1003,18 @@ err:
 		t->t_http = http_request;
 		t->t_http_len = http_request_len;
 	}
+
+	if (!t->t_Lflag) {
+		if (t->t_dst_cache_size < 2 * t->t_concurrency) {
+			t->t_dst_cache_size = 2 * t->t_concurrency;
+		}
+		thread_init_dst_cache(t);
+	}
+
 	t->t_counters = xmalloc(n_counters * sizeof(uint64_t));
 	memset(t->t_counters, 0, n_counters * sizeof(uint64_t));
-	CG_DLIST_INSERT_TAIL(&g_cg_threads_head, t, t_list);
+	CG_DLIST_INSERT_TAIL(&cg_threads_head, t, t_list);
+
 	return t;
 }
 
@@ -967,8 +1034,9 @@ sleep_compute_hz(void)
 int
 main(int argc, char **argv)
 {
-	int rc, opt_off;
+	int i, rc, opt_off;
 	char hostname[64];
+	struct cg_core *core;
 	struct cg_thread *t, *tmpl;
 
 	srand48(getpid() ^ time(NULL));
@@ -1002,16 +1070,17 @@ main(int argc, char **argv)
 	argc -= rc;
 	argv += rc;
 
-	cg_dlist_init(&g_cg_threads_head);
+	cg_dlist_init(&cg_threads_head);
 	tmpl = NULL;
 	opt_off = 0;
+
 	while (opt_off < argc - 1) {
-		t = thread_init(tmpl, argc - opt_off, argv + opt_off);
+		t = cg_task_init(tmpl, argc - opt_off, argv + opt_off);
 		opt_off += (optind - 1);
 		optind = 1;
 		tmpl = t;
 	}
-	if (cg_dlist_is_empty(&g_cg_threads_head)) {
+	if (cg_dlist_is_empty(&cg_threads_head)) {
 		usage();
 		return EXIT_FAILURE;
 	}
@@ -1021,27 +1090,19 @@ main(int argc, char **argv)
 	set_transport(g_transport);
 	io_init();
 
-	CG_DLIST_FOREACH(t, &g_cg_threads_head, t_list) {
-		if (!t->t_Lflag) {
-			if (t->t_dst_cache_size < 2 * t->t_concurrency) {
-				t->t_dst_cache_size = 2 * t->t_concurrency;
-			}
-			thread_init_dst_cache(t);
-		}
-	}
-
-	CG_DLIST_FOREACH(t, &g_cg_threads_head, t_list) {
-		rc = pthread_create(&t->t_pthread, NULL, thread_routine, t);
+	for (i = 0; i < cg_n_cores; ++i) {
+		core = cg_cores + i;
+		rc = pthread_create(&core->cor_pthread, NULL, thread_routine, core);
 		if (rc) {
-			fprintf(stderr, "pthread_create() failed (%s)\n", strerror(rc));
-			return EXIT_FAILURE;
+			panic(rc, "pthread_create() failed");
 		}
 	}
 
 	main_routine();	
 
-	CG_DLIST_FOREACH(t, &g_cg_threads_head, t_list) {
-		pthread_join(t->t_pthread, NULL);
+	for (i = 0; i < cg_n_cores; ++i) {
+		core = cg_cores + i;
+		pthread_join(core->cor_pthread, NULL);
 	}
 
 	return 0;

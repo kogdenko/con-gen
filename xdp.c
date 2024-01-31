@@ -120,6 +120,7 @@ xdp_init_if(struct cg_thread *t)
 	if (ifindex == 0) {
 		panic(errno, "if_nametoindex('%s') failed", t->t_ifname);
 	}
+
 	t->t_rss_queue_num = get_interface_queue_num(t->t_ifname);
 	if (t->t_rss_queue_id < RSS_QUEUE_ID_MAX) {
 		t->t_xdp_queue_num = 1;
@@ -129,10 +130,12 @@ xdp_init_if(struct cg_thread *t)
 	} else {
 		t->t_xdp_queue_num = t->t_rss_queue_num;
 	}
+
 	rc = bpf_xdp_query_id(ifindex, 0, &t->t_xdp_prog_id);
 	if (rc < 0) {
 		panic(-rc, "bpf_xdp_query_id() failed");
 	}
+
 	t->t_xdp_queues = xmalloc(t->t_xdp_queue_num * sizeof(struct xdp_queue));
 	if (t->t_rss_queue_id < RSS_QUEUE_ID_MAX) {
 		xdp_init_queue(&t->t_xdp_queues[0], t->t_ifname, t->t_rss_queue_id);
@@ -141,6 +144,7 @@ xdp_init_if(struct cg_thread *t)
 			xdp_init_queue(&t->t_xdp_queues[i], t->t_ifname, i);
 		}
 	}
+
 	for (i = 0; i < t->t_xdp_queue_num; ++i) {
 		multiplexer_add(t, t->t_xdp_queues[i].xq_fd);
 	}
@@ -320,12 +324,12 @@ xdp_rx(int queue_id)
 
 	m = xsk_prod_nb_free(&q->xq_fill, q->xq_frame_free);
 	if (m > 0) {
-		m = MIN(m, q->xq_frame_free);
+		m = CG_MIN(m, q->xq_frame_free);
 		idx_fill = UINT32_MAX;
 		rc = xsk_ring_prod__reserve(&q->xq_fill, m, &idx_fill);
 		assert(rc == m);
 		assert(idx_fill != UINT32_MAX);
-		UNUSED(rc);
+		CG_UNUSED(rc);
 		for (i = 0; i < m; ++i, ++idx_fill) {
 			frame = alloc_frame(q);
 			*xsk_ring_prod__fill_addr(&q->xq_fill, idx_fill) = frame;

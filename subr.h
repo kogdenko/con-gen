@@ -66,6 +66,8 @@ struct rte_mbuf;
 #define EPHEMERAL_MAX 65535
 #define NEPHEMERAL (EPHEMERAL_MAX - EPHEMERAL_MIN + 1)
 
+#define CG_CORE_MAX 256
+
 #define RSS_QUEUE_ID_MAX 128
 #define RSS_KEY_SIZE 40
 
@@ -106,20 +108,18 @@ struct rte_mbuf;
 #endif
 
 // Macros
-#define STRSZ(s) (s), (sizeof(s) - 1)
+#define CG_STRSZ(s) (s), (sizeof(s) - 1)
 
-#define UNUSED(x) ((void)x)
+#define CG_UNUSED(x) ((void)x)
 
-#ifndef ARRAY_SIZE
-#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
-#endif
+#define CG_ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 
-#define	roundup(x, y)	((((x)+((y)-1))/(y))*(y))
-#define powerof2(x)	((((x)-1)&(x))==0)
+#define	cg_roundup(x, y) ((((x)+((y)-1))/(y))*(y))
+#define cg_powerof2(x) ((((x)-1)&(x))==0)
 
 /* Macros for min/max. */
-#define	MIN(a,b) (((a)<(b))?(a):(b))
-#define	MAX(a,b) (((a)>(b))?(a):(b))
+#define	CG_MIN(a,b) (((a)<(b))?(a):(b))
+#define	CG_MAX(a,b) (((a)>(b))?(a):(b))
 
 #define CAT_RES(_, res) res
 #define CAT3_MED(x, y, z) CAT_RES(~, x##y##z)
@@ -260,9 +260,9 @@ struct cg_thread {
 	struct spinlock t_lock;
 	struct cg_dlist t_available_head;
 	struct cg_dlist t_pending_head;
-	unsigned t_n_pending;
+	struct cg_dlist t_core_list;
+	u_int t_n_pending;
 	u_char t_busyloop;
-//	u_char t_id;
 	u_char t_done;
 	u_char t_Lflag;
 	u_char t_so_debug;
@@ -333,7 +333,6 @@ struct cg_thread {
 	htable_t t_in_htable;
 	void *t_in_binded[EPHEMERAL_MIN];
 	int t_affinity;
-	pthread_t t_pthread;
 	char t_ifname[IFNAMSIZ];
 	struct cg_dlist t_list;
 	uint64_t *t_counters;
@@ -400,16 +399,10 @@ int multiplexer_get_events(int);
 int ip_connect(struct ip_socket *, uint32_t *);
 void ip_disconnect(struct ip_socket *);
 
-void ifaddr_init(struct if_addr *);
-uint16_t ifaddr_alloc_ephemeral_port(struct if_addr *);
-void ifaddr_free_ephemeral_port(struct if_addr *, uint16_t);
-
-int alloc_ephemeral_port(uint32_t *, uint16_t *);
-void free_ephemeral_port(uint32_t, uint16_t);
-
-uint32_t select_faddr(void);
-
 void set_transport(int transport);
 int ether_scanf(u_char *ap, const char *s);
+
+uint32_t cg_upper_pow2_32(uint32_t x);
+
 
 #endif // CONGEN_SUBR_H

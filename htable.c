@@ -149,7 +149,7 @@ htable_dynamic_new(struct htable_dynamic *t)
 {
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(t->htd_tables); ++i) {
+	for (i = 0; i < CG_ARRAY_SIZE(t->htd_tables); ++i) {
 		if (t->htd_tables[i].hts_array == NULL) {
 			return t->htd_tables + i;
 		}

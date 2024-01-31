@@ -140,11 +140,9 @@ sofree2(struct socket *so, const char *func)
 	return 1;
 }
 
-/*
- * Close a socket on last file table reference removal.
- * Initiate disconnect if connected.
- * Free socket when disconnect complete.
- */
+// Close a socket on last file table reference removal.
+// Initiate disconnect if connected.
+// Free socket when disconnect complete.
 int
 bsd_close(struct socket *so)
 {
@@ -157,7 +155,7 @@ bsd_close(struct socket *so)
 	}
 	so->so_state |= SS_NOFDREF;
 	if (so->so_options & SO_OPTION(SO_ACCEPTCONN)) {
-		for (i = 0; i < ARRAY_SIZE(so->so_q); ++i) {
+		for (i = 0; i < CG_ARRAY_SIZE(so->so_q); ++i) {
 			head = so->so_q + i;
 			while (!cg_dlist_is_empty(head)) {
 				aso = CG_DLIST_FIRST(head, struct socket, so_ql);
@@ -691,7 +689,7 @@ sbwrite(struct sockbuf *sb, struct sockbuf_chunk *pos, const void *src, int cnt)
 	CG_DLIST_FOREACH_CONTINUE(pos, &sb->sb_head, sbc_list) {
 		assert(rem > 0);
 		space = sbchspace(pos);
-		n = MIN(rem, space);
+		n = CG_MIN(rem, space);
 		data = sbchdata(pos);
 		memcpy(data + pos->sbc_off + pos->sbc_len, ptr, n);
 		sb->sb_cc += n;
@@ -710,7 +708,7 @@ sbappend(struct sockbuf *sb, const u_char *buf, int len)
 
 	assert(len >= 0);
 	space = sbspace(sb);
-	appended = MIN(len, space);
+	appended = CG_MIN(len, space);
 	if (appended == 0) {
 		return 0;
 	}
@@ -790,7 +788,7 @@ sbcopy(struct sockbuf *sb, int off, int len, u_char *dst)
 	for (; len != 0; ch = CG_DLIST_NEXT(ch, sbc_list)) {
 		assert(&ch->sbc_list != &sb->sb_head);
 		assert(off < ch->sbc_len);
-		n = MIN(len, ch->sbc_len - off);
+		n = CG_MIN(len, ch->sbc_len - off);
 		data = sbchdata(ch);
 		memcpy(dst, data + ch->sbc_off + off, n);
 		off = 0;

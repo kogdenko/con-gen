@@ -81,7 +81,7 @@ icmp_error(struct ip *oip, int type, int code, be32_t dest)
 	 */
 	io_init_tx_packet(&pkt);
 	nip = (struct ip *)(pkt.pkt.buf + sizeof(struct ether_header));
-	icmplen = oiplen + MIN(8, oip->ip_len);
+	icmplen = oiplen + CG_MIN(8, oip->ip_len);
 	icp = (struct icmp *)(nip + 1);
 	if ((u_int)type > ICMP_MAXTYPE) {
 		panic(0, "icmp_error");
@@ -146,7 +146,7 @@ icmp_input(struct ip *ip, int hlen)
 		counter64_inc(&icmpstat.icps_tooshort);
 		return;
 	}
-	i = MIN(icmplen, ICMP_ADVLENMIN);
+	i = CG_MIN(icmplen, ICMP_ADVLENMIN);
 	if (ip->ip_len < i)  {
 		counter64_inc(&icmpstat.icps_tooshort);
 		return;

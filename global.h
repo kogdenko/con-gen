@@ -15,8 +15,8 @@ extern counter64_t if_imcasts;
 extern uint64_t cg_tsc_mhz;
 
 extern __thread struct cg_thread *current;
-extern struct cg_dlist g_cg_threads_head;
+extern struct cg_dlist cg_threads_head;
 
-#define CG_FOREACH_TASK(t) CG_DLIST_FOREACH(t, &g_cg_threads_head, t_list)
+#define CG_FOREACH_TASK(t) CG_DLIST_FOREACH(t, &cg_threads_head, t_list)
 
 #endif
