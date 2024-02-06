@@ -275,7 +275,8 @@ struct thread {
 	u_short t_mtu;
 	u_char t_rss_queue_num;
 	u_char t_rss_queue_id;
-	u_char t_rss_key[RSS_KEY_SIZE];
+	u_char *t_rss_key;
+	int t_rss_key_size;
 	struct pollfd t_pfds[256];
 	int t_pfd_num;
 	union {
@@ -364,10 +365,10 @@ void panic3(const char *, int, int, const char *, ...)
 
 char *strzcpy(char *, const char *, size_t);
 
-void read_rss_key(const char *ifname, u_char *rss_key);
+int read_rss_key(const char *ifname, u_char **rss_key);
 
-uint32_t toeplitz_hash(const u_char *, int, const u_char *);
-uint32_t rss_hash4(be32_t, be32_t, be16_t, be16_t, u_char *);
+uint32_t toeplitz_hash(const u_char *, int, const u_char *, int);
+uint32_t rss_hash4(be32_t, be32_t, be16_t, be16_t, u_char *, int);
 
 uint16_t in_cksum(void *, int);
 uint16_t udp_cksum(struct ip *, int);
@@ -395,7 +396,7 @@ void io_tx(void);
 int io_rx(int);
 void io_process(void *pkt, int pkt_len);
 
-int multiplexer_add(int);
+int multiplexer_add(struct thread *, int);
 void multiplexer_pollout(int);
 int multiplexer_get_events(int);
 

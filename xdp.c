@@ -124,7 +124,7 @@ xdp_init_if(struct thread *t)
 	if (t->t_rss_queue_id < RSS_QUEUE_ID_MAX) {
 		t->t_xdp_queue_num = 1;
 		if (t->t_rss_queue_num > 1) {
-			read_rss_key(t->t_ifname, t->t_rss_key);
+			t->t_rss_key_size = read_rss_key(t->t_ifname, &t->t_rss_key);
 		}
 	} else {
 		t->t_xdp_queue_num = t->t_rss_queue_num;
@@ -142,7 +142,7 @@ xdp_init_if(struct thread *t)
 		}
 	}
 	for (i = 0; i < t->t_xdp_queue_num; ++i) {
-		multiplexer_add(t->t_xdp_queues[i].xq_fd);
+		multiplexer_add(t, t->t_xdp_queues[i].xq_fd);
 	}
 }
 

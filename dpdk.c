@@ -177,10 +177,12 @@ dpdk_init(struct thread *threads, int n_threads)
 		rte_eth_dev_get_name_by_port(port_id, port_name);
 
 		memset(&rss_conf, 0, sizeof(rss_conf));
+		t->t_rss_key = xmalloc(40);
+		t->t_rss_key_size = 40;
 		rss_conf.rss_key = t->t_rss_key;
 		rc = rte_eth_dev_rss_hash_conf_get(t->t_dpdk_port_id, &rss_conf);
 		if (rc == -ENOTSUP) {
-			memcpy(t->t_rss_key, freebsd_rss_key, sizeof(t->t_rss_key));
+			memcpy(t->t_rss_key, freebsd_rss_key, sizeof(freebsd_rss_key));
 		} else if (rc < 0) {
 			panic(-rc, "rte_eth_dev_rss_hash_conf_get('%s') failed", port_name);
 		}

@@ -45,13 +45,13 @@ netmap_init_if(struct thread *t)
 	}
 	t->t_rss_queue_num = t->t_nmd->req.nr_rx_rings;
 	if (t->t_rss_queue_num > 1) {
-		read_rss_key(t->t_ifname, t->t_rss_key);
+		t->t_rss_key_size = read_rss_key(t->t_ifname, &t->t_rss_key);
 	}
 	if ((t->t_nmd->req.nr_flags & NR_REG_MASK) == NR_REG_ONE_NIC) {
 		t->t_rss_queue_id = t->t_nmd->first_rx_ring;
 	}
 	strzcpy(t->t_ifname, t->t_nmd->req.nr_name, sizeof(t->t_ifname));
-	multiplexer_add(t->t_nmd->fd);
+	multiplexer_add(t, t->t_nmd->fd);
 }
 
 static void
@@ -124,6 +124,7 @@ netmap_rx(int queue_id)
 		}
 		accum += n;
 	}
+
 	return accum;
 }
 

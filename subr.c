@@ -426,8 +426,8 @@ strzcpy(char *dest, const char *src, size_t n)
 }
 
 #ifdef __linux__
-void
-read_rss_key(const char *ifname, u_char *rss_key)
+int
+read_rss_key(const char *ifname, u_char **rss_key)
 {
 	int fd, rc, size, off;
 	struct ifreq ifr;
@@ -447,9 +447,6 @@ read_rss_key(const char *ifname, u_char *rss_key)
 	if (rc < 0) {
 		panic(errno, "Reading %s RSS key error: ioctl(SIOCETHTOOL) failed", ifname);
 	}
-	if (rss.key_size != RSS_KEY_SIZE) {
-		panic(errno, "%s: Invalid RSS key_size (%d)\n", ifname, rss.key_size);
-	}
 	size = (sizeof(rss) + rss.key_size +
 	       rss.indir_size * sizeof(rss.rss_config[0]));
 	rss2 = xmalloc(size);
@@ -463,20 +460,27 @@ read_rss_key(const char *ifname, u_char *rss_key)
 		panic(errno, "Reading %s RSS key error: ioctl(SIOCETHTOOL) failed", ifname);
 	}
 	off = rss2->indir_size * sizeof(rss2->rss_config[0]);
-	memcpy(rss_key, (u_char *)rss2->rss_config + off, RSS_KEY_SIZE);
+	*rss_key = xmalloc(rss.key_size);
+	memcpy(*rss_key, (u_char *)rss2->rss_config + off, rss.key_size);
 	free(rss2);
 	close(fd);
+	return rss.key_size;
 }
 #else // __linux__
-void
-read_rss_key(const char *ifname, u_char *rss_key)
+int
+read_rss_key(const char *ifname, u_char **rss_key)
 {
-	memcpy(rss_key, freebsd_rss_key, RSS_KEY_SIZE);
+	int size;
+
+	size = sizeof(freebsd_rss_key);
+	*rss_key = xmalloc(size);
+	memcpy(*rss_key, freebsd_rss_key, size);
+	return size;
 }
 #endif // __linux__
 
 uint32_t
-toeplitz_hash(const u_char *data, int cnt, const u_char *key)
+toeplitz_hash(const u_char *data, int cnt, const u_char *key, int key_size)
 {   
 	uint32_t h, v;
 	int i, b;
@@ -489,8 +493,7 @@ toeplitz_hash(const u_char *data, int cnt, const u_char *key)
 				h ^= v;
 			}
 			v <<= 1;
-			if ((i + 4) < RSS_KEY_SIZE &&
-			    (key[i + 4] & (1 << (7 - b)))) {
+			if ((i + 4) < key_size && (key[i + 4] & (1 << (7 - b)))) {
 				v |= 1;
 			}
 		}
@@ -498,8 +501,10 @@ toeplitz_hash(const u_char *data, int cnt, const u_char *key)
 	return h;
 }
 
+#include <rte_thash.h>
+
 uint32_t
-rss_hash4(be32_t laddr, be32_t faddr, be16_t lport, be16_t fport, u_char *key)
+rss_hash4(be32_t laddr, be32_t faddr, be16_t lport, be16_t fport, u_char *key, int key_size)
 {
 	int off;
 	uint32_t h;
@@ -514,8 +519,13 @@ rss_hash4(be32_t laddr, be32_t faddr, be16_t lport, be16_t fport, u_char *key)
 	off += 2;
 	*(be16_t *)(data + off) = lport;
 	off += 2;
-	h = toeplitz_hash(data, off, key);
+	h = toeplitz_hash(data, off, key, key_size);
 	h &= 0x0000007F;
+
+	//uint32_t h2 = rte_softrss((void *)data, sizeof(data), key);
+
+	//printf("toeplitz %x %x\n", h, h2);
+
 	return h;
 }
 

@@ -58,8 +58,8 @@ pcap_init_if(struct thread *t)
 		panic(0, "pcap_get_selectable_fd('%s') failed (%s)",
 				t->t_ifname, pcap_geterr(pcap));
 	}
-	current->t_pcap = pcap;
-	multiplexer_add(fd);
+	t->t_pcap = pcap;
+	multiplexer_add(t, fd);
 }
 
 void

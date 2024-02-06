@@ -336,7 +336,7 @@ thread_init_dst_cache(struct thread *t)
 			}
 		}
 		if (t->t_rss_queue_id < RSS_QUEUE_ID_MAX && t->t_rss_queue_num > 1) {
-			h = rss_hash4(laddr, faddr, lport, fport, t->t_rss_key);
+			h = rss_hash4(laddr, faddr, lport, fport, t->t_rss_key, t->t_rss_key_size);
 			if ((h % t->t_rss_queue_num) != t->t_rss_queue_id) {
 				continue;
 			}
@@ -453,18 +453,18 @@ main_routine(void)
 }
 
 int
-multiplexer_add(int fd)
+multiplexer_add(struct thread *t, int fd)
 {
 	int index;
 
-	index = current->t_pfd_num;
-	if (index == ARRAY_SIZE(current->t_pfds)) {
+	index = t->t_pfd_num;
+	if (index == ARRAY_SIZE(t->t_pfds)) {
 		panic(0, "Too many RSS queues");
 	}
-	current->t_pfd_num++;
-	current->t_pfds[index].fd = fd;
-	current->t_pfds[index].events = POLLIN;
-	current->t_pfds[index].revents = 0;
+	t->t_pfd_num++;
+	t->t_pfds[index].fd = fd;
+	t->t_pfds[index].events = POLLIN;
+	t->t_pfds[index].revents = 0;
 	return index;
 }
 
@@ -783,6 +783,7 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 		t->t_ip_faddr_min = pt->t_ip_faddr_min;
 		t->t_ip_faddr_max = pt->t_ip_faddr_max;
 		t->t_affinity = pt->t_affinity;
+		t->t_Lflag = pt->t_Lflag;
 	}
 
 	while ((opt = getopt_long(argc, argv, short_options,
