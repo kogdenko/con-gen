@@ -40,9 +40,9 @@ static uint64_t tsc_mhz;
 
 int n_counters = 1;
 
-struct thread threads[N_THREADS_MAX];
-int n_threads;
-__thread struct thread *current;
+struct cg_task g_cg_tasks[CG_N_TASKS_MAX];
+int g_cg_n_tasks;
+__thread struct cg_task *current;
 
 static int g_transport = TRANSPORT_DEFAULT;
 int g_udp;
@@ -234,10 +234,12 @@ print_report(void)
 		printf("%-12s", "rxmtps");
 		printf("%s\n", "conns");
 	}
+
 	conns = 0;
-	for (i = 0; i < n_threads; ++i) {
-		conns += threads[i].t_n_conns;
+	for (i = 0; i < g_cg_n_tasks; ++i) {
+		conns += g_cg_tasks[i].t_n_conns;
 	}
+
 	gettimeofday(&new.rd_tv, NULL);
 	new.rd_ipackets = counter64_get(&if_ipackets);
 	new.rd_opackets = counter64_get(&if_opackets);
@@ -248,6 +250,7 @@ print_report(void)
 	print_report_diffs(&new, &report01);
 	report01 = new;
 	printf("%d\n", conns);
+
 	n++;
 	if (n == 20) {
 		n = 0;
@@ -260,8 +263,8 @@ quit(void)
 	int i;
 
 	m_done = 1;
-	for (i = 0; i < n_threads; ++i) {
-		threads[i].t_done = 1;
+	for (i = 0; i < g_cg_n_tasks; ++i) {
+		g_cg_tasks[i].t_done = 1;
 	}
 }
 
@@ -286,7 +289,7 @@ sighandler(int signum)
 }
 
 static void
-thread_init_dst_cache(struct thread *t)
+thread_init_dst_cache(struct cg_task *t)
 {
 	uint64_t i, n;
 	int dst_cache_size;
@@ -448,7 +451,7 @@ main_routine(void)
 }
 
 int
-multiplexer_add(struct thread *t, int fd)
+multiplexer_add(struct cg_task *t, int fd)
 {
 	int index;
 
@@ -707,7 +710,7 @@ io_parse_args(int argc, char **argv)
 #endif // HAVE_DPDK
 
 static int
-thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char **argv)
+thread_init(struct cg_task *t, struct cg_task *tmpl, int thread_idx, int argc, char **argv)
 {
 	int rc, opt, option_index;
 	char *endptr;
@@ -715,7 +718,7 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 	long long optval;
 
 	spinlock_init(&t->t_lock);
-	t->t_id = t - threads;
+	t->t_id = t - g_cg_tasks;
 	t->t_tcp_rttdflt = TCPTV_SRTTDFLT / PR_SLOWHZ;
 	t->t_ifname[0] = '\0';
 	dlist_init(&t->t_available_head);
@@ -724,7 +727,7 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 	dlist_init(&t->t_so_pool);
 	dlist_init(&t->t_sob_pool);
 	t->t_rss_queue_id = RSS_QUEUE_ID_MAX;
-	if (pt == NULL) {
+	if (tmpl == NULL) {
 		t->t_dst_cache_size = 100000;
 		t->t_ip_do_incksum = 2;
 		t->t_ip_do_outcksum = 2;
@@ -742,29 +745,29 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 		scan_ip_range(&t->t_ip_faddr_min, &t->t_ip_faddr_max, "10.1.0.1");
 		t->t_affinity = -1;
 	} else {
-		strzcpy(t->t_ifname, pt->t_ifname, sizeof(t->t_ifname));
-		t->t_dst_cache_size = pt->t_dst_cache_size;
-		t->t_so_debug = pt->t_so_debug;
-		t->t_ip_do_incksum = pt->t_ip_do_incksum;
-		t->t_ip_do_outcksum = pt->t_ip_do_outcksum;
-		t->t_tcp_do_incksum = pt->t_tcp_do_incksum;
-		t->t_tcp_do_outcksum = pt->t_tcp_do_outcksum;
-		t->t_tcp_do_wscale = pt->t_tcp_do_wscale;
-		t->t_tcp_do_timestamps = pt->t_tcp_do_wscale;
-		t->t_tcp_twtimo = pt->t_tcp_twtimo;
-		t->t_tcp_fintimo = pt->t_tcp_fintimo;
-		t->t_nflag = pt->t_nflag;
-		t->t_port = pt->t_port;
-		t->t_mtu = pt->t_mtu;
-		t->t_concurrency = pt->t_concurrency;
-		memcpy(t->t_eth_laddr, pt->t_eth_laddr, 6);
-		memcpy(t->t_eth_faddr, pt->t_eth_faddr, 6);
-		t->t_ip_laddr_min = pt->t_ip_laddr_min;
-		t->t_ip_laddr_max = pt->t_ip_laddr_max;
-		t->t_ip_faddr_min = pt->t_ip_faddr_min;
-		t->t_ip_faddr_max = pt->t_ip_faddr_max;
-		t->t_affinity = pt->t_affinity;
-		t->t_Lflag = pt->t_Lflag;
+		strzcpy(t->t_ifname, tmpl->t_ifname, sizeof(t->t_ifname));
+		t->t_dst_cache_size = tmpl->t_dst_cache_size;
+		t->t_so_debug = tmpl->t_so_debug;
+		t->t_ip_do_incksum = tmpl->t_ip_do_incksum;
+		t->t_ip_do_outcksum = tmpl->t_ip_do_outcksum;
+		t->t_tcp_do_incksum = tmpl->t_tcp_do_incksum;
+		t->t_tcp_do_outcksum = tmpl->t_tcp_do_outcksum;
+		t->t_tcp_do_wscale = tmpl->t_tcp_do_wscale;
+		t->t_tcp_do_timestamps = tmpl->t_tcp_do_wscale;
+		t->t_tcp_twtimo = tmpl->t_tcp_twtimo;
+		t->t_tcp_fintimo = tmpl->t_tcp_fintimo;
+		t->t_nflag = tmpl->t_nflag;
+		t->t_port = tmpl->t_port;
+		t->t_mtu = tmpl->t_mtu;
+		t->t_concurrency = tmpl->t_concurrency;
+		memcpy(t->t_eth_laddr, tmpl->t_eth_laddr, 6);
+		memcpy(t->t_eth_faddr, tmpl->t_eth_faddr, 6);
+		t->t_ip_laddr_min = tmpl->t_ip_laddr_min;
+		t->t_ip_laddr_max = tmpl->t_ip_laddr_max;
+		t->t_ip_faddr_min = tmpl->t_ip_faddr_min;
+		t->t_ip_faddr_max = tmpl->t_ip_faddr_max;
+		t->t_affinity = tmpl->t_affinity;
+		t->t_Lflag = tmpl->t_Lflag;
 	}
 
 	while ((opt = getopt_long(argc, argv, short_options,
@@ -1014,7 +1017,7 @@ main(int argc, char **argv)
 {
 	int i, rc, opt_off;
 	char hostname[64];
-	struct thread *t, *pt;
+	struct cg_task *t, *tmpl;
 
 	srand48(getpid() ^ time(NULL));
 	counter64_init(&if_ibytes);
@@ -1051,29 +1054,32 @@ main(int argc, char **argv)
 	argc -= rc;
 	argv += rc;
 
-	pt = NULL;
+	tmpl = NULL;
 	opt_off = 0;
-	while (opt_off < argc - 1 && n_threads < N_THREADS_MAX) {
-		t = threads + n_threads;
-		rc = thread_init(t, pt, n_threads, argc - opt_off, argv + opt_off);
+	while (opt_off < argc - 1 && g_cg_n_tasks < CG_N_TASKS_MAX) {
+		t = g_cg_tasks + g_cg_n_tasks;
+		rc = thread_init(t, tmpl, g_cg_n_tasks, argc - opt_off, argv + opt_off);
 		if (rc) {
 			return EXIT_FAILURE;
 		}
+
 		opt_off += (optind - 1);
 		optind = 1;
-		pt = t;
-		n_threads++;
+
+		tmpl = t;
+
+		g_cg_n_tasks++;
 	}
-	if (n_threads == 0) {
+	if (g_cg_n_tasks == 0) {
 		usage();
 		return EXIT_FAILURE;
 	}
 
 	set_transport(g_transport, g_udp);
-	io_init(threads, n_threads);
+	io_init();
 
-	for (i = 0; i < n_threads; ++i) {
-		t = threads + i;
+	for (i = 0; i < g_cg_n_tasks; ++i) {
+		t = g_cg_tasks + i;
 
 		if (!t->t_Lflag) {
 			if (t->t_dst_cache_size < 2 * t->t_concurrency) {
@@ -1083,8 +1089,8 @@ main(int argc, char **argv)
 		}
 	}
 
-	for (i = 0; i < n_threads; ++i) {
-		t = threads + i;
+	for (i = 0; i < g_cg_n_tasks; ++i) {
+		t = g_cg_tasks + i;
 
 		rc = pthread_create(&t->t_pthread, NULL, thread_routine, t);
 		if (rc) {
@@ -1095,8 +1101,8 @@ main(int argc, char **argv)
 
 	main_routine();	
 
-	for (i = 0; i < n_threads; ++i) {
-		t = threads + i;
+	for (i = 0; i < g_cg_n_tasks; ++i) {
+		t = g_cg_tasks + i;
 		pthread_join(t->t_pthread, NULL);
 	}
 

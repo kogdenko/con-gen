@@ -578,7 +578,7 @@ print_stats(FILE *file, int verbose)
 void bsd_get_so_info(void *, struct socket_info *);
 
 struct print_socket_udata {
-	struct thread *prsud_thread;
+	struct cg_task *prsud_thread;
 	FILE *prsud_file;
 };
 
@@ -589,7 +589,7 @@ print_socket(void *udata, void *e)
 	FILE *file;
 	const char *state, *proto;
 	char bl[64], bf[64];
-	struct thread *t;
+	struct cg_task *t;
 	struct socket_info x;
 
 	t = ((struct print_socket_udata *)udata)->prsud_thread;
@@ -619,13 +619,13 @@ void
 print_sockets(FILE *file)
 {
 	int i;
-	struct thread *t;
+	struct cg_task *t;
 	struct print_socket_udata udata;
 
 	fprintf(file, "%-5.5s %-22.22s %-22.22s %-11.11s %-5.5s %s\n",
 		       "Proto", "Local Address", "Foreign Address", "State ", "Idle", "Debug");
-	for (i = 0; i < n_threads; ++i) {
-		t = threads + i;
+	for (i = 0; i < g_cg_n_tasks; ++i) {
+		t = g_cg_tasks + i;
 		udata.prsud_thread = t;
 		udata.prsud_file = file;
 		spinlock_lock(&t->t_lock);

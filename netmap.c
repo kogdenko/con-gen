@@ -26,7 +26,7 @@ not_empty_txr(struct netmap_slot **pslot)
 }
 
 static void
-netmap_init_if(struct thread *t)
+netmap_init_task(struct cg_task *t)
 {
 	char buf[IFNAMSIZ + 64];
 
@@ -39,27 +39,24 @@ netmap_init_if(struct thread *t)
 	if (t->t_nmd == NULL) {
 		panic(errno, "nm_open('%s') failed", buf);
 	}
-	if (t->t_nmd->req.nr_rx_rings != t->t_nmd->req.nr_tx_rings) {
-		panic(0, "%s: nr_rx_rings != nr_tx_rings", buf);
-	}
+
+	assert(t->t_nmd->req.nr_rx_rings == t->t_nmd->req.nr_tx_rings);
+
 	t->t_rss_queue_num = t->t_nmd->req.nr_rx_rings;
 	if (t->t_rss_queue_num > 1) {
 		t->t_rss_key_size = read_rss_key(t->t_ifname, &t->t_rss_key);
 	}
-	if ((t->t_nmd->req.nr_flags & NR_REG_MASK) == NR_REG_ONE_NIC) {
-		t->t_rss_queue_id = t->t_nmd->first_rx_ring;
-	}
-	strzcpy(t->t_ifname, t->t_nmd->req.nr_name, sizeof(t->t_ifname));
+
 	multiplexer_add(t, t->t_nmd->fd);
 }
 
 static void
-netmap_init(struct thread *threads, int n_thread)
+netmap_init(void)
 {
 	int i;
 
-	for (i = 0; i < n_threads; ++i) {
-		netmap_init_if(threads + i);
+	for (i = 0; i < g_cg_n_tasks; ++i) {
+		netmap_init_task(g_cg_tasks + i);
 	}
 }
 

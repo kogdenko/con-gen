@@ -55,7 +55,7 @@ struct rte_mbuf;
 #include "htable.h"
 
 // Define
-#define N_THREADS_MAX 32
+#define CG_N_TASKS_MAX 256
 
 #define CG_TX_PENDING_MAX 2048
 
@@ -256,7 +256,7 @@ struct packet {
 	u_char pkt_body[2048 - sizeof(struct packet_header)];
 };
 
-struct thread {
+struct cg_task {
 	struct spinlock t_lock;
 	struct dlist t_available_head;
 	struct dlist t_pending_head;
@@ -344,7 +344,7 @@ struct thread {
 
 struct transport_ops {
 	void (*tr_io_process_op)(void *, int);
-	void (*tr_io_init_op)(struct thread *, int);
+	void (*tr_io_init_op)(void);
 	bool (*tr_io_is_tx_throttled_op)(void);
 	void (*tr_io_init_tx_packet_op)(struct packet *);
 	void (*tr_io_deinit_tx_packet_op)(struct packet *);
@@ -388,7 +388,7 @@ void set_transport(int transport, int udp);
 
 void add_pending_packet(struct packet *);
 
-void io_init(struct thread *threads, int n_threads);
+void io_init(void);
 bool io_is_tx_throttled(void);
 void io_init_tx_packet(struct packet *);
 void io_deinit_tx_packet(struct packet *);
@@ -397,7 +397,7 @@ void io_tx(void);
 int io_rx(int);
 void io_process(void *pkt, int pkt_len);
 
-int multiplexer_add(struct thread *, int);
+int multiplexer_add(struct cg_task *, int);
 void multiplexer_pollout(int);
 int multiplexer_get_events(int);
 
@@ -422,9 +422,9 @@ extern counter64_t if_obytes;
 extern counter64_t if_opackets;
 extern counter64_t if_imcasts;
 
-extern int n_threads;
-extern __thread struct thread *current;
-extern struct thread threads[N_THREADS_MAX];
+extern int g_cg_n_tasks;
+extern __thread struct cg_task *current;
+extern struct cg_task g_cg_tasks[CG_N_TASKS_MAX];
 
 
 #endif // CON_GEN__SUBR_H

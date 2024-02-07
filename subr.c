@@ -321,9 +321,9 @@ set_transport(int transport, int udp)
 }
 
 void
-io_init(struct thread *threads, int n_threads)
+io_init(void)
 {
-	(*tr_ops->tr_io_init_op)(threads, n_threads);
+	(*tr_ops->tr_io_init_op)();
 }
 
 void
@@ -536,9 +536,9 @@ counter64_get(counter64_t *c)
 	uint64_t accum;
 
 	accum = 0;
-	for (i = 0; i < n_threads; ++i) {
+	for (i = 0; i < g_cg_n_tasks; ++i) {
 		assert(*c != 0);
-		accum += threads[i].t_counters[*c];
+		accum += g_cg_tasks[i].t_counters[*c];
 	}
 	return accum;
 }
