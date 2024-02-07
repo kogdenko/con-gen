@@ -31,6 +31,7 @@
  * SUCH DAMAGE.
  */
 
+#include "../netstat.h"
 #include "socket.h"
 #include "ip.h"
 #include "in_pcb.h"

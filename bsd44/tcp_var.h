@@ -41,7 +41,7 @@
 #include "types.h"
 #include "tcp.h"
 #include "tcp_timer.h"
-#include "../gbtcp/timer.h"
+#include "../timer.h"
 
 struct socket;
 

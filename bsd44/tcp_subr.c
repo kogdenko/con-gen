@@ -31,6 +31,7 @@
  * SUCH DAMAGE.
  */
 
+#include "../netstat.h"
 #include "types.h"
 #include "socket.h"
 #include "ip.h"

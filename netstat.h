@@ -139,7 +139,7 @@ struct udpstat {
  * Variables related to this implementation
  * of the internet control message protocol.
  */
-struct	icmpstat {
+struct icmpstat {
 	/* statistics related to icmp packets generated */
 	counter64_t icps_error;            /* # of calls to icmp_error */
 	counter64_t icps_oldicmp;          /* no error 'cuz old was icmp */
@@ -152,6 +152,12 @@ struct	icmpstat {
 	counter64_t icps_reflect;          /* number of responses */
 	counter64_t icps_inhist[ICMP_MAXTYPE + 1];
 };
+
+extern struct udpstat udpstat;
+extern struct tcpstat tcpstat;
+extern struct ipstat ipstat;
+extern struct icmpstat icmpstat;
+extern const char *tcpstates[TCP_NSTATES];
 
 void print_sockets(FILE *);
 void print_stats(FILE *, int);

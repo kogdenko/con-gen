@@ -7,6 +7,7 @@
 #include "tcp_var.h"
 #include "udp_var.h"
 #include "ip_icmp.h"
+#include "../netstat.h"
 
 /*
  * IP initialization: fill in IP protocol switch table.

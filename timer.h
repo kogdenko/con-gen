@@ -2,7 +2,7 @@
 #ifndef CON_GEN__GBTCP__TIMER_H
 #define CON_GEN__GBTCP__TIMER_H
 
-#include "../subr.h"
+#include "subr.h"
 #include "list.h"
 
 #define TIMER_RING_SIZE 4096llu

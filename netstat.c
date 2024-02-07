@@ -30,7 +30,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-#include "global.h"
+#include "netstat.h"
 
 static const char *icmpnames[ICMP_MAXTYPE + 1] = {
 	[ICMP_ECHOREPLY] = "echo reply",
@@ -576,14 +576,11 @@ print_stats(FILE *file, int verbose)
 }
 
 void bsd_get_so_info(void *, struct socket_info *);
-void toy_get_so_info(void *, struct socket_info *);
 
 struct print_socket_udata {
 	struct thread *prsud_thread;
 	FILE *prsud_file;
 };
-
-extern int g_toy;
 
 void
 print_socket(void *udata, void *e)
@@ -598,11 +595,7 @@ print_socket(void *udata, void *e)
 	t = ((struct print_socket_udata *)udata)->prsud_thread;
 	file = ((struct print_socket_udata *)udata)->prsud_file;
 	memset(&x, 0, sizeof(x));
-	if (g_toy) {
-		toy_get_so_info(e, &x);
-	} else {
-		bsd_get_so_info(e, &x);
-	}
+	bsd_get_so_info(e, &x);
 	tmp.s_addr = x.soi_laddr;
 	snprintf(bl, sizeof(bl), "%s:%hu", inet_ntoa(tmp), ntohs(x.soi_lport));
 	tmp.s_addr = x.soi_faddr;

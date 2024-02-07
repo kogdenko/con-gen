@@ -1,5 +1,4 @@
 #include "subr.h"
-#include "global.h"
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h>
 

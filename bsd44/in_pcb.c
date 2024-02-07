@@ -36,7 +36,7 @@
 #include "in_pcb.h"
 #include "ip_var.h"
 #include "udp_var.h"
-#include "../gbtcp/htable.h"
+#include "../htable.h"
 
 int
 in_pcbbind(struct socket *so, be16_t lport)

@@ -31,8 +31,12 @@
  * SUCH DAMAGE.
  */
 
-#include "socket.h"
-#include "ip.h"
+#include "../subr.h"
+#include "../netstat.h"
+
+
+//#include "socket.h"
+//#include "ip.h"
 #include "ip_var.h"
 #include "ip_icmp.h"
 #include "tcp_var.h"

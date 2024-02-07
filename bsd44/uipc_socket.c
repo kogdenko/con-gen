@@ -34,7 +34,7 @@
 #include "socket.h"
 #include "tcp_var.h"
 #include "udp_var.h"
-#include "../gbtcp/list.h"
+#include "../list.h"
 
 static struct socket *
 somalloc(void)

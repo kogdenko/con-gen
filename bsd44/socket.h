@@ -36,7 +36,7 @@
 
 #include "types.h"
 #include "in_pcb.h"
-#include "../gbtcp/list.h"
+#include "../list.h"
 
 struct file;
 struct socket;

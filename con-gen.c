@@ -1,7 +1,7 @@
 #include "./bsd44/socket.h"
 #include "./bsd44/if_ether.h"
 #include "./bsd44/ip.h"
-#include "./gbtcp/timer.h"
+#include "timer.h"
 #include "netstat.h"
 #include <getopt.h>
 
@@ -46,15 +46,10 @@ __thread struct thread *current;
 
 static int g_transport = TRANSPORT_DEFAULT;
 int g_udp;
-int g_toy;
 
 void bsd_flush(void);
 void bsd_server_listen(int);
 void bsd_client_connect(int proto);
-
-void toy_flush(void);
-void toy_server_listen(int);
-void toy_client_connect(void);
 
 static const char *
 norm2(char *buf, double val, char *fmt, int normalize)
@@ -531,11 +526,7 @@ thread_process(void)
 			DLIST_INSERT_HEAD(&current->t_available_head, pkt, pkt.list);
 		}
 	}
-	if (g_toy) {
-		toy_flush();
-	} else {
-		bsd_flush();
-	}
+	bsd_flush();
 }
 
 static void *
@@ -559,17 +550,9 @@ thread_routine(void *udata)
 	proto = g_udp ? IPPROTO_UDP : IPPROTO_TCP;
 
 	if (current->t_Lflag) {
-		if (g_toy) {
-			toy_server_listen(proto);
-		} else {
-			bsd_server_listen(proto);
-		}
+		bsd_server_listen(proto);
 	} else {
-		if (g_toy) {
-			toy_client_connect();
-		} else {
-			bsd_client_connect(proto);
-		}
+		bsd_client_connect(proto);
 	}
 
 	while (!current->t_done) {
@@ -613,7 +596,6 @@ usage(void)
 	"\t--dpdk:  USE DPDK transport\n"
 #endif
 	"\t--udp:  Use UDP instead of TCP\n"
-	"\t--toy:  Use \"toy\" tcp/ip stack instead of bsd4.4 (it is a bit faster)\n"
 	"\t--dst-cache:  Number of precomputed connect tuples (default: 100000)\n"
 	"\t--ip-in-cksum {0|1}:  On/Off IP input checksum calculation\n"
 	"\t--ip-out-cksum {0|1}:  On/Off IP output checksum calculation\n"
@@ -638,7 +620,6 @@ static struct option long_options[] = {
 	{ "help", no_argument, 0, 'h' },
 	{ "verbose", no_argument, 0, 'v' },
 	{ "udp", no_argument, 0, 0 },
-	{ "toy", no_argument, 0, 0 },
 	{ "dst-cache", required_argument, 0, 0 },
 	{ "so-debug", no_argument, 0, 0 },
 #ifdef HAVE_NETMAP
@@ -800,8 +781,6 @@ thread_init(struct thread *t, struct thread *pt, int thread_idx, int argc, char 
 			optname = long_options[option_index].name;
 			if (!strcmp(optname, "udp")) {
 				g_udp = 1;
-			} else if (!strcmp(optname, "toy")) {
-				g_toy = 1;
 			} else if (!strcmp(optname, "dst-cache")) {
 				if (optval < 0) {
 					goto err;
@@ -1090,7 +1069,7 @@ main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
-	set_transport(g_transport, g_udp, g_toy);
+	set_transport(g_transport, g_udp);
 	io_init(threads, n_threads);
 
 	for (i = 0; i < n_threads; ++i) {

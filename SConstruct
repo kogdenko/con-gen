@@ -1,9 +1,7 @@
 import platform
 import subprocess
 
-
-COMPILER = 'clang'
-
+COMPILER = 'gcc'
 
 def die(s):
 	print(s)
@@ -100,11 +98,11 @@ g_srcs = [
 	'bsd44/tcp_timer.c',
 	'bsd44/if_ether.c',
 	'bsd44/glue.c',
-	'gbtcp/list.c',
-	'gbtcp/htable.c',
-	'gbtcp/timer.c',
-	'gbtcp/inet.c',
-	'gbtcp/tcp.c',
+	'list.c',
+	'htable.c',
+	'timer.c',
+#	'gbtcp/inet.c',
+#	'gbtcp/tcp.c',
 	'subr.c',
 	'netstat.c',
 	'con-gen.c'

@@ -1,5 +1,5 @@
-#include "global.h"
 #include "subr.h"
+#include "netstat.h"
 
 #include <sys/resource.h>
 
@@ -49,7 +49,6 @@ extern struct transport_ops dpdk_ops;
 #endif
 
 void bsd_eth_in(void *, int);
-void toy_eth_in(void *, int);
 
 void
 dbg5(const char *filename, u_int linenum, const char *func, int suppressed,
@@ -286,7 +285,7 @@ add_pending_packet(struct packet *pkt)
 }
 
 void
-set_transport(int transport, int udp, int toy)
+set_transport(int transport, int udp)
 {
 	switch (transport) {
 #ifdef HAVE_NETMAP
@@ -316,11 +315,6 @@ set_transport(int transport, int udp, int toy)
 
 	if (udp) {
 		tr_ops->tr_io_process_op = udp_in;
-		if (toy) {
-			panic(0, "'toy' tcp/ip stack doesn't support UDP\n");
-		}
-	} else if (toy) {
-		tr_ops->tr_io_process_op = toy_eth_in;
 	} else {
 		tr_ops->tr_io_process_op = bsd_eth_in;
 	}
