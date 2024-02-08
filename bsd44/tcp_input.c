@@ -30,8 +30,8 @@ tcp_timewait(struct cg_task *t, struct tcpcb *tp)
 		return 0;
 	} else {
 		so = tcpcbtoso(tp);
-		tcp_canceltimers(tp);
-		tcp_settimer(tp, TCPT_2MSL, t->t_tcp_twtimo);
+		tcp_canceltimers(t, tp);
+		tcp_settimer(t, tp, TCPT_2MSL, t->t_tcp_twtimo);
 		soisdisconnected(t, so);
 		return 1;
 	}
@@ -196,7 +196,7 @@ findpcb:
 	 * Reset idle time and keep-alive timer.
 	 */
 	tp->t_idle = t->t_tcp_now;
-	tcp_setslowtimer(tp, TCPT_KEEP, TCPTV_KEEP_IDLE);
+	tcp_setslowtimer(t, tp, TCPT_KEEP, TCPTV_KEEP_IDLE);
 
 	/*
 	 * Process options if not in LISTEN state,
@@ -256,7 +256,7 @@ findpcb:
 		tcp_rcvseqinit(tp, th->th_seq);
 		tp->t_flags |= TF_ACKNOW;
 		tp->t_state = TCPS_SYN_RECEIVED;
-		tcp_setslowtimer(tp, TCPT_KEEP, TCPTV_KEEP_INIT);
+		tcp_setslowtimer(t, tp, TCPT_KEEP, TCPTV_KEEP_INIT);
 		dropsocket = 0;		/* committed to socket */
 		cg_counter64_inc(t, &tcpstat.tcps_accepts);
 		goto trimthenstep6;
@@ -291,7 +291,7 @@ findpcb:
 			if (SEQ_LT(tp->snd_nxt, tp->snd_una))
 				tp->snd_nxt = tp->snd_una;
 		}
-		timer_cancel(tp->t_timer + TCPT_REXMT);
+		timer_cancel(t, tp->t_timer + TCPT_REXMT);
 		tcp_rcvseqinit(tp, th->th_seq);
 		tp->t_flags |= TF_ACKNOW;
 		if ((flags & TH_ACK)) {
@@ -606,7 +606,7 @@ close:
 						win = 2;
 					}
 					tp->snd_ssthresh = win * tp->t_maxseg;
-					timer_cancel(tp->t_timer + TCPT_REXMT);
+					timer_cancel(t, tp->t_timer + TCPT_REXMT);
 					tp->t_rtt = 0;
 					tp->snd_nxt = th->th_ack;
 					tp->snd_cwnd = tp->t_maxseg;
@@ -661,10 +661,10 @@ close:
 		 * timer, using current (possibly backed-off) value.
 		 */
 		if (th->th_ack == tp->snd_max) {
-			timer_cancel(tp->t_timer + TCPT_REXMT);
+			timer_cancel(t, tp->t_timer + TCPT_REXMT);
 			needoutput = 1;
 		} else if (!timer_is_running(tp->t_timer + TCPT_PERSIST))
-			tcp_setslowtimer(tp, TCPT_REXMT, tp->t_rxtcur);
+			tcp_setslowtimer(t, tp, TCPT_REXMT, tp->t_rxtcur);
 		/*
 		 * When new data is acked, open the congestion window.
 		 * If the window gives us less than ssthresh packets
@@ -715,7 +715,7 @@ close:
 				 */
 				if (so->so_state & SS_CANTRCVMORE) {
 					soisdisconnected(t, so);
-					tcp_settimer(tp, TCPT_2MSL, t->t_tcp_fintimo);
+					tcp_settimer(t, tp, TCPT_2MSL, t->t_tcp_fintimo);
 				}
 				tp->t_state = TCPS_FIN_WAIT_2;
 			}
@@ -754,7 +754,7 @@ close:
 		 * it and restart the finack timer.
 		 */
 		case TCPS_TIME_WAIT:
-			tcp_settimer(tp, TCPT_2MSL, t->t_tcp_twtimo);
+			tcp_settimer(t, tp, TCPT_2MSL, t->t_tcp_twtimo);
 			goto dropafterack;
 		}
 	}
@@ -789,10 +789,10 @@ step6:
 	    TCPS_HAVERCVDFIN(tp->t_state) == 0) {
 		if (th->th_seq == tp->rcv_nxt) {
 			if (tp->t_flags & TF_DELACK) {
-				tcp_setdelacktimer(tp);
+				tcp_setdelacktimer(t, tp);
 			} else {
 				tp->t_flags &= ~TF_DELACK;
-				timer_cancel(&tp->t_timer_delack);
+				timer_cancel(t, &tp->t_timer_delack);
 				tp->t_flags |= TF_ACKNOW;
 			}
 			tp->rcv_nxt += ip->ip_len;
@@ -854,7 +854,7 @@ step6:
 		 * In TIME_WAIT state restart the 2 MSL time_wait timer.
 		 */
 		case TCPS_TIME_WAIT:
-			tcp_settimer(tp, TCPT_2MSL, t->t_tcp_twtimo);
+			tcp_settimer(t, tp, TCPT_2MSL, t->t_tcp_twtimo);
 			break;
 		}
 	}

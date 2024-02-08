@@ -113,7 +113,7 @@ tcp_output_real(struct cg_task *t, struct tcpcb *tp)
 			}
 			win = 1;
 		} else {
-			timer_cancel(tp->t_timer + TCPT_PERSIST);
+			timer_cancel(t, tp->t_timer + TCPT_PERSIST);
 			tp->t_rxtshift = 0;
 		}
 	}
@@ -133,7 +133,7 @@ tcp_output_real(struct cg_task *t, struct tcpcb *tp)
 		 */
 		len = 0;
 		if (win == 0) {
-			timer_cancel(tp->t_timer + TCPT_REXMT);
+			timer_cancel(t, tp->t_timer + TCPT_REXMT);
 			tp->snd_nxt = tp->snd_una;
 		}
 	}
@@ -234,7 +234,7 @@ tcp_output_real(struct cg_task *t, struct tcpcb *tp)
 	    !timer_is_running(tp->t_timer + TCPT_REXMT) &&
 	    !timer_is_running(tp->t_timer + TCPT_PERSIST)) {
 		tp->t_rxtshift = 0;
-		tcp_setpersist(tp);
+		tcp_setpersist(t, tp);
 	}
 
 	/*
@@ -458,9 +458,9 @@ send:
 		 * of retransmit time.
 		 */
 		if (!timer_is_running(tp->t_timer + TCPT_REXMT) && tp->snd_nxt != tp->snd_una) {
-			tcp_setslowtimer(tp, TCPT_REXMT, tp->t_rxtcur);
+			tcp_setslowtimer(t, tp, TCPT_REXMT, tp->t_rxtcur);
 			if (timer_is_running(tp->t_timer + TCPT_PERSIST)) {
-				timer_cancel(tp->t_timer + TCPT_PERSIST);
+				timer_cancel(t, tp->t_timer + TCPT_PERSIST);
 				tp->t_rxtshift = 0;
 			}
 		}
@@ -490,7 +490,7 @@ send:
 	}
 	tp->last_ack_sent = tp->rcv_nxt;
 	tp->t_flags &= ~(TF_ACKNOW|TF_DELACK);
-	timer_cancel(&tp->t_timer_delack);
+	timer_cancel(t, &tp->t_timer_delack);
 	return sendalot;
 //err:
 	if (error == ENOBUFS) {
@@ -506,7 +506,7 @@ send:
 }
 
 void
-tcp_setpersist(struct tcpcb *tp)
+tcp_setpersist(struct cg_task *task, struct tcpcb *tp)
 {
 	int t, timo;
 
@@ -515,13 +515,12 @@ tcp_setpersist(struct tcpcb *tp)
 	if (timer_is_running(tp->t_timer + TCPT_REXMT)) {
 		panic(0, "tcp_output REXMT");
 	}
+
 	/*
 	 * Start/restart persistance timer.
 	 */
-	TCPT_RANGESET(timo,
-	    t * tcp_backoff[tp->t_rxtshift],
-	    TCPTV_PERSMIN, TCPTV_PERSMAX);
+	TCPT_RANGESET(timo, t * tcp_backoff[tp->t_rxtshift], TCPTV_PERSMIN, TCPTV_PERSMAX);
 	if (tp->t_rxtshift < TCP_MAXRXTSHIFT)
 		tp->t_rxtshift++;
-	tcp_setslowtimer(tp, TCPT_PERSIST, timo);
+	tcp_setslowtimer(task, tp, TCPT_PERSIST, timo);
 }

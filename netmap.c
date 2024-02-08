@@ -2,6 +2,14 @@
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h>
 
+#if 0
+#define CG_PREFETCH(ring)
+#else
+#define CG_PREFETCH(ring) \
+	MEM_PREFETCH(NETMAP_BUF((ring), \
+		((ring)->slot + nm_ring_next(ring, (ring)->cur))->buf_idx))
+#endif
+
 static struct netmap_ring *
 not_empty_txr(struct cg_task *t, struct netmap_slot **pslot)
 {
@@ -113,7 +121,7 @@ netmap_rx(struct cg_task *t, int queue_id)
 		rxr = NETMAP_RXRING(t->t_nmd->nifp, i);
 		n = nm_ring_space(rxr);
 		for (j = 0; j < n; ++j) {
-			DEV_PREFETCH(rxr);
+			CG_PREFETCH(rxr);
 			slot = rxr->slot + rxr->cur;
 			io_process(t, NETMAP_BUF(rxr, slot->buf_idx) , slot->len);
 			rxr->head = rxr->cur = nm_ring_next(rxr, rxr->cur);

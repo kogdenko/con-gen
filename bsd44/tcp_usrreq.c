@@ -40,10 +40,12 @@
 #include "tcp_timer.h"
 #include "tcp_var.h"
 
-// Initiate connection to peer.
-// Enter SYN_SENT state, and mark socket as connecting.
-// Start keep-alive timer, and seed output sequence space.
-// Send initial segment on connection.
+/*
+ * Initiate connection to peer.
+ * Enter SYN_SENT state, and mark socket as connecting.
+ * Start keep-alive timer, and seed output sequence space.
+ * Send initial segment on connection.
+ */
 int
 tcp_connect(struct cg_task *t, struct socket *so)
 {
@@ -66,7 +68,7 @@ tcp_connect(struct cg_task *t, struct socket *so)
 	soisconnecting(so);
 	cg_counter64_inc(t, &tcpstat.tcps_connattempt);
 	tp->t_state = TCPS_SYN_SENT;
-	tcp_setslowtimer(tp, TCPT_KEEP, TCPTV_KEEP_INIT);
+	tcp_setslowtimer(t, tp, TCPT_KEEP, TCPTV_KEEP_INIT);
 	tcp_sendseqinit(t, tp, h);
 	tcp_output(t, tp);
 out:
@@ -328,16 +330,16 @@ tcp_sendseqinit(struct cg_task *t, struct tcpcb *tp, uint32_t h)
 }
 
 void
-tcp_setslowtimer(struct tcpcb *tp, int timer, u_short timo)
+tcp_setslowtimer(struct cg_task *t, struct tcpcb *tp, int timer, u_short timo)
 {
 	uint64_t expire;
 
 	expire = timo * NANOSECONDS_SECOND / PR_SLOWHZ;
-	tcp_settimer(tp, timer, expire);
+	tcp_settimer(t, tp, timer, expire);
 }
 
 void
-tcp_settimer(struct tcpcb *tp, int timer, uint64_t timo)
+tcp_settimer(struct cg_task *t, struct tcpcb *tp, int timer, uint64_t timo)
 {
 	timer_f fn;
 
@@ -362,5 +364,5 @@ tcp_settimer(struct tcpcb *tp, int timer, uint64_t timo)
 		panic(0, "unknown timer %d", timer);
 		break;
 	}
-	timer_set(tp->t_timer + timer, timo, fn);
+	timer_set(t, tp->t_timer + timer, timo, fn);
 }

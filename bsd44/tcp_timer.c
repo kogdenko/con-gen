@@ -59,24 +59,24 @@ tcp_delack_timo(struct cg_task *t, struct timer *timer)
 }
 
 void
-tcp_setdelacktimer(struct tcpcb *tp)
+tcp_setdelacktimer(struct cg_task *t, struct tcpcb *tp)
 {
 	tp->t_flags |= TF_DELACK;
-	timer_set(&tp->t_timer_delack, 200 * 1000 * 1000, &tcp_delack_timo);
+	timer_set(t, &tp->t_timer_delack, 200 * 1000 * 1000, &tcp_delack_timo);
 }
 
 /*
  * Cancel all timers for TCP tp.
  */
 void
-tcp_canceltimers(struct tcpcb *tp)
+tcp_canceltimers(struct cg_task *t, struct tcpcb *tp)
 {
 	int i;
 
 	for (i = 0; i < TCPT_NTIMERS; i++) {
-		timer_cancel(tp->t_timer + i);
+		timer_cancel(t, tp->t_timer + i);
 	}
-	timer_cancel(&tp->t_timer_delack);
+	timer_cancel(t, &tp->t_timer_delack);
 }
 
 int tcp_backoff[TCP_MAXRXTSHIFT + 1] =
@@ -95,7 +95,7 @@ tcp_persist_timo(struct cg_task *t, struct timer *timer)
 	tp = cg_container_of(timer, struct tcpcb, t_timer[TCPT_PERSIST]);
 
 	cg_counter64_inc(t, &tcpstat.tcps_persisttimeo);
-	tcp_setpersist(tp);
+	tcp_setpersist(t, tp);
 	tp->t_force = 1;
 	tcp_output(t, tp);
 }
@@ -122,7 +122,7 @@ tcp_rexmit_timo(struct cg_task *t, struct timer *timer)
 	cg_counter64_inc(t, &tcpstat.tcps_rexmttimeo);
 	rexmt = TCP_REXMTVAL(tp) * tcp_backoff[tp->t_rxtshift];
 	TCPT_RANGESET(tp->t_rxtcur, rexmt, TCPTV_MIN, TCPTV_REXMTMAX);
-	tcp_setslowtimer(tp, TCPT_REXMT, tp->t_rxtcur);
+	tcp_setslowtimer(t, tp, TCPT_REXMT, tp->t_rxtcur);
 	/*
 	 * If losing, let the lower level know and try for
 	 * a better route.  Also, if we backed off this far,
@@ -212,9 +212,9 @@ tcp_keepalive_timo(struct cg_task *t, struct timer *timer)
 		 */
 		cg_counter64_inc(t, &tcpstat.tcps_keepprobe);
 		tcp_respond(t, tp, NULL, NULL, tp->rcv_nxt, tp->snd_una - 1, 0);
-		tcp_setslowtimer(tp, TCPT_KEEP, TCPTV_KEEPINTVL);
+		tcp_setslowtimer(t, tp, TCPT_KEEP, TCPTV_KEEPINTVL);
 	} else {
-		tcp_setslowtimer(tp, TCPT_KEEP, TCPTV_KEEP_IDLE);
+		tcp_setslowtimer(t, tp, TCPT_KEEP, TCPTV_KEEP_IDLE);
 	}
 	return;
 dropit:

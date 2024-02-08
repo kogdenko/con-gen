@@ -48,17 +48,15 @@ void dlist_remove(struct dlist *);
 
 #define DLIST_FOREACH(var, head, field) \
 	for (var = DLIST_FIRST(head, typeof(*(var)), field); \
-		&((var)->field) != (head); \
-		var = DLIST_NEXT(var, field))
+			&((var)->field) != (head); \
+			var = DLIST_NEXT(var, field))
 
 #define DLIST_FOREACH_CONTINUE(pos, head, field) \
-	for (; &((pos)->field) != (head); \
-		pos = DLIST_NEXT(pos, field))
+	for (; &((pos)->field) != (head); pos = DLIST_NEXT(pos, field))
 
 #define DLIST_FOREACH_SAFE(var, head, field, tvar) \
 	for (var = DLIST_FIRST(head, typeof(*(var)), field); \
-		(&((var)->field) != (head)) && \
-		((tvar = DLIST_NEXT(var, field)), 1); \
+		(&((var)->field) != (head)) && ((tvar = DLIST_NEXT(var, field)), 1); \
 		var = tvar)
 
 #endif // CON_GEN__GBTCP__LIST_H

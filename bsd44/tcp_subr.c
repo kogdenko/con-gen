@@ -197,7 +197,7 @@ tcp_close(struct cg_task *t, struct tcpcb *tp)
 
 	so = tcpcbtoso(tp);
 	tp->t_state = TCPS_CLOSED;
-	tcp_canceltimers(tp);
+	tcp_canceltimers(t, tp);
 	soisdisconnected(t, so);
 	/* clobber input pcb cache if we're closing the cached connection */
 	in_pcbdetach(t, so);

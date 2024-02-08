@@ -153,10 +153,10 @@ struct tcpcb {
 extern uint32_t tcp_now;		/* for RFC 1323 timestamps */
 
 void	 tcp_attach(struct cg_task *, struct socket *);
-void	 tcp_canceltimers(struct tcpcb *);
-void	 tcp_settimer(struct tcpcb *, int, uint64_t);
-void	 tcp_setslowtimer(struct tcpcb *, int, u_short);
-void	 tcp_setdelacktimer(struct tcpcb *);
+void	 tcp_canceltimers(struct cg_task *, struct tcpcb *);
+void	 tcp_settimer(struct cg_task *, struct tcpcb *, int, uint64_t);
+void	 tcp_setslowtimer(struct cg_task *, struct tcpcb *, int, u_short);
+void	 tcp_setdelacktimer(struct cg_task *, struct tcpcb *);
 struct tcpcb *
 	 tcp_close(struct cg_task *, struct tcpcb *);
 void	 tcp_ctlinput(struct cg_task *, int, int, be32_t, struct ip *);
@@ -177,7 +177,7 @@ int	 tcp_output_real(struct cg_task *, struct tcpcb *);
 void	 tcp_quench(struct cg_task *, struct socket *, int);
 void	 tcp_respond(struct cg_task *, struct tcpcb *, struct ip *, struct tcp_hdr *,
 	             tcp_seq, tcp_seq, int);
-void	 tcp_setpersist(struct tcpcb *);
+void	 tcp_setpersist(struct cg_task *, struct tcpcb *);
 void	 tcp_trace(int, int, struct tcpcb *, struct ip *, struct tcp_hdr *, int);
 struct tcpcb *tcp_usrclosed(struct cg_task *, struct tcpcb *);
 void tcp_xmit_timer(struct cg_task *, struct tcpcb *, short);

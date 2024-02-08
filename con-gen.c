@@ -451,7 +451,7 @@ multiplexer_add(struct cg_task *t, int fd)
 
 	index = t->t_pfd_num;
 	if (index == ARRAY_SIZE(t->t_pfds)) {
-		panic(0, "Too many RSS queues");
+		panic(0, "Queue limit exceeded (%zu)", ARRAY_SIZE(t->t_pfds));
 	}
 	t->t_pfd_num++;
 	t->t_pfds[index].fd = fd;
@@ -960,12 +960,15 @@ err:
 			return -EINVAL;
 		}
 	}
+
 	if (t->t_ifname[0] == '\0') {
 		fprintf(stderr, "Interface (-i) not specified for thread %d\n", thread_idx);
 		usage();
 		return -EINVAL;
 	}
+
 	htable_init(&t->t_in_htable, 4096, ip_socket_hash);
+
 	if (t->t_Lflag) {
 		t->t_http = http_reply;
 		t->t_http_len = http_reply_len;
@@ -973,6 +976,7 @@ err:
 		t->t_http = http_request;
 		t->t_http_len = http_request_len;
 	}
+
 	t->t_counters = xmalloc(n_counters * sizeof(uint64_t));
 	memset(t->t_counters, 0, n_counters * sizeof(uint64_t));
 	return 0;

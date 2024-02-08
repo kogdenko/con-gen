@@ -131,13 +131,6 @@ struct rte_mbuf;
 #define MEM_PREFETCH(ptr) \
 	__builtin_prefetch(ptr)
 
-#if 0
-#define DEV_PREFETCH(ring)
-#else
-#define DEV_PREFETCH(ring) \
-	MEM_PREFETCH(NETMAP_BUF((ring), \
-		((ring)->slot + nm_ring_next(ring, (ring)->cur))->buf_idx))
-#endif
 
 #if 1
 #define cg_counter64_add(t, c, a) \
@@ -256,14 +249,21 @@ struct packet {
 	u_char pkt_body[2048 - sizeof(struct packet_header)];
 };
 
+struct cg_timer_ring;
+
 struct cg_task {
 	struct spinlock t_lock;
 	struct dlist t_available_head;
 	struct dlist t_pending_head;
 	unsigned t_n_pending;
+
+	int t_n_timer_rings;
+	struct cg_timer_ring *t_timer_rings;
+	uint64_t t_timers_last_time;
+
 	u_char t_busyloop;
 	u_char t_id;
-	u_char t_done;
+	volatile int t_done;
 	u_char t_Lflag;
 	u_char t_so_debug;
 	u_char t_ip_do_incksum;
@@ -360,6 +360,9 @@ void dbg5(const char *, u_int, const char *, int, const char *, ...)
 	__attribute__((format(printf, 5, 6)));
 
 void print_hexdump_ascii(const void *, int);
+
+int ffs64(uint64_t x);
+
 
 void *xmalloc(size_t);
 
