@@ -89,7 +89,7 @@ g_srcs = [
 	'bsd44/ip_input.c',
 	'bsd44/ip_output.c',
 	'bsd44/ip_icmp.c',
-	'bsd44/udp_usrreq.c',
+#	'bsd44/udp_usrreq.c',
 	'bsd44/tcp_debug.c',
 	'bsd44/tcp_subr.c',
 	'bsd44/tcp_usrreq.c',
@@ -118,6 +118,7 @@ g_cflags = [
 	'-fPIC',
 	'-std=gnu99',
 	'-Wstrict-prototypes',
+	'-Wmissing-prototypes',
 ]
 
 g_ldflags = [

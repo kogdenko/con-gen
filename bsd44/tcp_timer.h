@@ -118,5 +118,10 @@
 extern int tcp_maxidle;			/* time to drop after starting probes */
 extern int tcp_backoff[];
 
+struct timer;
+
+void	tcp_delack_timo(struct cg_task *t, struct timer *timer);
+
+
 #endif /* BSD44_TCP_TIMER_H */
 

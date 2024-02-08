@@ -36,7 +36,7 @@ u_char tcp_outflags[TCP_NSTATES] = {
  * Tcp output routine: figure out what should be sent and send it.
  */
 void
-tcp_output(struct tcpcb *tp)
+tcp_output(struct cg_task *t, struct tcpcb *tp)
 {
 	struct socket *so;
 
@@ -45,11 +45,11 @@ tcp_output(struct tcpcb *tp)
 		return;
 	}
 	so->so_state |= SS_ISTXPENDING;
-	DLIST_INSERT_TAIL(&current->t_so_txq, so, so_txlist);
+	DLIST_INSERT_TAIL(&t->t_so_txq, so, so_txlist);
 }
 
 int
-tcp_output_real(struct tcpcb *tp)
+tcp_output_real(struct cg_task *t, struct tcpcb *tp)
 {
 	struct socket *so;
 	int off, len, win, flags, error;
@@ -71,7 +71,7 @@ tcp_output_real(struct tcpcb *tp)
 	 * to send, then transmit; otherwise, investigate further.
 	 */
 	idle = (tp->snd_max == tp->snd_una);
-	if (idle && current->t_tcp_now - tp->t_idle >= tp->t_rxtcur) {
+	if (idle && t->t_tcp_now - tp->t_idle >= tp->t_rxtcur) {
 		/*
 		 * We have been idle for "a while" and no acks are
 		 * expected to clock out any data we send --
@@ -260,7 +260,7 @@ send:
 
 			opt[0] = TCPOPT_MAXSEG;
 			opt[1] = 4;
-			mss = htons((u_short) tcp_mss(tp, 0));
+			mss = htons((u_short) tcp_mss(t, tp, 0));
 			memcpy((opt + 2), &mss, sizeof(mss));
 			optlen = 4;
 	 
@@ -289,7 +289,7 @@ send:
 		u_char *optp = opt + optlen;
 		be32_t ts_val, ts_ecr;
 
- 		ts_val = htonl(current->t_tcp_now);
+ 		ts_val = htonl(t->t_tcp_now);
 		ts_ecr = htonl(tp->ts_recent);
 
  		/* Form timestamp option as shown in appendix A of RFC 1323. */
@@ -320,15 +320,15 @@ send:
 	 */
 	if (len) {
 		if (t_force && len == 1)
-			counter64_inc(&tcpstat.tcps_sndprobe);
+			cg_counter64_inc(t, &tcpstat.tcps_sndprobe);
 		else if (SEQ_LT(tp->snd_nxt, tp->snd_max)) {
-			counter64_inc(&tcpstat.tcps_sndrexmitpack);
-			counter64_add(&tcpstat.tcps_sndrexmitbyte, len);
+			cg_counter64_inc(t, &tcpstat.tcps_sndrexmitpack);
+			cg_counter64_add(t, &tcpstat.tcps_sndrexmitbyte, len);
 		} else {
-			counter64_inc(&tcpstat.tcps_sndpack);
-			counter64_add(&tcpstat.tcps_sndbyte, len);
+			cg_counter64_inc(t, &tcpstat.tcps_sndpack);
+			cg_counter64_add(t, &tcpstat.tcps_sndbyte, len);
 		}
-		io_init_tx_packet(&pkt);
+		io_init_tx_packet(t, &pkt);
 		//if (pkt == NULL) {
 		//	error = ENOBUFS;
 		//	goto err;
@@ -345,13 +345,13 @@ send:
 		}
 	} else {
 		if (tp->t_flags & TF_ACKNOW) {
-			counter64_inc(&tcpstat.tcps_sndacks);
+			cg_counter64_inc(t, &tcpstat.tcps_sndacks);
 		} else if (flags & (TH_SYN|BSD_TH_FIN|TH_RST)) {
-			counter64_inc(&tcpstat.tcps_sndctrl);
+			cg_counter64_inc(t, &tcpstat.tcps_sndctrl);
 		} else {
-			counter64_inc(&tcpstat.tcps_sndwinup);
+			cg_counter64_inc(t, &tcpstat.tcps_sndwinup);
 		}
-		io_init_tx_packet(&pkt);
+		io_init_tx_packet(t, &pkt);
 		//if (pkt == NULL) {
 		//	error = ENOBUFS;
 		//	goto err;
@@ -414,7 +414,7 @@ send:
 	 * so that it doesn't drift into the send window on sequence
 	 * number wraparound.
 	 */
-	if (current->t_tcp_do_outcksum) {
+	if (t->t_tcp_do_outcksum) {
 		th->th_sum = tcp_cksum(ip, sizeof(*th) + optlen + len);
 	}
 	/*
@@ -444,9 +444,9 @@ send:
 			 * not currently timing anything.
 			 */
 			if (tp->t_rtt == 0) {
-				tp->t_rtt = current->t_tcp_now;
+				tp->t_rtt = t->t_tcp_now;
 				tp->t_rtseq = startseq;
-				counter64_inc(&tcpstat.tcps_segstimed);
+				cg_counter64_inc(t, &tcpstat.tcps_segstimed);
 			}
 		}
 		/*
@@ -476,8 +476,8 @@ send:
 	if (so->so_options & SO_OPTION(SO_DEBUG)) {
 		tcp_trace(TA_OUTPUT, tp->t_state, tp, ip, th, 0);
 	}
-	ip_output(&pkt, ip);
-	counter64_inc(&tcpstat.tcps_sndtotal);
+	ip_output(t, &pkt, ip);
+	cg_counter64_inc(t, &tcpstat.tcps_sndtotal);
 
 	/*
 	 * Data sent (as far as we can tell).
@@ -494,7 +494,7 @@ send:
 	return sendalot;
 //err:
 	if (error == ENOBUFS) {
-		tcp_quench(so, 0);
+		tcp_quench(t, so, 0);
 		return 0;
 	}
 	if ((error == EHOSTUNREACH || error == ENETDOWN) &&

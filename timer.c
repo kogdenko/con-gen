@@ -52,14 +52,14 @@ ffs64(uint64_t x)
 }
 
 static void
-timer_ring_init(struct timer_ring *ring, uint64_t seg_size)
+timer_ring_init(struct cg_task *t, struct timer_ring *ring, uint64_t seg_size)
 {
 	int i;
 
 	if (seg_size) {
 		ring->r_seg_shift = ffs64(seg_size) - 1;
 		assert(seg_size == (1llu << ring->r_seg_shift));
-		ring->r_pos = current->t_time >> ring->r_seg_shift;
+		ring->r_pos = t->t_time >> ring->r_seg_shift;
 	}
 	ring->r_ntimers = 0;
 	for (i = 0; i < TIMER_RING_SIZE; ++i) {
@@ -68,7 +68,7 @@ timer_ring_init(struct timer_ring *ring, uint64_t seg_size)
 }
 
 int
-init_timers(void)
+cg_init_timers(struct cg_task *t)
 {
 	int i;
 	uint64_t seg_size;
@@ -91,7 +91,7 @@ init_timers(void)
 	alloc_timer_rings();
 	for (i = 0; i < n_timer_rings; ++i) {
 		ring = timer_rings[i];
-		timer_ring_init(ring, seg_sizes[i]);
+		timer_ring_init(t, ring, seg_sizes[i]);
 	}
 	return 0;
 }
@@ -168,7 +168,7 @@ timer_cancel(struct timer *timer)
 }
 
 static void
-call_timers(struct dlist *q)
+call_timers(struct cg_task *t, struct dlist *q)
 {
 	struct timer *timer;
 	timer_f fn;
@@ -178,12 +178,12 @@ call_timers(struct dlist *q)
 		DLIST_REMOVE(timer, tm_list);
 		fn = (timer_f)(timer->tm_data & ~TIMER_RING_ID_MASK);
 		timer->tm_data = 0;
-		(*fn)(timer);
+		(*fn)(t, timer);
 	}
 }
 
 static void
-check_timer_ring(struct timer_ring *ring, struct dlist *q)
+check_timer_ring(struct cg_task *t, struct timer_ring *ring, struct dlist *q)
 {
 	int i;
 	uint64_t pos;
@@ -191,7 +191,7 @@ check_timer_ring(struct timer_ring *ring, struct dlist *q)
 	struct dlist *seg;
 
 	pos = ring->r_pos;
-	ring->r_pos = (current->t_time >> ring->r_seg_shift);
+	ring->r_pos = (t->t_time >> ring->r_seg_shift);
 	assert(pos <= ring->r_pos);
 	if (ring->r_ntimers == 0) {
 		return;
@@ -212,21 +212,22 @@ check_timer_ring(struct timer_ring *ring, struct dlist *q)
 }
 
 void
-check_timers(void)
+cg_check_timers(struct cg_task *t)
 {
 	int i;
 	static __thread uint64_t last_check_time;
 	struct dlist q;
 	struct timer_ring *ring;
 
-	if (current->t_time - last_check_time < 30 * NANOSECONDS_MILLISECOND) {
+	if (t->t_time - last_check_time < 30 * NANOSECONDS_MILLISECOND) {
 		return;
 	}
-	last_check_time = current->t_time;
+	last_check_time = t->t_time;
+
 	dlist_init(&q);
 	for (i = 0; i < n_timer_rings; ++i) {
 		ring = timer_rings[i];
-		check_timer_ring(ring, &q);
+		check_timer_ring(t, ring, &q);
 	}
-	call_timers(&q);
+	call_timers(t, &q);
 }

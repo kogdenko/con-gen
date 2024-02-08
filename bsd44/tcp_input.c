@@ -20,19 +20,19 @@ int tcprexmtthresh = 3;
 
 
 static int
-tcp_timewait(struct tcpcb *tp)
+tcp_timewait(struct cg_task *t, struct tcpcb *tp)
 {
 	struct socket *so;
 
 	tp->t_state = TCPS_TIME_WAIT;
-	if (current->t_tcp_twtimo == 0) {
-		tcp_close(tp);
+	if (t->t_tcp_twtimo == 0) {
+		tcp_close(t, tp);
 		return 0;
 	} else {
 		so = tcpcbtoso(tp);
 		tcp_canceltimers(tp);
-		tcp_settimer(tp, TCPT_2MSL, current->t_tcp_twtimo);
-		soisdisconnected(so);
+		tcp_settimer(tp, TCPT_2MSL, t->t_tcp_twtimo);
+		soisdisconnected(t, so);
 		return 1;
 	}
 }
@@ -43,7 +43,7 @@ tcp_timewait(struct tcpcb *tp)
  * protocol specification dated September, 1981 very closely.
  */
 void
-tcp_input(struct ip *ip, int iphlen, int eth_flags)
+tcp_input(struct cg_task *t, struct ip *ip, int iphlen, int eth_flags)
 {
 	struct ip save_ip;
 	struct tcp_hdr *th, save_th;
@@ -58,7 +58,7 @@ tcp_input(struct ip *ip, int iphlen, int eth_flags)
 	int flags, ts_present, dropsocket;
 	u_long tiwin;
 
-	counter64_inc(&tcpstat.tcps_rcvtotal);
+	cg_counter64_inc(t, &tcpstat.tcps_rcvtotal);
 	tp = NULL;
 	so = NULL;
 	ts_present = 0;
@@ -66,7 +66,7 @@ tcp_input(struct ip *ip, int iphlen, int eth_flags)
 	optp = NULL;
 	th = (struct tcp_hdr *)((u_char *)ip + iphlen);
 	if (ip->ip_len < sizeof(struct tcp_hdr)) {
-		counter64_inc(&tcpstat.tcps_rcvshort);
+		cg_counter64_inc(t, &tcpstat.tcps_rcvshort);
 		return;
 	}
 
@@ -75,11 +75,11 @@ tcp_input(struct ip *ip, int iphlen, int eth_flags)
 	 */
 	th_sum = th->th_sum;
 	th->th_sum = 0;
-	if (current->t_tcp_do_incksum) {
+	if (t->t_tcp_do_incksum) {
 		th->th_sum = tcp_cksum(ip, ip->ip_len);
 		if (th_sum != th->th_sum) {
-			counter64_inc(&tcpstat.tcps_rcvbadsum);
-			if (current->t_tcp_do_incksum > 1) {
+			cg_counter64_inc(t, &tcpstat.tcps_rcvbadsum);
+			if (t->t_tcp_do_incksum > 1) {
 				goto drop;
 			}
 		}
@@ -91,7 +91,7 @@ tcp_input(struct ip *ip, int iphlen, int eth_flags)
 	 */
 	off = (th->th_off & 0xf0) >> 2;
 	if (off < sizeof(struct tcp_hdr) || off > ip->ip_len) {
-		counter64_inc(&tcpstat.tcps_rcvbadoff);
+		cg_counter64_inc(t, &tcpstat.tcps_rcvbadoff);
 		goto drop;
 	}
 	ip->ip_len -= off;
@@ -116,9 +116,9 @@ tcp_input(struct ip *ip, int iphlen, int eth_flags)
 findpcb:
 	again = 0;
 	datlen = 0;
-	so = in_pcblookup(IPPROTO_TCP,
-		ip->ip_dst.s_addr, th->th_dport,
-		ip->ip_src.s_addr, th->th_sport);
+	so = in_pcblookup(t, IPPROTO_TCP,
+			ip->ip_dst.s_addr, th->th_dport,
+			ip->ip_src.s_addr, th->th_sport);
 
 	/*
 	 * If the state is CLOSED (i.e., TCB does not exist) then
@@ -153,9 +153,9 @@ findpcb:
 	acceptconn = so->so_options & SO_OPTION(SO_ACCEPTCONN);
 	if (acceptconn) {
 		so->so_state &= ~SS_ISPROCESSING;
-		so = sonewconn(so);
+		so = sonewconn(t, so);
 		if (so == NULL) {
-			counter64_inc(&tcpstat.tcps_listendrop);
+			cg_counter64_inc(t, &tcpstat.tcps_listendrop);
 			goto drop;
 		}
 		so->so_state |= SS_ISPROCESSING;
@@ -179,7 +179,7 @@ findpcb:
 		so->inp_lport = th->th_dport;
 		so->inp_faddr = ip->ip_src.s_addr;
 		so->inp_fport = th->th_sport;
-		in_pcbattach(so, &h);
+		in_pcbattach(t, so, &h);
 		tp = sototcpcb(so);
 		tp->t_state = TCPS_LISTEN;
 
@@ -195,7 +195,7 @@ findpcb:
 	 * Segment received on connection.
 	 * Reset idle time and keep-alive timer.
 	 */
-	tp->t_idle = current->t_tcp_now;
+	tp->t_idle = t->t_tcp_now;
 	tcp_setslowtimer(tp, TCPT_KEEP, TCPTV_KEEP_IDLE);
 
 	/*
@@ -203,7 +203,7 @@ findpcb:
 	 * else do it below (after getting remote address).
 	 */
 	if (optp != NULL && tp->t_state != TCPS_LISTEN) {
-		tcp_dooptions(tp, optp, optlen, th, &ts_present, &ts_val, &ts_ecr);
+		tcp_dooptions(t, tp, optp, optlen, th, &ts_present, &ts_val, &ts_ecr);
 	}
 
 
@@ -249,16 +249,16 @@ findpcb:
 			goto drop;
 		}*/
 		if (optp != NULL) {
-			tcp_dooptions(tp, optp, optlen, th,
-				&ts_present, &ts_val, &ts_ecr);
+			tcp_dooptions(t, tp, optp, optlen, th,
+					&ts_present, &ts_val, &ts_ecr);
 		}
-		tcp_sendseqinit(tp, h);
+		tcp_sendseqinit(t, tp, h);
 		tcp_rcvseqinit(tp, th->th_seq);
 		tp->t_flags |= TF_ACKNOW;
 		tp->t_state = TCPS_SYN_RECEIVED;
 		tcp_setslowtimer(tp, TCPT_KEEP, TCPTV_KEEP_INIT);
 		dropsocket = 0;		/* committed to socket */
-		counter64_inc(&tcpstat.tcps_accepts);
+		cg_counter64_inc(t, &tcpstat.tcps_accepts);
 		goto trimthenstep6;
 
 	/*
@@ -279,7 +279,7 @@ findpcb:
 		}
 		if (flags & TH_RST) {
 			if (flags & TH_ACK) {
-				tcp_drop(tp, ECONNREFUSED);
+				tcp_drop(t, tp, ECONNREFUSED);
 			}
 			goto drop;
 		}
@@ -295,8 +295,8 @@ findpcb:
 		tcp_rcvseqinit(tp, th->th_seq);
 		tp->t_flags |= TF_ACKNOW;
 		if ((flags & TH_ACK)) {
-			counter64_inc(&tcpstat.tcps_connects);
-			soisconnected(so);
+			cg_counter64_inc(t, &tcpstat.tcps_connects);
+			soisconnected(t, so);
 			tp->t_state = TCPS_ESTABLISHED;
 			/* Do window scaling on this connection? */
 			if ((tp->t_flags & (TF_RCVD_SCALE|TF_REQ_SCALE)) ==
@@ -309,7 +309,7 @@ findpcb:
 			 * use its rtt as our initial srtt & rtt var.
 			 */
 			if (tp->t_rtt) {
-				tcp_xmit_timer(tp, tp->t_rtt);
+				tcp_xmit_timer(t, tp, tp->t_rtt);
 			}
 		} else {
 			tp->t_state = TCPS_SYN_RECEIVED;
@@ -326,8 +326,8 @@ trimthenstep6:
 			todrop = ip->ip_len - rcv_wnd;
 			ip->ip_len = rcv_wnd;
 			flags &= ~BSD_TH_FIN;
-			counter64_inc(&tcpstat.tcps_rcvpackafterwin);
-			counter64_add(&tcpstat.tcps_rcvbyteafterwin, todrop);
+			cg_counter64_inc(t, &tcpstat.tcps_rcvpackafterwin);
+			cg_counter64_add(t, &tcpstat.tcps_rcvbyteafterwin, todrop);
 		}
 		tp->snd_wl1 = th->th_seq - 1;
 		goto step6;
@@ -347,7 +347,7 @@ trimthenstep6:
 	    TSTMP_LT(ts_val, tp->ts_recent)) {
 
 		/* Check to see if ts_recent is over 24 days old.  */
-		if ((int)(current->t_tcp_now - tp->ts_recent_age) > TCP_PAWS_IDLE) {
+		if ((int)(t->t_tcp_now - tp->ts_recent_age) > TCP_PAWS_IDLE) {
 			/*
 			 * Invalidate ts_recent.  If this segment updates
 			 * ts_recent, the age will be reset later and ts_recent
@@ -361,9 +361,9 @@ trimthenstep6:
 			 */
 			tp->ts_recent = 0;
 		} else {
-			counter64_inc(&tcpstat.tcps_rcvduppack);
-			counter64_add(&tcpstat.tcps_rcvdupbyte, ip->ip_len);
-			counter64_inc(&tcpstat.tcps_pawsdrop);
+			cg_counter64_inc(t, &tcpstat.tcps_rcvduppack);
+			cg_counter64_add(t, &tcpstat.tcps_rcvdupbyte, ip->ip_len);
+			cg_counter64_inc(t, &tcpstat.tcps_pawsdrop);
 			goto dropafterack;
 		}
 	}
@@ -376,8 +376,8 @@ trimthenstep6:
 			todrop--;
 		}
 		if (todrop >= ip->ip_len) {
-			counter64_inc(&tcpstat.tcps_rcvduppack);
-			counter64_add(&tcpstat.tcps_rcvdupbyte, ip->ip_len);
+			cg_counter64_inc(t, &tcpstat.tcps_rcvduppack);
+			cg_counter64_add(t, &tcpstat.tcps_rcvdupbyte, ip->ip_len);
 			/*
 			 * If segment is just one to the left of the window,
 			 * check two special cases:
@@ -403,8 +403,8 @@ trimthenstep6:
 				}
 			}
 		} else {
-			counter64_inc(&tcpstat.tcps_rcvpartduppack);
-			counter64_add(&tcpstat.tcps_rcvpartdupbyte, todrop);
+			cg_counter64_inc(t, &tcpstat.tcps_rcvpartduppack);
+			cg_counter64_add(t, &tcpstat.tcps_rcvpartdupbyte, todrop);
 		}
 		dat += todrop;
 		th->th_seq += todrop;
@@ -417,8 +417,8 @@ trimthenstep6:
 	 */
 	if ((so->so_state & SS_NOFDREF) &&
 	    tp->t_state > TCPS_CLOSE_WAIT && ip->ip_len) {
-		tcp_close(tp);
-		counter64_inc(&tcpstat.tcps_rcvafterclose);
+		tcp_close(t, tp);
+		cg_counter64_inc(t, &tcpstat.tcps_rcvafterclose);
 		goto dropwithreset;
 	}
 
@@ -428,9 +428,9 @@ trimthenstep6:
 	 */
 	todrop = (th->th_seq + ip->ip_len) - (tp->rcv_nxt + rcv_wnd);
 	if (todrop > 0) {
-		counter64_inc(&tcpstat.tcps_rcvpackafterwin);
+		cg_counter64_inc(t, &tcpstat.tcps_rcvpackafterwin);
 		if (todrop >= ip->ip_len) {
-			counter64_add(&tcpstat.tcps_rcvbyteafterwin, ip->ip_len);
+			cg_counter64_add(t, &tcpstat.tcps_rcvbyteafterwin, ip->ip_len);
 			/*
 			 * If a new connection request is received
 			 * while in TIME_WAIT, drop the old connection
@@ -440,7 +440,7 @@ trimthenstep6:
 			if ((flags & TH_SYN) &&
 			    tp->t_state == TCPS_TIME_WAIT &&
 			    SEQ_GT(th->th_seq, tp->rcv_nxt)) {
-				tcp_close(tp);
+				tcp_close(t, tp);
 				again = 1;
 				goto unref;
 			}
@@ -453,12 +453,12 @@ trimthenstep6:
 			 */
 			if (rcv_wnd == 0 && th->th_seq == tp->rcv_nxt) {
 				tp->t_flags |= TF_ACKNOW;
-				counter64_inc(&tcpstat.tcps_rcvwinprobe);
+				cg_counter64_inc(t, &tcpstat.tcps_rcvwinprobe);
 			} else {
 				goto dropafterack;
 			}
 		} else {
-			counter64_add(&tcpstat.tcps_rcvbyteafterwin, todrop);
+			cg_counter64_add(t, &tcpstat.tcps_rcvbyteafterwin, todrop);
 		}
 		ip->ip_len -= todrop;
 		flags &= ~(TH_PUSH|BSD_TH_FIN);
@@ -471,7 +471,7 @@ trimthenstep6:
 	if (ts_present && SEQ_LEQ(th->th_seq, tp->last_ack_sent) &&
 	    SEQ_LT(tp->last_ack_sent, th->th_seq + ip->ip_len +
 		   ((flags & (TH_SYN|BSD_TH_FIN)) != 0))) {
-		tp->ts_recent_age = current->t_tcp_now;
+		tp->ts_recent_age = t->t_tcp_now;
 		tp->ts_recent = ts_val;
 	}
 
@@ -498,14 +498,14 @@ trimthenstep6:
 			so->so_error = ECONNRESET;
 close:
 			tp->t_state = TCPS_CLOSED;
-			counter64_inc(&tcpstat.tcps_drops);
-			tcp_close(tp);
+			cg_counter64_inc(t, &tcpstat.tcps_drops);
+			tcp_close(t, tp);
 			goto drop;
 
 		case TCPS_CLOSING:
 		case TCPS_LAST_ACK:
 		case TCPS_TIME_WAIT:
-			tcp_close(tp);
+			tcp_close(t, tp);
 			goto drop;
 		}
 	}
@@ -515,7 +515,7 @@ close:
 	 * error and we send an RST and drop the connection.
 	 */
 	if (flags & TH_SYN) {
-		tcp_drop(tp, ECONNRESET);
+		tcp_drop(t, tp, ECONNRESET);
 		goto dropwithreset;
 	}
 
@@ -540,8 +540,8 @@ close:
 		    SEQ_GT(th->th_ack, tp->snd_max)) {
 			goto dropwithreset;
 		}
-		counter64_inc(&tcpstat.tcps_connects);
-		soisconnected(so);
+		cg_counter64_inc(t, &tcpstat.tcps_connects);
+		soisconnected(t, so);
 		tp->t_state = TCPS_ESTABLISHED;
 		/* Do window scaling? */
 		if ((tp->t_flags & (TF_RCVD_SCALE|TF_REQ_SCALE)) ==
@@ -571,7 +571,7 @@ close:
 			if (ip->ip_len == 0 &&
 			    (flags & BSD_TH_FIN) == 0 &&
 			    tiwin == tp->snd_wnd) {
-				counter64_inc(&tcpstat.tcps_rcvdupack);
+				cg_counter64_inc(t, &tcpstat.tcps_rcvdupack);
 				/*
 				 * If we have outstanding data (other than
 				 * a window probe), this is a completely
@@ -610,11 +610,11 @@ close:
 					tp->t_rtt = 0;
 					tp->snd_nxt = th->th_ack;
 					tp->snd_cwnd = tp->t_maxseg;
-					tcp_output(tp);
+					tcp_output(t, tp);
 					goto drop;
 				} else if (tp->t_dupacks > tcprexmtthresh) {
 					tp->snd_cwnd += tp->t_maxseg;
-					tcp_output(tp);
+					tcp_output(t, tp);
 					goto drop;
 				}
 			} else {
@@ -632,12 +632,12 @@ close:
 		}
 		tp->t_dupacks = 0;
 		if (SEQ_GT(th->th_ack, tp->snd_max)) {
-			counter64_inc(&tcpstat.tcps_rcvacktoomuch);
+			cg_counter64_inc(t, &tcpstat.tcps_rcvacktoomuch);
 			goto dropafterack;
 		}
 		acked = th->th_ack - tp->snd_una;
-		counter64_inc(&tcpstat.tcps_rcvackpack);
-		counter64_add(&tcpstat.tcps_rcvackbyte, acked);
+		cg_counter64_inc(t, &tcpstat.tcps_rcvackpack);
+		cg_counter64_add(t, &tcpstat.tcps_rcvackbyte, acked);
 
 		/*
 		 * If we have a timestamp reply, update smoothed
@@ -649,9 +649,9 @@ close:
 		 * Recompute the initial retransmit timer.
 		 */
 		if (ts_present) {
-			tcp_xmit_timer(tp, current->t_tcp_now - ts_ecr + 1);
+			tcp_xmit_timer(t, tp, t->t_tcp_now - ts_ecr + 1);
 		} else if (tp->t_rtt && SEQ_GT(th->th_ack, tp->t_rtseq)) {
-			tcp_xmit_timer(tp, tp->t_rtt);
+			tcp_xmit_timer(t, tp, tp->t_rtt);
 		}
 
 		/*
@@ -685,14 +685,14 @@ close:
 		}
 		if (acked > so->so_snd.sb_cc) {
 			tp->snd_wnd -= so->so_snd.sb_cc;
-			sbdrop(&so->so_snd, (int)so->so_snd.sb_cc);
+			sbdrop(t, &so->so_snd, (int)so->so_snd.sb_cc);
 			ourfinisacked = 1;
 		} else {
-			sbdrop(&so->so_snd, acked);
+			sbdrop(t, &so->so_snd, acked);
 			tp->snd_wnd -= acked;
 			ourfinisacked = 0;
 		}
-		sowakeup2(so, POLLOUT);
+		sowakeup3(t, so, POLLOUT);
 		tp->snd_una = th->th_ack;
 		if (SEQ_LT(tp->snd_nxt, tp->snd_una)) {
 			tp->snd_nxt = tp->snd_una;
@@ -714,9 +714,8 @@ close:
 				 * we'll hang forever.
 				 */
 				if (so->so_state & SS_CANTRCVMORE) {
-					soisdisconnected(so);
-					tcp_settimer(tp, TCPT_2MSL,
-					             current->t_tcp_fintimo);
+					soisdisconnected(t, so);
+					tcp_settimer(tp, TCPT_2MSL, t->t_tcp_fintimo);
 				}
 				tp->t_state = TCPS_FIN_WAIT_2;
 			}
@@ -730,7 +729,7 @@ close:
 		 */
 		case TCPS_CLOSING:
 			if (ourfinisacked) {
-				if (!tcp_timewait(tp)) {
+				if (!tcp_timewait(t, tp)) {
 					goto drop;
 				}
 			}
@@ -744,7 +743,7 @@ close:
 		 */
 		case TCPS_LAST_ACK:
 			if (ourfinisacked) {
-				tcp_close(tp);
+				tcp_close(t, tp);
 				goto drop;
 			}
 			break;
@@ -755,7 +754,7 @@ close:
 		 * it and restart the finack timer.
 		 */
 		case TCPS_TIME_WAIT:
-			tcp_settimer(tp, TCPT_2MSL, current->t_tcp_twtimo);
+			tcp_settimer(tp, TCPT_2MSL, t->t_tcp_twtimo);
 			goto dropafterack;
 		}
 	}
@@ -771,7 +770,7 @@ step6:
 	    tiwin > tp->snd_wnd) {
 		/* keep track of pure window updates */
 		if (ip->ip_len == 0 && tp->snd_wl2 == th->th_ack) {
-			counter64_inc(&tcpstat.tcps_rcvwinupd);
+			cg_counter64_inc(t, &tcpstat.tcps_rcvwinupd);
 		}
 		tp->snd_wnd = tiwin;
 		tp->snd_wl1 = th->th_seq;
@@ -798,15 +797,15 @@ step6:
 			}
 			tp->rcv_nxt += ip->ip_len;
 			flags = flags & BSD_TH_FIN;
-			counter64_inc(&tcpstat.tcps_rcvpack);
-			counter64_add(&tcpstat.tcps_rcvbyte, ip->ip_len);
+			cg_counter64_inc(t, &tcpstat.tcps_rcvpack);
+			cg_counter64_add(t, &tcpstat.tcps_rcvbyte, ip->ip_len);
 			if (ip->ip_len) {
 				datlen = ip->ip_len;
-				sowakeup2(so, POLLIN);
+				sowakeup3(t, so, POLLIN);
 			}
 		} else {
-			counter64_inc(&tcpstat.tcps_rcvoopack);
-			counter64_add(&tcpstat.tcps_rcvoobyte, ip->ip_len);
+			cg_counter64_inc(t, &tcpstat.tcps_rcvoopack);
+			cg_counter64_add(t, &tcpstat.tcps_rcvoobyte, ip->ip_len);
 			tp->t_flags |= TF_ACKNOW;
 		}
 	} else {
@@ -819,7 +818,7 @@ step6:
 	 */
 	if (flags & BSD_TH_FIN) {
 		if (TCPS_HAVERCVDFIN(tp->t_state) == 0) {
-			socantrcvmore(so);
+			socantrcvmore(t, so);
 			tp->t_flags |= TF_ACKNOW;
 			tp->rcv_nxt++;
 		}
@@ -848,14 +847,14 @@ step6:
 		 * standard timers.
 		 */
 		case TCPS_FIN_WAIT_2:
-			tcp_timewait(tp);
+			tcp_timewait(t, tp);
 			break;
 
 		/*
 		 * In TIME_WAIT state restart the 2 MSL time_wait timer.
 		 */
 		case TCPS_TIME_WAIT:
-			tcp_settimer(tp, TCPT_2MSL, current->t_tcp_twtimo);
+			tcp_settimer(tp, TCPT_2MSL, t->t_tcp_twtimo);
 			break;
 		}
 	}
@@ -863,7 +862,7 @@ step6:
 	 * Return any desired output.
 	 */
 	if (needoutput || (tp->t_flags & TF_ACKNOW)) {
-		tcp_output(tp);
+		tcp_output(t, tp);
 	}
 	goto unref;
 
@@ -876,7 +875,7 @@ dropafterack:
 		goto drop;
 	}
 	tp->t_flags |= TF_ACKNOW;
-	tcp_output(tp);
+	tcp_output(t, tp);
 	goto unref;
 
 dropwithreset:
@@ -890,21 +889,20 @@ dropwithreset:
 		goto drop;
 	}*/
 	if (flags & TH_ACK) {
-		tcp_respond(NULL, ip, th, 0, th->th_ack, TH_RST);
+		tcp_respond(t, NULL, ip, th, 0, th->th_ack, TH_RST);
 	} else {
 		if (flags & TH_SYN) {
 			ip->ip_len++;
 		}
-		tcp_respond(NULL, ip, th, th->th_seq + ip->ip_len, 0,
-		            TH_RST|TH_ACK);
+		tcp_respond(t, NULL, ip, th, th->th_seq + ip->ip_len, 0, TH_RST|TH_ACK);
 	}
 
 drop:
 	/* destroy temporarily created socket */
 	if (dropsocket) {
-		counter64_inc(&tcpstat.tcps_badsyn);
-		tcp_drop(tp, ECONNABORTED);
-		counter64_dec(&tcpstat.tcps_closed); /* socket was temporary */
+		cg_counter64_inc(t, &tcpstat.tcps_badsyn);
+		tcp_drop(t, tp, ECONNABORTED);
+		cg_counter64_dec(t, &tcpstat.tcps_closed); /* socket was temporary */
 	}
 
 unref:
@@ -913,10 +911,10 @@ unref:
 			tcp_trace(TA_INPUT, ostate, tp, &save_ip, &save_th, 0);
 		}
 		if (so->so_events && so->so_userfn != NULL) {
-			(*so->so_userfn)(so, so->so_events, NULL, dat, datlen);
+			(*so->so_userfn)(t, so, so->so_events, NULL, dat, datlen);
 		}
 		so->so_state &= ~SS_ISPROCESSING;
-		sofree(so);
+		sofree(t, so);
 		if (again) {
 			goto findpcb;
 		}
@@ -924,13 +922,8 @@ unref:
 }
 
 void
-tcp_dooptions(struct tcpcb *tp,
-              u_char *cp,
-              int cnt,
-              struct tcp_hdr *th,
-              int *ts_present,
-              uint32_t *ts_val,
-              uint32_t *ts_ecr)
+tcp_dooptions(struct cg_task *t, struct tcpcb *tp, u_char *cp, int cnt, struct tcp_hdr *th,
+		int *ts_present, uint32_t *ts_val, uint32_t *ts_ecr)
 {
 	u_short mss;
 	int opt, optlen;
@@ -959,7 +952,7 @@ tcp_dooptions(struct tcpcb *tp,
 			}
 			memcpy((char *)&mss, (char *)cp + 2, sizeof(mss));
 			NTOHS(mss);
-			tcp_mss(tp, mss); /* sets t_maxseg */
+			tcp_mss(t, tp, mss); /* sets t_maxseg */
 			break;
 
 		case TCPOPT_WINDOW:
@@ -989,7 +982,7 @@ tcp_dooptions(struct tcpcb *tp,
 			if (th->th_flags & TH_SYN) {
 				tp->t_flags |= TF_RCVD_TSTMP;
 				tp->ts_recent = *ts_val;
-				tp->ts_recent_age = current->t_tcp_now;
+				tp->ts_recent_age = t->t_tcp_now;
 			}
 			break;
 		}
@@ -1001,11 +994,11 @@ tcp_dooptions(struct tcpcb *tp,
  * and update averages and current timeout.
  */
 void
-tcp_xmit_timer(struct tcpcb *tp, short rtt)
+tcp_xmit_timer(struct cg_task *t, struct tcpcb *tp, short rtt)
 {
 	short delta;
 
-	counter64_inc(&tcpstat.tcps_rttupdated);
+	cg_counter64_inc(t, &tcpstat.tcps_rttupdated);
 	if (tp->t_srtt != 0) {
 		/*
 		 * srtt is stored as fixed point with 3 bits after the
@@ -1078,7 +1071,7 @@ tcp_xmit_timer(struct tcpcb *tp, short rtt)
  * parameters from pre-set or cached values in the routing entry.
  */
 int
-tcp_mss(struct tcpcb *tp, u_int offer)
+tcp_mss(struct cg_task *t, struct tcpcb *tp, u_int offer)
 {
 	int  mss;
 	u_long bufsize;
@@ -1086,7 +1079,7 @@ tcp_mss(struct tcpcb *tp, u_int offer)
 
 	so = tcpcbtoso(tp);
 
-	mss = current->t_mtu - (sizeof(struct ip) + sizeof(struct tcp_hdr));
+	mss = t->t_mtu - (sizeof(struct ip) + sizeof(struct tcp_hdr));
 	/*
 	 * The current mss, t_maxseg, is initialized to the default value.
 	 * If we compute a smaller value, reduce the current mss.

@@ -41,7 +41,7 @@ struct packet;
 
 void	 ip_drain(void);
 void	 ip_init(void);
-int	 ip_output(struct packet *, struct ip *);
-void	 ip_input(struct ip *ip, int, int);
+int	 ip_output(struct cg_task *, struct packet *, struct ip *);
+void	 ip_input(struct cg_task *, struct ip *ip, int, int);
 
 #endif

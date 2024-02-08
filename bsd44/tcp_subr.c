@@ -91,15 +91,15 @@ tcp_template(struct tcpcb *tp, struct ip *ip, struct tcp_hdr *th)
  * segment are as specified by the parameters.
  */
 void
-tcp_respond(struct tcpcb *tp, struct ip *ip_rcv, struct tcp_hdr *th_rcv,
-	tcp_seq ack, tcp_seq seq, int flags)
+tcp_respond(struct cg_task *t, struct tcpcb *tp, struct ip *ip_rcv, struct tcp_hdr *th_rcv,
+		tcp_seq ack, tcp_seq seq, int flags)
 {
 	int win;
 	struct ip *ip;
 	struct tcp_hdr *th;
 	struct packet pkt;
 
-	io_init_tx_packet(&pkt);
+	io_init_tx_packet(t, &pkt);
 	ip = (struct ip *)(pkt.pkt.buf + sizeof(struct ether_header));
 	th = (struct tcp_hdr *)(ip + 1);
 	tcp_template(tp, ip, th);
@@ -121,7 +121,7 @@ tcp_respond(struct tcpcb *tp, struct ip *ip_rcv, struct tcp_hdr *th_rcv,
 	}
 	ip->ip_len = sizeof(*ip) + sizeof(*th);
 	th->th_sum = tcp_cksum(ip, sizeof(*th));
-	ip_output(&pkt, ip);
+	ip_output(t, &pkt, ip);
 }
 
 /*
@@ -130,7 +130,7 @@ tcp_respond(struct tcpcb *tp, struct ip *ip_rcv, struct tcp_hdr *th_rcv,
  * protocol control block.
  */
 void
-tcp_attach(struct socket *so)
+tcp_attach(struct cg_task *t, struct socket *so)
 {
 	struct tcpcb *tp;
 
@@ -138,10 +138,10 @@ tcp_attach(struct socket *so)
 	memset(tp, 0, sizeof(*tp));
 	tp->t_maxseg = TCP_MSS;
 	tp->t_flags = 0;
-	if (current->t_tcp_do_wscale) {
+	if (t->t_tcp_do_wscale) {
 		tp->t_flags |= TF_REQ_SCALE;
 	}
-	if (current->t_tcp_do_timestamps) {
+	if (t->t_tcp_do_timestamps) {
 		tp->t_flags |= TF_REQ_TSTMP;
 	}
 	/*
@@ -150,7 +150,7 @@ tcp_attach(struct socket *so)
 	 * reasonable initial retransmit time.
 	 */
 	tp->t_srtt = TCPTV_SRTTBASE;
-	tp->t_rttvar = current->t_tcp_rttdflt * PR_SLOWHZ << 2;
+	tp->t_rttvar = t->t_tcp_rttdflt * PR_SLOWHZ << 2;
 	TCPT_RANGESET(tp->t_rxtcur, 
 	    ((TCPTV_SRTTBASE >> 2) + (TCPTV_SRTTDFLT << 2)) >> 1,
 	    TCPTV_MIN, TCPTV_REXMTMAX);
@@ -165,23 +165,23 @@ tcp_attach(struct socket *so)
  * then send a RST to peer.
  */
 struct tcpcb *
-tcp_drop(struct tcpcb *tp, int e)
+tcp_drop(struct cg_task *t, struct tcpcb *tp, int e)
 {
 	struct socket *so;
 
 	so = tcpcbtoso(tp);
 	if (TCPS_HAVERCVDSYN(tp->t_state)) {
 		tp->t_state = TCPS_CLOSED;
-		tcp_output(tp);
-		counter64_inc(&tcpstat.tcps_drops);
+		tcp_output(t, tp);
+		cg_counter64_inc(t, &tcpstat.tcps_drops);
 	} else {
-		counter64_inc(&tcpstat.tcps_conndrops);
+		cg_counter64_inc(t, &tcpstat.tcps_conndrops);
 	}
 	if (e == ETIMEDOUT && tp->t_softerror) {
 		e = tp->t_softerror;
 	}
 	so->so_error = e;
-	return tcp_close(tp);
+	return tcp_close(t, tp);
 }
 
 /*
@@ -191,17 +191,17 @@ tcp_drop(struct tcpcb *tp, int e)
  *	wake up any sleepers
  */
 struct tcpcb *
-tcp_close(struct tcpcb *tp)
+tcp_close(struct cg_task *t, struct tcpcb *tp)
 {
 	struct socket *so;
 
 	so = tcpcbtoso(tp);
 	tp->t_state = TCPS_CLOSED;
 	tcp_canceltimers(tp);
-	soisdisconnected(so);
+	soisdisconnected(t, so);
 	/* clobber input pcb cache if we're closing the cached connection */
-	in_pcbdetach(so);
-	counter64_inc(&tcpstat.tcps_closed);
+	in_pcbdetach(t, so);
+	cg_counter64_inc(t, &tcpstat.tcps_closed);
 	return NULL;
 }
 
@@ -211,7 +211,7 @@ tcp_close(struct tcpcb *tp)
  * (for now, won't do anything until can select for soft error).
  */
 void
-tcp_notify(struct socket *so, int error)
+tcp_notify(struct cg_task *t, struct socket *so, int error)
 {
 	struct tcpcb *tp;
 
@@ -234,17 +234,14 @@ tcp_notify(struct socket *so, int error)
 	} else {
 		tp->t_softerror = error;
 	}
-	sowakeup(so, POLLERR, NULL, NULL, 0);
+	sowakeup(t, so, POLLERR, NULL, NULL, 0);
 }
 
 void
-tcp_ctlinput(int err,
-             int quench,
-             be32_t dst,
-             struct ip *ip)
+tcp_ctlinput(struct cg_task *t, int err, int quench, be32_t dst, struct ip *ip)
 {
 	struct tcp_hdr *th;
-	void (*notify)(struct socket *, int);
+	void (*notify)(struct cg_task *, struct socket *, int);
 
 	notify = tcp_notify;
 	if (quench) {
@@ -253,8 +250,8 @@ tcp_ctlinput(int err,
 		return;
 	}
 	th = (struct tcp_hdr *)((u_char *)ip + (ip->ip_hl << 2));
-	in_pcbnotify(IPPROTO_TCP, ip->ip_src.s_addr, th->th_sport,
-		dst, th->th_dport, err, notify);
+	in_pcbnotify(t, IPPROTO_TCP, ip->ip_src.s_addr, th->th_sport,
+			dst, th->th_dport, err, notify);
 }
 
 /*
@@ -262,7 +259,7 @@ tcp_ctlinput(int err,
  * to one segment.  We will gradually open it again as we proceed.
  */
 void
-tcp_quench(struct socket *so, int e)
+tcp_quench(struct cg_task *t, struct socket *so, int e)
 {
 	struct tcpcb *tp;
 

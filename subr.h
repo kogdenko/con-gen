@@ -140,16 +140,16 @@ struct rte_mbuf;
 #endif
 
 #if 1
-#define counter64_add(c, a) \
+#define cg_counter64_add(t, c, a) \
 do { \
 	assert(*(c)); \
-	current->t_counters[*(c)] += (a); \
+	t->t_counters[*(c)] += (a); \
 } while (0)
 #else // 1
-#define counter64_add(c, a)
+#define cg_counter64_add(t, c, a)
 #endif // 1
-#define counter64_inc(c) counter64_add(c, 1)
-#define counter64_dec(c) counter64_add(c, -1)
+#define cg_counter64_inc(t, c) cg_counter64_add(t, c, 1)
+#define cg_counter64_dec(t, c) cg_counter64_add(t, c, -1)
 
 #define panic(errnum, fmt, ...) \
 	panic3(__FILE__, __LINE__, errnum, fmt, ##__VA_ARGS__)
@@ -157,13 +157,13 @@ do { \
 #define dbg(fmt, ...) \
 	dbg5(__FILE__, __LINE__, __func__, 0, fmt, ##__VA_ARGS__)
 
-#define dbg_rl(period, fmt, ...) \
+#define dbg_rl(t, period, fmt, ...) \
 do { \
 	static uint64_t UNIQV(last); \
 	static uint64_t UNIQV(now); \
 	static int UNIQV(cnt); \
  \
-	UNIQV(now) = current->t_time; \
+	UNIQV(now) = (t)->t_time; \
 	if (UNIQV(now) - UNIQV(last) >= (period) * NANOSECONDS_SECOND) { \
 		UNIQV(last) = UNIQV(now); \
 		dbg5(__FILE__, __LINE__, __func__, UNIQV(cnt), \
@@ -343,14 +343,14 @@ struct cg_task {
 };
 
 struct transport_ops {
-	void (*tr_io_process_op)(void *, int);
+	void (*tr_io_process_op)(struct cg_task *, void *, int);
 	void (*tr_io_init_op)(void);
-	bool (*tr_io_is_tx_throttled_op)(void);
-	void (*tr_io_init_tx_packet_op)(struct packet *);
+	bool (*tr_io_is_tx_throttled_op)(struct cg_task *);
+	void (*tr_io_init_tx_packet_op)(struct cg_task *, struct packet *);
 	void (*tr_io_deinit_tx_packet_op)(struct packet *);
-	bool (*tr_io_tx_packet_op)(struct packet *);
+	bool (*tr_io_tx_packet_op)(struct cg_task *, struct packet *);
 	void (*tr_io_tx_op)(void);
-	int (*tr_io_rx_op)(int);
+	int (*tr_io_rx_op)(struct cg_task *, int);
 };
 
 extern uint8_t freebsd_rss_key[RSS_KEY_SIZE];
@@ -383,26 +383,25 @@ void spinlock_lock(struct spinlock *);
 int spinlock_trylock(struct spinlock *);
 void spinlock_unlock(struct spinlock *);
 
+void set_transport(int transport);
 
-void set_transport(int transport, int udp);
-
-void add_pending_packet(struct packet *);
+void add_pending_packet(struct cg_task *, struct packet *);
 
 void io_init(void);
-bool io_is_tx_throttled(void);
-void io_init_tx_packet(struct packet *);
+bool io_is_tx_throttled(struct cg_task *);
+void io_init_tx_packet(struct cg_task *, struct packet *);
 void io_deinit_tx_packet(struct packet *);
-int io_tx_packet(struct packet *);
+int io_tx_packet(struct cg_task *, struct packet *);
 void io_tx(void);
-int io_rx(int);
-void io_process(void *pkt, int pkt_len);
+int io_rx(struct cg_task *, int);
+void io_process(struct cg_task *, void *pkt, int pkt_len);
 
 int multiplexer_add(struct cg_task *, int);
-void multiplexer_pollout(int);
-int multiplexer_get_events(int);
+void multiplexer_pollout(struct cg_task *, int);
+int multiplexer_get_events(struct cg_task *, int);
 
-int ip_connect(struct ip_socket *, uint32_t *);
-void ip_disconnect(struct ip_socket *);
+int ip_connect(struct cg_task *, struct ip_socket *, uint32_t *);
+void ip_disconnect(struct cg_task *, struct ip_socket *);
 
 void ifaddr_init(struct if_addr *);
 uint16_t ifaddr_alloc_ephemeral_port(struct if_addr *);
@@ -423,7 +422,6 @@ extern counter64_t if_opackets;
 extern counter64_t if_imcasts;
 
 extern int g_cg_n_tasks;
-extern __thread struct cg_task *current;
 extern struct cg_task g_cg_tasks[CG_N_TASKS_MAX];
 
 

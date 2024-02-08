@@ -35,6 +35,7 @@
  * Ethernet address resolution protocol.
  */
 
+#include "../subr.h"
 #include "socket.h"
 #include "ip.h"
 #include "ip_var.h"
@@ -63,7 +64,7 @@ u_char	etherbroadcastaddr[6] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
  * but formerly didn't normally send requests.
  */
 void
-arp_input(struct arphdr *ar, int len)
+arp_input(struct cg_task *t, struct arphdr *ar, int len)
 {
 	uint32_t ia;
 	be32_t ian;
@@ -95,8 +96,7 @@ in:
 		myaddr = itaddr;
 		goto reply; 	// Reply to all requetsts
 	}
-	for (ia = current->t_ip_laddr_min;
-	     ia <= current->t_ip_laddr_max; ++ia) {
+	for (ia = t->t_ip_laddr_min; ia <= t->t_ip_laddr_max; ++ia) {
 		ian = htonl(ia);
 		if ((itaddr.s_addr == ian) || (isaddr.s_addr == ian)) {
 			myaddr.s_addr = ian;
@@ -106,7 +106,7 @@ in:
 	if (myaddr.s_addr == 0) {
 		goto out;
 	}
-	if (!memcmp(ea->arp_sha, current->t_eth_laddr, sizeof(ea->arp_sha))) {
+	if (!memcmp(ea->arp_sha, t->t_eth_laddr, sizeof(ea->arp_sha))) {
 		goto out;	/* it's from me, ignore it. */
 	}
 	if (!memcmp(ea->arp_sha, etherbroadcastaddr, sizeof(ea->arp_sha))) {
@@ -130,7 +130,7 @@ out:
 	if (itaddr.s_addr == myaddr.s_addr) {
 		/* I am the target */
 		memcpy(ea->arp_tha, ea->arp_sha, sizeof(ea->arp_sha));
-		memcpy(ea->arp_sha, current->t_eth_laddr, sizeof(ea->arp_sha));
+		memcpy(ea->arp_sha, t->t_eth_laddr, sizeof(ea->arp_sha));
 	} else {
 		goto out;
 	}
@@ -138,27 +138,27 @@ out:
 	memcpy(ea->arp_spa, &itaddr, sizeof(ea->arp_spa));
 	ea->arp_op = htons(ARPOP_REPLY);
 	ea->arp_pro = htons(ETHERTYPE_IP); /* let's be sure! */
-	io_init_tx_packet(&pkt);
+	io_init_tx_packet(t, &pkt);
 	pkt.pkt.len = sizeof(*eh) +  sizeof(*ea);
 	eh = (struct ether_header *)pkt.pkt.buf;
 	memcpy(eh + 1, ea, sizeof(*ea));
-	memcpy(eh->ether_shost, current->t_eth_laddr, sizeof(eh->ether_shost));
+	memcpy(eh->ether_shost, t->t_eth_laddr, sizeof(eh->ether_shost));
 	memcpy(eh->ether_dhost, ea->arp_tha, sizeof(eh->ether_dhost));
 	eh->ether_type = htons(ETHERTYPE_ARP);
-	io_tx_packet(&pkt);
+	io_tx_packet(t, &pkt);
 }
 
 /* Process a received Ethernet packet; */
 void
-bsd_eth_in(void *data, int len)
+bsd_eth_in(struct cg_task *t, void *data, int len)
 {
 	int eth_flags;
 	struct ether_header *eh;
 
 	eh = data;
 	eth_flags = 0;
-	counter64_add(&if_ibytes, sizeof(*eh) + len);
-	counter64_inc(&if_ipackets);
+	cg_counter64_add(t, &if_ibytes, sizeof(*eh) + len);
+	cg_counter64_inc(t, &if_ipackets);
 	len -= sizeof(*eh);
 	if (memcmp(etherbroadcastaddr, eh->ether_dhost,
 	           sizeof(etherbroadcastaddr)) == 0) {
@@ -167,15 +167,15 @@ bsd_eth_in(void *data, int len)
 		eth_flags |= M_MCAST;
 	}
 	if (eth_flags & (M_BCAST|M_MCAST)) {
-		counter64_inc(&if_imcasts);
+		cg_counter64_inc(t, &if_imcasts);
 	}
 	NTOHS(eh->ether_type);
 	switch (eh->ether_type) {
 	case ETHERTYPE_IP:
-		ip_input((struct ip *)(eh + 1), len, eth_flags);
+		ip_input(t, (struct ip *)(eh + 1), len, eth_flags);
 		break;
 	case ETHERTYPE_ARP:
-		arp_input((struct arphdr *)(eh + 1), len);
+		arp_input(t, (struct arphdr *)(eh + 1), len);
 		break;
 	default:
 		break;
@@ -208,6 +208,6 @@ ether_scanf(u_char *ap, const char *s)
 	int rc;
 
 	rc = sscanf(s, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
-	            ap + 0, ap + 1, ap + 2, ap + 3, ap + 4, ap + 5);
+			ap + 0, ap + 1, ap + 2, ap + 3, ap + 4, ap + 5);
 	return rc == 6 ? 0 : -EINVAL;
 }

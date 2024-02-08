@@ -15,12 +15,12 @@ struct timer {
 	uintptr_t tm_data;
 };
 
-typedef void (*timer_f)(struct timer *);
+typedef void (*timer_f)(struct cg_task *t, struct timer *);
 
-int init_timers(void);
+int cg_init_timers(struct cg_task *);
 void deinit_timers(void);
 
-void check_timers(void);
+void cg_check_timers(struct cg_task *t);
 void timer_init(struct timer *);
 int timer_is_running(struct timer *);
 void timer_set(struct timer *, uint64_t, timer_f);

@@ -36,14 +36,14 @@
 
 #include "tcp_var.h"
 
-int in_pcbbind(struct socket *, be16_t);
-int in_pcbconnect(struct socket *, uint32_t *);
-int in_pcbattach(struct socket *, uint32_t *);
-int in_pcbdetach(struct socket *);
+int in_pcbbind(struct cg_task *, struct socket *, be16_t);
+int in_pcbconnect(struct cg_task *, struct socket *, uint32_t *);
+int in_pcbattach(struct cg_task *, struct socket *, uint32_t *);
+int in_pcbdetach(struct cg_task *, struct socket *);
 void in_pcbdisconnect(struct socket *);
-struct socket *in_pcblookup(int, be32_t, be16_t, be32_t, be16_t);
-void in_pcbnotify(int type, be32_t, be16_t, be32_t, be16_t, int err, 
-                  void (*)(struct socket *, int));
+struct socket *in_pcblookup(struct cg_task *, int, be32_t, be16_t, be32_t, be16_t);
+void in_pcbnotify(struct cg_task *, int type, be32_t, be16_t, be32_t, be16_t,
+		int err, void (*)(struct cg_task *, struct socket *, int));
 void in_pcbforeach(void (*)(struct socket *));
 
 #endif /* BSD44_IN_PCB_H */

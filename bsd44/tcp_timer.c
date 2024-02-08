@@ -45,7 +45,7 @@ int tcp_maxidle = TCPTV_KEEPCNT * TCPTV_KEEPINTVL;
  * Fast timeout routine for processing delayed acks
  */
 void
-tcp_DELACK_timo(struct timer *timer)
+tcp_delack_timo(struct cg_task *t, struct timer *timer)
 {
 	struct tcpcb *tp;
 
@@ -53,8 +53,8 @@ tcp_DELACK_timo(struct timer *timer)
 	if (tp->t_flags & TF_DELACK) {
 		tp->t_flags &= ~TF_DELACK;
 		tp->t_flags |= TF_ACKNOW;
-		counter64_inc(&tcpstat.tcps_delack);
-		tcp_output(tp);
+		cg_counter64_inc(t, &tcpstat.tcps_delack);
+		tcp_output(t, tp);
 	}
 }
 
@@ -62,7 +62,7 @@ void
 tcp_setdelacktimer(struct tcpcb *tp)
 {
 	tp->t_flags |= TF_DELACK;
-	timer_set(&tp->t_timer_delack, 200 * 1000 * 1000, &tcp_DELACK_timo);
+	timer_set(&tp->t_timer_delack, 200 * 1000 * 1000, &tcp_delack_timo);
 }
 
 /*
@@ -88,16 +88,16 @@ int tcp_backoff[TCP_MAXRXTSHIFT + 1] =
  * Force a byte to be output, if possible.
  */
 void
-tcp_PERSIST_timo(struct timer *timer)
+tcp_persist_timo(struct cg_task *t, struct timer *timer)
 {
 	struct tcpcb *tp;
 
 	tp = cg_container_of(timer, struct tcpcb, t_timer[TCPT_PERSIST]);
 
-	counter64_inc(&tcpstat.tcps_persisttimeo);
+	cg_counter64_inc(t, &tcpstat.tcps_persisttimeo);
 	tcp_setpersist(tp);
 	tp->t_force = 1;
-	tcp_output(tp);
+	tcp_output(t, tp);
 }
 
 /*
@@ -106,7 +106,7 @@ tcp_PERSIST_timo(struct timer *timer)
  * to a longer retransmit interval and retransmit one segment.
  */
 void
-tcp_REXMT_timo(struct timer *timer)
+tcp_rexmit_timo(struct cg_task *t, struct timer *timer)
 {
 	u_int win, rexmt;
 	struct tcpcb *tp;
@@ -115,12 +115,11 @@ tcp_REXMT_timo(struct timer *timer)
 
 	if (++tp->t_rxtshift > TCP_MAXRXTSHIFT) {
 		tp->t_rxtshift = TCP_MAXRXTSHIFT;
-		counter64_inc(&tcpstat.tcps_timeoutdrop);
-		tp = tcp_drop(tp, tp->t_softerror ?
-			      tp->t_softerror : ETIMEDOUT);
+		cg_counter64_inc(t, &tcpstat.tcps_timeoutdrop);
+		tp = tcp_drop(t, tp, tp->t_softerror ? tp->t_softerror : ETIMEDOUT);
 		return;
 	}
-	counter64_inc(&tcpstat.tcps_rexmttimeo);
+	cg_counter64_inc(t, &tcpstat.tcps_rexmttimeo);
 	rexmt = TCP_REXMTVAL(tp) * tcp_backoff[tp->t_rxtshift];
 	TCPT_RANGESET(tp->t_rxtcur, rexmt, TCPTV_MIN, TCPTV_REXMTMAX);
 	tcp_setslowtimer(tp, TCPT_REXMT, tp->t_rxtcur);
@@ -172,7 +171,7 @@ tcp_REXMT_timo(struct timer *timer)
 	tp->snd_cwnd = tp->t_maxseg;
 	tp->snd_ssthresh = win * tp->t_maxseg;
 	tp->t_dupacks = 0;
-	tcp_output(tp);
+	tcp_output(t, tp);
 }
 
 /*
@@ -180,14 +179,14 @@ tcp_REXMT_timo(struct timer *timer)
  * or drop connection if idle for too long.
  */
 void
-tcp_KEEP_timo(struct timer *timer)
+tcp_keepalive_timo(struct cg_task *t, struct timer *timer)
 {
 	struct socket *so;
 	struct tcpcb *tp;
 
 	tp = cg_container_of(timer, struct tcpcb, t_timer[TCPT_KEEP]);
 
-	counter64_inc(&tcpstat.tcps_keeptimeo);
+	cg_counter64_inc(t, &tcpstat.tcps_keeptimeo);
 	if (tp->t_state < TCPS_ESTABLISHED) {
 		goto dropit;
 	}
@@ -195,7 +194,7 @@ tcp_KEEP_timo(struct timer *timer)
 	if (so->so_options & SO_OPTION(SO_KEEPALIVE) &&
 	    tp->t_state <= TCPS_CLOSE_WAIT) {
 		uint16_t idle;
-		idle = current->t_tcp_now - tp->t_idle;
+		idle = t->t_tcp_now - tp->t_idle;
 		if (idle >= TCPTV_KEEP_IDLE + tcp_maxidle) {
 			goto dropit;
 		}
@@ -211,16 +210,16 @@ tcp_KEEP_timo(struct timer *timer)
 		 * by the protocol spec, this requires the
 		 * correspondent TCP to respond.
 		 */
-		counter64_inc(&tcpstat.tcps_keepprobe);
-		tcp_respond(tp, NULL, NULL, tp->rcv_nxt, tp->snd_una - 1, 0);
+		cg_counter64_inc(t, &tcpstat.tcps_keepprobe);
+		tcp_respond(t, tp, NULL, NULL, tp->rcv_nxt, tp->snd_una - 1, 0);
 		tcp_setslowtimer(tp, TCPT_KEEP, TCPTV_KEEPINTVL);
 	} else {
 		tcp_setslowtimer(tp, TCPT_KEEP, TCPTV_KEEP_IDLE);
 	}
 	return;
 dropit:
-	counter64_inc(&tcpstat.tcps_keepdrops);
-	tp = tcp_drop(tp, ETIMEDOUT);
+	cg_counter64_inc(t, &tcpstat.tcps_keepdrops);
+	tp = tcp_drop(t, tp, ETIMEDOUT);
 }
 
 /*
@@ -228,10 +227,10 @@ dropit:
  * Delete connection control block.
  */
 void
-tcp_2MSL_timo(struct timer *timer)
+tcp_2msl_timo(struct cg_task *t, struct timer *timer)
 {
 	struct tcpcb *tp;
 
 	tp = cg_container_of(timer, struct tcpcb, t_timer[TCPT_2MSL]);
-	tcp_close(tp);
+	tcp_close(t, tp);
 }

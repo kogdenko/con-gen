@@ -3,16 +3,16 @@
 #include <net/netmap_user.h>
 
 static struct netmap_ring *
-not_empty_txr(struct netmap_slot **pslot)
+not_empty_txr(struct cg_task *t, struct netmap_slot **pslot)
 {
 	int i;
 	struct netmap_ring *txr;
 
-	if (multiplexer_get_events(0) & POLLOUT) {
+	if (multiplexer_get_events(t, 0) & POLLOUT) {
 		return NULL;
 	}
-	for (i = current->t_nmd->first_tx_ring; i <= current->t_nmd->last_tx_ring; ++i) {
-		txr = NETMAP_TXRING(current->t_nmd->nifp, i);
+	for (i = t->t_nmd->first_tx_ring; i <= t->t_nmd->last_tx_ring; ++i) {
+		txr = NETMAP_TXRING(t->t_nmd->nifp, i);
 		if (!nm_ring_empty(txr)) {
 			if (pslot != NULL) {
 				*pslot = txr->slot + txr->cur;
@@ -21,7 +21,7 @@ not_empty_txr(struct netmap_slot **pslot)
 			return txr;	
 		}
 	}
-	multiplexer_pollout(0);
+	multiplexer_pollout(t, 0);
 	return NULL;
 }
 
@@ -60,16 +60,16 @@ netmap_init(void)
 	}
 }
 
-bool
-netmap_is_tx_throttled(void)
+static bool
+netmap_is_tx_throttled(struct cg_task *t)
 {
-	return not_empty_txr(NULL) == NULL;
+	return not_empty_txr(t, NULL) == NULL;
 }
 
-void
-netmap_init_tx_packet(struct packet *pkt)
+static void
+netmap_init_tx_packet(struct cg_task *t, struct packet *pkt)
 {
-	pkt->pkt.txr = not_empty_txr(&pkt->pkt.slot);
+	pkt->pkt.txr = not_empty_txr(t, &pkt->pkt.slot);
 	if (pkt->pkt.txr == NULL) {
 		pkt->pkt.buf = pkt->pkt_body;
 	} else {
@@ -78,16 +78,16 @@ netmap_init_tx_packet(struct packet *pkt)
 	pkt->pkt.len = 0;
 }
 
-bool
-netmap_tx_packet(struct packet *pkt)
+static bool
+netmap_tx_packet(struct cg_task *t, struct packet *pkt)
 {
 	u_char *buf;
 	struct netmap_ring *txr;
 
 	if (pkt->pkt.txr == NULL) {
-		pkt->pkt.txr = not_empty_txr(&pkt->pkt.slot);
+		pkt->pkt.txr = not_empty_txr(t, &pkt->pkt.slot);
 		if (pkt->pkt.txr == NULL) {
-			add_pending_packet(pkt);
+			add_pending_packet(t, pkt);
 			return false;
 		}
 		buf = (u_char *)NETMAP_BUF(pkt->pkt.txr, pkt->pkt.slot->buf_idx);
@@ -101,21 +101,21 @@ netmap_tx_packet(struct packet *pkt)
 	return true;
 }
 
-int
-netmap_rx(int queue_id)
+static int
+netmap_rx(struct cg_task *t, int queue_id)
 {
 	int i, j, n, accum;
 	struct netmap_slot *slot;
 	struct netmap_ring *rxr;
 
 	accum = 0;
-	for (i = current->t_nmd->first_rx_ring; i <= current->t_nmd->last_rx_ring; ++i) {
-		rxr = NETMAP_RXRING(current->t_nmd->nifp, i);
+	for (i = t->t_nmd->first_rx_ring; i <= t->t_nmd->last_rx_ring; ++i) {
+		rxr = NETMAP_RXRING(t->t_nmd->nifp, i);
 		n = nm_ring_space(rxr);
 		for (j = 0; j < n; ++j) {
 			DEV_PREFETCH(rxr);
 			slot = rxr->slot + rxr->cur;
-			io_process(NETMAP_BUF(rxr, slot->buf_idx) , slot->len);
+			io_process(t, NETMAP_BUF(rxr, slot->buf_idx) , slot->len);
 			rxr->head = rxr->cur = nm_ring_next(rxr, rxr->cur);
 		}
 		accum += n;

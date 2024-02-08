@@ -45,7 +45,7 @@
 // Start keep-alive timer, and seed output sequence space.
 // Send initial segment on connection.
 int
-tcp_connect(struct socket *so)
+tcp_connect(struct cg_task *t, struct socket *so)
 {
 	struct tcpcb *tp;
 	uint32_t h;
@@ -54,7 +54,7 @@ tcp_connect(struct socket *so)
 	tp = sototcpcb(so);
 	ostate = tp->t_state;
 
-	rc = in_pcbconnect(so, &h);
+	rc = in_pcbconnect(t, so, &h);
 	if (rc) {
 		goto out;
 	}
@@ -64,11 +64,11 @@ tcp_connect(struct socket *so)
 		tp->request_r_scale++;
 	}
 	soisconnecting(so);
-	counter64_inc(&tcpstat.tcps_connattempt);
+	cg_counter64_inc(t, &tcpstat.tcps_connattempt);
 	tp->t_state = TCPS_SYN_SENT;
 	tcp_setslowtimer(tp, TCPT_KEEP, TCPTV_KEEP_INIT);
-	tcp_sendseqinit(tp, h);
-	tcp_output(tp);
+	tcp_sendseqinit(t, tp, h);
+	tcp_output(t, tp);
 out:
 	if ((so->so_options & SO_OPTION(SO_DEBUG))) {
 		tcp_trace(TA_USER, ostate, tp, NULL, NULL, PRU_CONNECT);
@@ -86,7 +86,7 @@ out:
  * when peer sends FIN and acks ours.
  */
 int
-tcp_disconnect(struct socket *so)
+tcp_disconnect(struct cg_task *t, struct socket *so)
 {
 	struct tcpcb *tp;
 	int ostate;
@@ -94,15 +94,15 @@ tcp_disconnect(struct socket *so)
 	tp = sototcpcb(so);
 	ostate = tp->t_state;
 	if (tp->t_state < TCPS_ESTABLISHED) {
-		tp = tcp_close(tp);
+		tp = tcp_close(t, tp);
 	} else if ((so->so_options & SO_OPTION(SO_LINGER)) &&
 	           so->so_linger == 0) {
-		tp = tcp_drop(tp, 0);
+		tp = tcp_drop(t, tp, 0);
 	} else {
-		soisdisconnecting(so);
-		tp = tcp_usrclosed(tp);
+		soisdisconnecting(t, so);
+		tp = tcp_usrclosed(t, tp);
 		if (tp) {
-			tcp_output(tp);
+			tcp_output(t, tp);
 		}
 	}
 	if (tp != NULL && (so->so_options & SO_OPTION(SO_DEBUG))) {
@@ -159,7 +159,7 @@ tcp_accept(struct socket *so)
  * Possibly send more data.
  */
 int
-tcp_send(struct socket *so, const void *dat, int datalen)
+tcp_send(struct cg_task *t, struct socket *so, const void *dat, int datalen)
 {
 	int rc, ostate;
 	struct tcpcb *tp;
@@ -167,9 +167,9 @@ tcp_send(struct socket *so, const void *dat, int datalen)
 	tp = sototcpcb(so);
 	ostate = tp->t_state;
 
-	rc = sbappend(&so->so_snd, dat, datalen);
+	rc = sbappend(t, &so->so_snd, dat, datalen);
 	if (rc > 0) {
-		tcp_output(tp);
+		tcp_output(t, tp);
 	}
 	if ((so->so_options & SO_OPTION(SO_DEBUG))) {
 		tcp_trace(TA_USER, ostate, tp, NULL, NULL, PRU_SEND);
@@ -182,7 +182,7 @@ tcp_send(struct socket *so, const void *dat, int datalen)
  * Mark the connection as being incapable of further output.
  */
 void
-tcp_shutdown(struct socket *so)
+tcp_shutdown(struct cg_task *t, struct socket *so)
 {
 	int ostate;
 	struct tcpcb *tp;
@@ -190,10 +190,10 @@ tcp_shutdown(struct socket *so)
 	tp = sototcpcb(so);
 	ostate = tp->t_state;
 
-	socantsendmore(so);
-	tp = tcp_usrclosed(tp);
+	socantsendmore(t, so);
+	tp = tcp_usrclosed(t, tp);
 	if (tp) {
-		tcp_output(tp);
+		tcp_output(t, tp);
 	}
 
 	if ((so->so_options & SO_OPTION(SO_DEBUG))) {
@@ -202,11 +202,11 @@ tcp_shutdown(struct socket *so)
 }
 
 void
-tcp_abort(struct socket *so)
+tcp_abort(struct cg_task *t, struct socket *so)
 {
 	struct tcpcb *tp;
 	tp = sototcpcb(so);
-	tcp_drop(tp, ECONNABORTED);
+	tcp_drop(t, tp, ECONNABORTED);
 }
 
 int
@@ -282,7 +282,7 @@ tcp_ctloutput(int op, struct socket *so, int level, int optname,
  * We can let the user exit from the close as soon as the FIN is acked.
  */
 struct tcpcb *
-tcp_usrclosed(struct tcpcb *tp)
+tcp_usrclosed(struct cg_task *t, struct tcpcb *tp)
 {
 	struct socket *so;
 
@@ -291,7 +291,7 @@ tcp_usrclosed(struct tcpcb *tp)
 	case TCPS_LISTEN:
 	case TCPS_SYN_SENT:
 		tp->t_state = TCPS_CLOSED;
-		tp = tcp_close(tp);
+		tp = tcp_close(t, tp);
 		break;
 
 	case TCPS_SYN_RECEIVED:
@@ -305,7 +305,7 @@ tcp_usrclosed(struct tcpcb *tp)
 	}
 	if (tp && tp->t_state >= TCPS_FIN_WAIT_2) {
 		so = tcpcbtoso(tp);
-		soisdisconnected(so);
+		soisdisconnected(t, so);
 	}
 	return (tp);
 }
@@ -317,13 +317,13 @@ tcp_rcvseqinit(struct tcpcb *tp, uint32_t irs)
 }
 
 void
-tcp_sendseqinit(struct tcpcb *tp, uint32_t h)
+tcp_sendseqinit(struct cg_task *t, struct tcpcb *tp, uint32_t h)
 {
 	uint32_t iss;
 
 	/* Must not overlap in 2 minutes (MSL)
 	 * Increment 1 seq at 16 ns (like in Linux) */
-	iss = h + (uint32_t)(current->t_time >> 6);
+	iss = h + (uint32_t)(t->t_time >> 6);
 	tp->snd_una = tp->snd_nxt = tp->snd_max = tp->snd_wl2 = iss;
 }
 
@@ -347,16 +347,16 @@ tcp_settimer(struct tcpcb *tp, int timer, uint64_t timo)
 	fn = NULL;
 	switch (timer) {
 	case TCPT_REXMT:
-		fn = tcp_REXMT_timo;
+		fn = tcp_rexmit_timo;
 		break;
 	case TCPT_PERSIST:
-		fn = tcp_PERSIST_timo;
+		fn = tcp_persist_timo;
 		break;
 	case TCPT_KEEP:
-		fn = tcp_KEEP_timo;
+		fn = tcp_keepalive_timo;
 		break;
 	case TCPT_2MSL:
-		fn = tcp_2MSL_timo;
+		fn = tcp_2msl_timo;
 		break;
 	default:
 		panic(0, "unknown timer %d", timer);

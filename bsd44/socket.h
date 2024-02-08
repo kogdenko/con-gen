@@ -80,7 +80,8 @@ struct socket {
 
 	struct sockbuf so_snd;
 	int so_rcv_hiwat;
-	void (*so_userfn)(struct socket *, short, struct sockaddr_in *, void *, int);
+	void (*so_userfn)(struct cg_task *, struct socket *, short, struct sockaddr_in *,
+			void *, int);
 	uint64_t so_user;
 	struct dlist so_txlist;
 	struct tcpcb inp_ppcb;
@@ -138,45 +139,55 @@ int soreadable(struct socket *so);
 /* can we write something to so? */
 int sowriteable(struct socket *so);
 
-struct	socket *sonewconn(struct socket *head);
+struct	socket *sonewconn(struct cg_task *, struct socket *head);
 
 //int getsock(int fdes, struct file **fpp);
 int soconnect(struct socket *so, const struct sockaddr_in *);
 void soaccept(struct socket *so);
 
 int sodisconnect(struct socket *so);
-int sofree2(struct socket *, const char *);
-#define sofree(so) sofree2(so, __func__)
+int sofree2(struct cg_task *, struct socket *, const char *);
+#define sofree(t, so) sofree2(t, so, __func__)
 void soqremque(struct socket *so);
-void sbrelease(struct sockbuf *sb);
-void sorflush(struct socket *so);
+void sbrelease(struct cg_task *, struct sockbuf *sb);
+void sorflush(struct cg_task *, struct socket *so);
 void soisconnecting(struct socket *so);
-void socantsendmore(struct socket *so);
-int sbappend(struct sockbuf *, const u_char *, int);
-void soisdisconnecting(struct socket *so);
-void soisdisconnected(struct socket *so);
+void socantsendmore(struct cg_task *, struct socket *so);
+int sbappend(struct cg_task *, struct sockbuf *, const u_char *, int);
+void soisdisconnecting(struct cg_task *, struct socket *so);
+void soisdisconnected(struct cg_task *, struct socket *so);
 void soqinsque(struct socket *head, struct socket *so, int q);
-void sowakeup(struct socket *, short, struct sockaddr_in *, void *, int);
-#define sowakeup2(so, events) sowakeup(so, events, NULL, NULL, 0)
+void sowakeup(struct cg_task *, struct socket *, short, struct sockaddr_in *, void *, int);
+#define sowakeup3(t, so, events) sowakeup(t, so, events, NULL, NULL, 0)
 void sbinit(struct sockbuf *sb, u_long);
 void sbreserve(struct sockbuf *sb, u_long);
-void sbdrop(struct sockbuf *sb, int len);
+void sbdrop(struct cg_task *, struct sockbuf *sb, int len);
 void sbcopy(struct sockbuf *, int, int, u_char *);
-void soabort(struct socket *so);
-int sosend(struct socket *, const void *, int, const struct sockaddr_in *, int);
-void sbdroprecord(struct sockbuf *sb);
-void socantrcvmore(struct socket *so);
+void soabort(struct cg_task *t, struct socket *so);
+int sosend(struct cg_task *, struct socket *, const void *, int,
+		const struct sockaddr_in *, int);
+void sbdroprecord(struct cg_task *, struct sockbuf *sb);
+void socantrcvmore(struct cg_task *, struct socket *so);
 int sbappendaddr(struct sockbuf *, struct sockaddr *, const void *, int);
-void soisconnected(struct socket *so);
+void soisconnected(struct cg_task *, struct socket *so);
 void somodopt(struct socket *, int, int);
 
-int bsd_socket(int, struct socket **);
-int bsd_connect(struct socket *);
-int bsd_sendto(struct socket *, const void *, int, int,
+int bsd_socket(struct cg_task *, int, struct socket **);
+int bsd_connect(struct cg_task *, struct socket *);
+int bsd_sendto(struct cg_task *, struct socket *, const void *, int, int,
 	const struct sockaddr_in *);
-int bsd_bind(struct socket *so, be16_t port);
+int bsd_bind(struct cg_task *, struct socket *so, be16_t port);
 int bsd_listen(struct socket *so);
 int bsd_accept(struct socket *, struct socket **);
-int bsd_close(struct socket *);
+int bsd_close(struct cg_task *, struct socket *);
+
+void bsd_flush(struct cg_task *);
+void bsd_server_listen(struct cg_task *, int);
+void bsd_client_connect(struct cg_task *, int proto);
+void bsd_eth_in(struct cg_task *, void *, int);
+void bsd_get_so_info(void *, struct socket_info *);
+int bsd_shutdown(struct cg_task *t, struct socket *so, int how);
+int bsd_setsockopt(struct socket *, int, int, void *, int);
+int bsd_getsockopt(struct socket *, int, int, void *, int *);
 
 #endif /* BSD44_SOCKET_H_ */

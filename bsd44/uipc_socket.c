@@ -37,18 +37,18 @@
 #include "../list.h"
 
 static struct socket *
-somalloc(void)
+somalloc(struct cg_task *t)
 {
 	struct socket *so;
 
-	if (dlist_is_empty(&current->t_so_pool)) {
+	if (dlist_is_empty(&t->t_so_pool)) {
 		so = malloc(sizeof(*so));
 		//dbg("newso %p", so);
 		if (so == NULL) {
 			return NULL;
 		}
 	} else {
-		so = DLIST_FIRST(&current->t_so_pool, struct socket, inp_list);
+		so = DLIST_FIRST(&t->t_so_pool, struct socket, inp_list);
 		DLIST_REMOVE(so, inp_list);
 	}
 	so->so_head = 0;
@@ -68,10 +68,10 @@ somalloc(void)
 }
 
 static void
-somfree(struct socket *so)
+somfree(struct cg_task *t, struct socket *so)
 {
 	assert(!(so->so_state & SS_ISATTACHED));
-	DLIST_INSERT_HEAD(&current->t_so_pool, so, inp_list);
+	DLIST_INSERT_HEAD(&t->t_so_pool, so, inp_list);
 }
 
 /*
@@ -82,11 +82,11 @@ somfree(struct socket *so)
  * switching out to the protocol specific routines.
  */
 int
-bsd_socket(int proto, struct socket **aso)
+bsd_socket(struct cg_task *t, int proto, struct socket **aso)
 {
 	struct socket *so;
 
-	so = somalloc();
+	so = somalloc(t);
 	if (so == NULL) {
 		return -ENOMEM;
 	}
@@ -95,18 +95,18 @@ bsd_socket(int proto, struct socket **aso)
 	so->so_linger = 0;
 	so->so_state = 0;
 	if (so->so_proto == IPPROTO_TCP) {
-		tcp_attach(so);
+		tcp_attach(t, so);
 	}
 	*aso = so;
 	return 0;
 }
 
 int
-bsd_bind(struct socket *so, be16_t port)
+bsd_bind(struct cg_task *t, struct socket *so, be16_t port)
 {
 	int error;
 
-	error = in_pcbbind(so, port);
+	error = in_pcbbind(t, so, port);
 	return -error;
 }
 
@@ -134,7 +134,7 @@ bsd_listen(struct socket *so)
 	}
 
 int
-sofree2(struct socket *so, const char *func)
+sofree2(struct cg_task *t, struct socket *so, const char *func)
 {
 	/*const char *cp = "ss=";
 
@@ -165,12 +165,12 @@ sofree2(struct socket *so, const char *func)
 	if (so->so_head) {
 		soqremque(so);
 	}
-	sbrelease(&so->so_snd);
-	sorflush(so);
-	sowakeup2(so, POLLNVAL);
+	sbrelease(t, &so->so_snd);
+	sorflush(t, so);
+	sowakeup3(t, so, POLLNVAL);
 	so->so_userfn = NULL;
 	//tcp_canceltimers( &so->inp_ppcb  ); // ?????
-	somfree(so);
+	somfree(t, so);
 	return 1;
 }
 
@@ -180,7 +180,7 @@ sofree2(struct socket *so, const char *func)
  * Free socket when disconnect complete.
  */
 int
-bsd_close(struct socket *so)
+bsd_close(struct cg_task *t, struct socket *so)
 {
 	int i, rc;
 	struct dlist *head;
@@ -195,17 +195,14 @@ bsd_close(struct socket *so)
 			head = so->so_q + i;
 			while (!dlist_is_empty(head)) {
 				aso = DLIST_FIRST(head, struct socket, so_ql);
-				soabort(aso);
+				soabort(t, aso);
 			}
 		}
 	}
-	if (so->so_proto == IPPROTO_TCP) {
-		rc = tcp_disconnect(so);
-	} else {
-		rc = udp_disconnect(so);
-	}
+
+	rc = tcp_disconnect(t, so);
 	if (rc <= 0) {
-		sofree(so);
+		sofree(t, so);
 		return -rc;
 	} else {
 		return 0;
@@ -213,13 +210,9 @@ bsd_close(struct socket *so)
 }
 
 void
-soabort(struct socket *so)
+soabort(struct cg_task *t, struct socket *so)
 {
-	if (so->so_proto == IPPROTO_TCP) {
-		tcp_abort(so);
-	} else {
-		udp_abort(so);
-	}
+	tcp_abort(t, so);
 }
 
 void
@@ -234,7 +227,7 @@ soaccept(struct socket *so)
 }
 
 int
-bsd_connect(struct socket *so)
+bsd_connect(struct cg_task *t, struct socket *so)
 {
 	int rc;
 
@@ -251,11 +244,7 @@ bsd_connect(struct socket *so)
 	} else if (so->so_state & SS_ISCONNECTED) {
 		rc = -EISCONN;
 	} else {
-		if (so->so_proto == IPPROTO_TCP) {
-			rc = tcp_connect(so);
-		} else {
-			rc = udp_connect(so);
-		}
+		rc = tcp_connect(t, so);
 	}
 	return rc;
 }
@@ -276,7 +265,8 @@ bsd_connect(struct socket *so)
 // must check for short counts if EINTR/ERESTART are returned.
 // Data and control buffers are freed on return.
 int
-sosend(struct socket *so, const void *dat, int datlen, const struct sockaddr_in *addr, int flags)
+sosend(struct cg_task *t, struct socket *so, const void *dat, int datlen,
+		const struct sockaddr_in *addr, int flags)
 {
 	int rc, atomic, space;
 
@@ -302,39 +292,30 @@ sosend(struct socket *so, const void *dat, int datlen, const struct sockaddr_in 
 	if (atomic && space < datlen) {
 		return -EWOULDBLOCK;
 	}
-	if (so->so_proto == IPPROTO_TCP) {
-		rc = tcp_send(so, dat, datlen);
-	} else {
-		rc = udp_send(so, dat, datlen, addr);
-	}
+	rc = tcp_send(t, so, dat, datlen);
 	return rc;
 }
 
 int
-bsd_shutdown(struct socket *so, int how)
+bsd_shutdown(struct cg_task *t, struct socket *so, int how)
 {
 	if (how & SHUT_RD) {
-		sorflush(so);
+		sorflush(t, so);
 	}
 	if (how & SHUT_WR) {
-		if (so->so_proto == IPPROTO_TCP) {
-			tcp_shutdown(so);
-		} else {
-			udp_shutdown(so);
-		}
+		tcp_shutdown(t, so);
 	}
 	return 0;
 }
 
 void
-sorflush(struct socket *so)
+sorflush(struct cg_task *t, struct socket *so)
 {
-	socantrcvmore(so);
+	socantrcvmore(t, so);
 }
 
 int
-bsd_setsockopt(struct socket *so, int level, int optname,
-	void *optval, int optlen)
+bsd_setsockopt(struct socket *so, int level, int optname, void *optval, int optlen)
 {
 	int rc;
 	struct linger *linger;
@@ -389,8 +370,7 @@ bsd_setsockopt(struct socket *so, int level, int optname,
 }
 
 int
-bsd_getsockopt(struct socket *so, int level, int optname,
-	void *optval, int *optlen)
+bsd_getsockopt(struct socket *so, int level, int optname, void *optval, int *optlen)
 {
 	int rc;
 	struct linger *linger;
@@ -496,7 +476,7 @@ soisconnecting(struct socket *so)
 }
 
 void
-soisconnected(struct socket *so)
+soisconnected(struct cg_task *t, struct socket *so)
 {
 	struct socket *head;
 	so->so_state &= ~(SS_ISCONNECTING|SS_ISDISCONNECTING);
@@ -505,32 +485,32 @@ soisconnected(struct socket *so)
 	if (head != NULL) {
 		soqremque(so);
 		soqinsque(head, so, 1);
-		sowakeup2(head, POLLIN);
+		sowakeup3(t, head, POLLIN);
 	} else {
-		sowakeup2(so, POLLOUT);
+		sowakeup3(t, so, POLLOUT);
 	}
 }
 
 void
-soisdisconnecting(struct socket *so)
+soisdisconnecting(struct cg_task *t, struct socket *so)
 {
 	short events;
 
 	//events = POLLIN|POLLOUT;
 	events = soevents(so);
-	sowakeup2(so, events);
+	sowakeup3(t, so, events);
 	so->so_state &= ~SS_ISCONNECTING;
 	so->so_state |= (SS_ISDISCONNECTING|SS_CANTRCVMORE|SS_CANTSENDMORE);
 }
 
 void
-soisdisconnected(struct socket *so)
+soisdisconnected(struct cg_task *t, struct socket *so)
 {
 	short events;
 
 	//events = POLLIN|POLLOUT;
 	events = soevents(so);
-	sowakeup2(so, events);
+	sowakeup3(t, so, events);
 	so->so_state &= ~(SS_ISCONNECTING|SS_ISCONNECTED|SS_ISDISCONNECTING);
 	so->so_state |= (SS_CANTRCVMORE|SS_CANTSENDMORE);
 }
@@ -571,7 +551,8 @@ soevents(struct socket *so)
 }
 
 void
-sowakeup(struct socket *so,  short events,  struct sockaddr_in *addr, void *dat, int len)
+sowakeup(struct cg_task *t, struct socket *so,  short events,  struct sockaddr_in *addr,
+		void *dat, int len)
 {
 	assert(events);
 
@@ -579,7 +560,7 @@ sowakeup(struct socket *so,  short events,  struct sockaddr_in *addr, void *dat,
 		if (so->so_state & SS_ISPROCESSING) {
 			so->so_events |= events;
 		} else {
-			(*so->so_userfn)(so, events, addr, dat, len);
+			(*so->so_userfn)(t, so, events, addr, dat, len);
 		}
 	}
 }
@@ -596,11 +577,11 @@ somodopt(struct socket *so, int optname, int optval)
 
 
 struct socket *
-sonewconn(struct socket *head)
+sonewconn(struct cg_task *t, struct socket *head)
 {
 	struct socket *so;
 
-	so = somalloc();
+	so = somalloc(t);
 	if (so == NULL) {
 		return NULL;
 	}
@@ -610,7 +591,7 @@ sonewconn(struct socket *head)
 	so->so_linger = head->so_linger;
 	so->so_state = head->so_state | SS_NOFDREF | SS_ISCONNECTING;
 	if (so->so_proto == IPPROTO_TCP) {
-		tcp_attach(so);
+		tcp_attach(t, so);
 	}
 	soqinsque(head, so, 0);
 	return so;
@@ -643,16 +624,16 @@ soqremque(struct socket *so)
  */
 
 void
-socantsendmore(struct socket *so)
+socantsendmore(struct cg_task *t, struct socket *so)
 {
-	sowakeup2(so, POLLOUT);
+	sowakeup3(t, so, POLLOUT);
 	so->so_state |= SS_CANTSENDMORE;
 }
 
 void
-socantrcvmore(struct socket *so)
+socantrcvmore(struct cg_task *t, struct socket *so)
 {
-	sowakeup2(so, POLLIN);
+	sowakeup3(t, so, POLLIN);
 	so->so_state |= SS_CANTRCVMORE;
 }
 
@@ -673,24 +654,23 @@ struct sockbuf_chunk {
 	(SBCHUNK_DATASIZE - ((ch)->sbc_len + (ch)->sbc_off))
 
 static void
-sbchfree(struct sockbuf_chunk *ch)
+sbchfree(struct cg_task *t, struct sockbuf_chunk *ch)
 {
-	DLIST_INSERT_HEAD(&current->t_sob_pool, ch, sbc_list);
+	DLIST_INSERT_HEAD(&t->t_sob_pool, ch, sbc_list);
 }
 
 static struct sockbuf_chunk *
-sbchalloc(struct sockbuf *sb)
+sbchalloc(struct cg_task *t, struct sockbuf *sb)
 {
 	struct sockbuf_chunk *ch;
 
-	if (dlist_is_empty(&current->t_sob_pool)) {
+	if (dlist_is_empty(&t->t_sob_pool)) {
 		ch = malloc(SBCHUNK_SIZE);
 		if (ch == NULL) {
 			return NULL;
 		}
 	} else {
-		ch = DLIST_FIRST(&current->t_sob_pool,
-		                 struct sockbuf_chunk, sbc_list);
+		ch = DLIST_FIRST(&t->t_sob_pool, struct sockbuf_chunk, sbc_list);
 		DLIST_REMOVE(ch, sbc_list);
 	}
 	ch->sbc_len = 0;
@@ -718,7 +698,7 @@ sbreserve(struct sockbuf *sb, u_long cc)
 }
 
 static void
-sbfree_n(struct sockbuf *sb, int n)
+sbfree_n(struct cg_task *t, struct sockbuf *sb, int n)
 {
 	int i;
 	struct sockbuf_chunk *ch;
@@ -727,26 +707,25 @@ sbfree_n(struct sockbuf *sb, int n)
 		assert(!dlist_is_empty(&sb->sb_head));
 		ch = DLIST_LAST(&sb->sb_head, struct sockbuf_chunk, sbc_list);
 		DLIST_REMOVE(ch, sbc_list);
-		sbchfree(ch);
+		sbchfree(t, ch);
 	}
 }
 
 void
-sbrelease(struct sockbuf *sb)
+sbrelease(struct cg_task *t, struct sockbuf *sb)
 {
 	struct sockbuf_chunk *ch;
 
 	while (!dlist_is_empty(&sb->sb_head)) {
 		ch = DLIST_FIRST(&sb->sb_head, struct sockbuf_chunk, sbc_list);
 		DLIST_REMOVE(ch, sbc_list);
-		sbchfree(ch);		
+		sbchfree(t, ch);		
 	}
 	sb->sb_cc = 0;
 }
 
 static void
-sbwrite(struct sockbuf *sb, struct sockbuf_chunk *pos,
-        const void *src, int cnt)
+sbwrite(struct sockbuf *sb, struct sockbuf_chunk *pos, const void *src, int cnt)
 {
 	int n, rem, space;
 	u_char *data;
@@ -769,7 +748,7 @@ sbwrite(struct sockbuf *sb, struct sockbuf_chunk *pos,
 }
 
 int
-sbappend(struct sockbuf *sb, const u_char *buf, int len)
+sbappend(struct cg_task *t, struct sockbuf *sb, const u_char *buf, int len)
 {
 	int n, rem, space, appended;
 	struct sockbuf_chunk *ch, *pos;
@@ -782,7 +761,7 @@ sbappend(struct sockbuf *sb, const u_char *buf, int len)
 	}
 	n = 0;
 	if (dlist_is_empty(&sb->sb_head)) {
-		ch = sbchalloc(sb);
+		ch = sbchalloc(t, sb);
 		if (ch == NULL) {
 			return -ENOMEM;
 		}
@@ -797,9 +776,9 @@ sbappend(struct sockbuf *sb, const u_char *buf, int len)
 		if (rem <= 0) {
 			break;
 		}
-		ch = sbchalloc(sb);
+		ch = sbchalloc(t, sb);
 		if (ch == NULL) {
-			sbfree_n(sb, n);
+			sbfree_n(t, sb, n);
 			return -ENOMEM;
 		}
 		n++;
@@ -814,7 +793,7 @@ sbappend(struct sockbuf *sb, const u_char *buf, int len)
  * Drop data from (the front of) a sockbuf.
  */
 void
-sbdrop(struct sockbuf *sb, int len)
+sbdrop(struct cg_task *t, struct sockbuf *sb, int len)
 {
 	int n, off;
 	struct sockbuf_chunk *pos, *tmp;
@@ -832,7 +811,7 @@ sbdrop(struct sockbuf *sb, int len)
 		pos->sbc_len -= n;
 		if (pos->sbc_len == 0) {
 			DLIST_REMOVE(pos, sbc_list);
-			sbchfree(pos);
+			sbchfree(t, pos);
 		}
 		off += n;
 		if (off == len) {
@@ -893,11 +872,12 @@ bsd_accept(struct socket *so, struct socket **paso)
 }
 
 int
-bsd_sendto(struct socket *so, const void *buf, int len, int flags, const struct sockaddr_in *nam)
+bsd_sendto(struct cg_task *t, struct socket *so, const void *buf, int len,
+		int flags, const struct sockaddr_in *nam)
 {
 	int rc;
 
-	rc = sosend(so, buf, len, nam, flags);
+	rc = sosend(t, so, buf, len, nam, flags);
 	if (rc < 0) {
 		if (rc == -EPIPE) {
 			if ((flags & MSG_NOSIGNAL) == 0) {

@@ -53,23 +53,22 @@
 int icmpprintfs = 0;
 
 static be32_t
-icmp_reflectsrc(be32_t dst)
+icmp_reflectsrc(struct cg_task *t, be32_t dst)
 {
 	uint32_t ia;
 
-	for (ia = current->t_ip_laddr_min;
-	     ia <= current->t_ip_laddr_max; ++ia) {
+	for (ia = t->t_ip_laddr_min; ia <= t->t_ip_laddr_max; ++ia) {
 		if (dst == htonl(ia)) {
 			return dst;
 		}
 	}
-	return htonl(current->t_ip_laddr_min);
+	return htonl(t->t_ip_laddr_min);
 }
 
 // Send an icmp packet back to the ip level,
 // after supplying a checksum.
 void
-icmp_send(struct packet *pkt, struct ip *ip)
+icmp_send(struct cg_task *t, struct packet *pkt, struct ip *ip)
 {
 	struct icmp *icp;
 
@@ -80,19 +79,19 @@ icmp_send(struct packet *pkt, struct ip *ip)
 	icp->icmp_cksum = 0;
 	icp->icmp_cksum = in_cksum(icp, ip->ip_len - sizeof(*ip));
 
-	ip_output(pkt, ip);
+	ip_output(t, pkt, ip);
 }
 
 // Generate an error packet of type error
 // in response to bad packet ip.
 void
-icmp_error(struct ip *oip, int type, int code, be32_t dest)
+icmp_error(struct cg_task *t, struct ip *oip, int type, int code, be32_t dest)
 {
 	struct ip *eip, *nip;
 	unsigned oiplen;
 	struct icmp *icp;
 	unsigned icmplen;
-	be32_t t;
+	be32_t dst;
 	struct packet pkt;
 
 	oiplen = oip->ip_hl << 2;
@@ -102,7 +101,7 @@ icmp_error(struct ip *oip, int type, int code, be32_t dest)
 	}
 
 	if (type != ICMP_REDIRECT) {
-		counter64_inc(&icmpstat.icps_error);
+		cg_counter64_inc(t, &icmpstat.icps_error);
 	}
 	/*
 	 * Don't send error if not the first fragment of message.
@@ -112,17 +111,16 @@ icmp_error(struct ip *oip, int type, int code, be32_t dest)
 	if (oip->ip_off &~ (IP_MF|IP_DF)) {
 		return;
 	}
-	/*
-	 * First, formulate icmp message
-	 */
-	io_init_tx_packet(&pkt);
+
+	// First, formulate icmp message
+	io_init_tx_packet(t, &pkt);
 	nip = (struct ip *)(pkt.pkt.buf + sizeof(struct ether_header));
 	icmplen = oiplen + MIN(8, oip->ip_len);
 	icp = (struct icmp *)(nip + 1);
 	if ((u_int)type > ICMP_MAXTYPE) {
 		panic(0, "icmp_error");
 	}
-	counter64_inc(icmpstat.icps_outhist + type);
+	cg_counter64_inc(t, icmpstat.icps_outhist + type);
 	icp->icmp_type = type;
 	if (type == ICMP_REDIRECT) {
 		icp->icmp_gwaddr.s_addr = dest;
@@ -135,7 +133,7 @@ icmp_error(struct ip *oip, int type, int code, be32_t dest)
 			code = 0;
 		} else if (type == ICMP_UNREACH &&
 			code == ICMP_UNREACH_NEEDFRAG) {
-			icp->icmp_nextmtu = htons(current->t_mtu);
+			icp->icmp_nextmtu = htons(t->t_mtu);
 		}
 	}
 
@@ -147,22 +145,22 @@ icmp_error(struct ip *oip, int type, int code, be32_t dest)
 	// Now, copy old ip header (without options)
 	// in front of icmp message.
 	memcpy(nip, oip, sizeof(struct ip));
-	t = nip->ip_dst.s_addr;
+	dst = nip->ip_dst.s_addr;
 	nip->ip_dst = nip->ip_src;
-	nip->ip_src.s_addr = icmp_reflectsrc(t);
+	nip->ip_src.s_addr = icmp_reflectsrc(t, dst);
 	nip->ip_len = sizeof(*nip) + icmplen + ICMP_MINLEN;
 	nip->ip_hl = sizeof(struct ip) >> 2;
 	nip->ip_p = IPPROTO_ICMP;
 	nip->ip_tos = 0;
 	nip->ip_ttl = MAXTTL;
-	icmp_send(&pkt, nip);
+	icmp_send(t, &pkt, nip);
 }
 
 /*
  * Process a received ICMP message.
  */
 void
-icmp_input(struct ip *ip, int hlen)
+icmp_input(struct cg_task *t, struct ip *ip, int hlen)
 {
 	struct icmp *icp;
 	be32_t icmpsrc;
@@ -179,12 +177,12 @@ icmp_input(struct ip *ip, int hlen)
 			icmplen);
 	}
 	if (icmplen < ICMP_MINLEN) {
-		counter64_inc(&icmpstat.icps_tooshort);
+		cg_counter64_inc(t, &icmpstat.icps_tooshort);
 		return;
 	}
 	i = MIN(icmplen, ICMP_ADVLENMIN);
 	if (ip->ip_len < i)  {
-		counter64_inc(&icmpstat.icps_tooshort);
+		cg_counter64_inc(t, &icmpstat.icps_tooshort);
 		return;
 	}
 	icp = (struct icmp *)((u_char *)ip + hlen);
@@ -192,7 +190,7 @@ icmp_input(struct ip *ip, int hlen)
 	icp->icmp_cksum = 0;
 	icp->icmp_cksum = in_cksum(icp, icmplen);
 	if (icp->icmp_cksum != icmp_cksum) {
-		counter64_inc(&icmpstat.icps_checksum);
+		cg_counter64_inc(t, &icmpstat.icps_checksum);
 		return;
 	}
 
@@ -206,7 +204,7 @@ icmp_input(struct ip *ip, int hlen)
 	if (icp->icmp_type > ICMP_MAXTYPE) {
 		return;
 	}
-	counter64_inc(icmpstat.icps_inhist + icp->icmp_type);
+	cg_counter64_inc(t, icmpstat.icps_inhist + icp->icmp_type);
 	code = icp->icmp_code;
 	switch (icp->icmp_type) {
 
@@ -258,7 +256,7 @@ deliver:
 		 */
 		if (icmplen < ICMP_ADVLENMIN || icmplen < ICMP_ADVLEN(icp) ||
 		    icp->icmp_ip.ip_hl < (sizeof(struct ip) >> 2)) {
-			counter64_inc(&icmpstat.icps_badlen);
+			cg_counter64_inc(t, &icmpstat.icps_badlen);
 			return;
 		}
 		NTOHS(icp->icmp_ip.ip_len);
@@ -269,26 +267,23 @@ deliver:
 		icmpsrc = icp->icmp_ip.ip_dst.s_addr;
 		switch (icp->icmp_ip.ip_p) {
 		case IPPROTO_TCP:
-			tcp_ctlinput(err, quench, icmpsrc, &icp->icmp_ip);
-			break;
-		case IPPROTO_UDP:
-			udp_ctlinput(err, icmpsrc, &icp->icmp_ip);
+			tcp_ctlinput(t, err, quench, icmpsrc, &icp->icmp_ip);
 			break;
 		default:
 			break;
 		}
 		break;
 
-	badcode:
-		counter64_inc(&icmpstat.icps_badcode);
+badcode:
+		cg_counter64_inc(t, &icmpstat.icps_badcode);
 		break;
 
 	case ICMP_ECHO:
 		icp->icmp_type = ICMP_ECHOREPLY;
 		ip->ip_len += hlen;     /* since ip_input deducts this */
-		counter64_inc(&icmpstat.icps_reflect);
-		counter64_inc(icmpstat.icps_outhist + icp->icmp_type);
-		icmp_reflect(ip);
+		cg_counter64_inc(t, &icmpstat.icps_reflect);
+		cg_counter64_inc(t, icmpstat.icps_outhist + icp->icmp_type);
+		icmp_reflect(t, ip);
 		return;
 
 	case ICMP_REDIRECT:
@@ -297,7 +292,7 @@ deliver:
 		}
 		if (icmplen < ICMP_ADVLENMIN || icmplen < ICMP_ADVLEN(icp) ||
 		    icp->icmp_ip.ip_hl < (sizeof(struct ip) >> 2)) {
-			counter64_inc(&icmpstat.icps_badlen);
+			cg_counter64_inc(t, &icmpstat.icps_badlen);
 			break;
 		}
 		/*
@@ -332,26 +327,26 @@ deliver:
  * Reflect the ip packet back to the source
  */
 void
-icmp_reflect(struct ip *ip)
+icmp_reflect(struct cg_task *t, struct ip *ip)
 {
-	be32_t t;
+	be32_t dst;
 	int optlen, hlen;
 	struct ip *nip;
 	struct packet pkt;
 
-	io_init_tx_packet(&pkt);
+	io_init_tx_packet(t, &pkt);
 	hlen = (ip->ip_hl << 2);
 	optlen = hlen - sizeof(*ip);
 	nip = (struct ip *)(pkt.pkt.buf + sizeof(struct ether_header));
 	memcpy(nip, ip, sizeof(*ip));
 	memcpy(nip + 1, ((u_char *)ip) + hlen, ip->ip_len - hlen);
 
-	t = nip->ip_dst.s_addr;
+	dst = nip->ip_dst.s_addr;
 	nip->ip_dst = ip->ip_src;
-	nip->ip_src.s_addr = icmp_reflectsrc(t);
+	nip->ip_src.s_addr = icmp_reflectsrc(t, dst);
 	nip->ip_hl = sizeof(*nip) >> 2;
 	nip->ip_ttl = MAXTTL;
 	nip->ip_len -= optlen;
 
-	icmp_send(&pkt, nip);
+	icmp_send(t, &pkt, nip);
 }

@@ -42,14 +42,8 @@ int n_counters = 1;
 
 struct cg_task g_cg_tasks[CG_N_TASKS_MAX];
 int g_cg_n_tasks;
-__thread struct cg_task *current;
 
 static int g_transport = TRANSPORT_DEFAULT;
-int g_udp;
-
-void bsd_flush(void);
-void bsd_server_listen(int);
-void bsd_client_connect(int proto);
 
 static const char *
 norm2(char *buf, double val, char *fmt, int normalize)
@@ -153,7 +147,7 @@ set_affinity(int cpu_id)
 }
 
 
-uint32_t
+static uint32_t
 ip_socket_hash(struct dlist *p)
 {
 	uint32_t h;
@@ -467,99 +461,102 @@ multiplexer_add(struct cg_task *t, int fd)
 }
 
 void
-multiplexer_pollout(int index)
+multiplexer_pollout(struct cg_task *t, int index)
 {
-	assert(index < current->t_pfd_num);
-	current->t_pfds[index].events |= POLLOUT;
+	assert(index < t->t_pfd_num);
+	t->t_pfds[index].events |= POLLOUT;
 }
 
 int
-multiplexer_get_events(int index)
+multiplexer_get_events(struct cg_task *t, int index)
 {
-	assert(index < current->t_pfd_num);
-	return current->t_pfds[index].events;
+	assert(index < t->t_pfd_num);
+	return t->t_pfds[index].events;
 }
 
 static void
-thread_process(void)
+thread_process(struct cg_task *t)
 {
 	int i;
-	uint64_t t, age;
+	uint64_t now, age;
 	struct packet *pkt;
 	struct timespec to;
-	struct pollfd pfds[ARRAY_SIZE(current->t_pfds)];
+	struct pollfd pfds[ARRAY_SIZE(t->t_pfds)];
 
 	io_tx();
-	if (!current->t_busyloop) {
-		memcpy(pfds, current->t_pfds, current->t_pfd_num * sizeof(struct pollfd));
+	if (!t->t_busyloop) {
+		memcpy(pfds, t->t_pfds, t->t_pfd_num * sizeof(struct pollfd));
 		to.tv_sec = 0;
 		to.tv_nsec = 20;
-		ppoll(pfds, current->t_pfd_num, &to, NULL);
+		ppoll(pfds, t->t_pfd_num, &to, NULL);
 	}
-	t = rdtsc();
-	if (t > current->t_tsc) {
-		current->t_time = 1000llu * t / tsc_mhz;
-		age = current->t_tcp_nowage + NANOSECONDS_SECOND/PR_SLOWHZ;
-		if (current->t_time >= age) {
-			current->t_tcp_now++;
-			current->t_tcp_nowage += NANOSECONDS_SECOND/PR_SLOWHZ;
+	now = rdtsc();
+	if (now > t->t_tsc) {
+		t->t_time = 1000llu * now / tsc_mhz;
+		age = t->t_tcp_nowage + NANOSECONDS_SECOND/PR_SLOWHZ;
+		if (t->t_time >= age) {
+			t->t_tcp_now++;
+			t->t_tcp_nowage += NANOSECONDS_SECOND/PR_SLOWHZ;
 		}
 	}
-	current->t_tsc = t;
-	if (current->t_busyloop) {
-		io_rx(INT_MAX);
+	t->t_tsc = now;
+	if (t->t_busyloop) {
+		io_rx(t, INT_MAX);
 	} else {
-		for (i = 0; i < current->t_pfd_num; ++i) {
+		for (i = 0; i < t->t_pfd_num; ++i) {
 			if (pfds[i].revents & POLLIN) {
-				spinlock_lock(&current->t_lock);
-				io_rx(i);
-				spinlock_unlock(&current->t_lock);
+				spinlock_lock(&t->t_lock);
+				io_rx(t, i);
+				spinlock_unlock(&t->t_lock);
 			}
 			if (pfds[i].revents & POLLOUT) {
-				current->t_pfds[i].events &= ~POLLOUT;
+				t->t_pfds[i].events &= ~POLLOUT;
 			}
 		}
 	}
-	check_timers();
-	while (!io_is_tx_throttled() && !dlist_is_empty(&current->t_pending_head)) {
-		pkt = DLIST_FIRST(&current->t_pending_head, struct packet, pkt.list);
+
+	cg_check_timers(t);
+
+	while (!io_is_tx_throttled(t) && !dlist_is_empty(&t->t_pending_head)) {
+		pkt = DLIST_FIRST(&t->t_pending_head, struct packet, pkt.list);
 		DLIST_REMOVE(pkt, pkt.list);
-		current->t_n_pending--;
-		if (!io_tx_packet(pkt)) {
-			DLIST_INSERT_HEAD(&current->t_available_head, pkt, pkt.list);
+		t->t_n_pending--;
+		if (!io_tx_packet(t, pkt)) {
+			DLIST_INSERT_HEAD(&t->t_available_head, pkt, pkt.list);
 		}
 	}
-	bsd_flush();
+	bsd_flush(t);
 }
 
 static void *
 thread_routine(void *udata)
 {
 	int proto;
+	struct cg_task *t;
 
-	current = udata;
+	t = udata;
 
-	if (current->t_affinity >= 0) {
-		set_affinity(current->t_affinity);
+	if (t->t_affinity >= 0) {
+		set_affinity(t->t_affinity);
 	}
 
-	current->t_tsc = rdtsc();
-	current->t_time = 1000 * current->t_tsc / tsc_mhz;
-	current->t_tcp_now = 1;
-	current->t_tcp_nowage = current->t_time;
+	t->t_tsc = rdtsc();
+	t->t_time = 1000 * t->t_tsc / tsc_mhz;
+	t->t_tcp_now = 1;
+	t->t_tcp_nowage = t->t_time;
 
-	init_timers();
+	cg_init_timers(t);
 
-	proto = g_udp ? IPPROTO_UDP : IPPROTO_TCP;
+	proto = IPPROTO_TCP;
 
-	if (current->t_Lflag) {
-		bsd_server_listen(proto);
+	if (t->t_Lflag) {
+		bsd_server_listen(t, proto);
 	} else {
-		bsd_client_connect(proto);
+		bsd_client_connect(t, proto);
 	}
 
-	while (!current->t_done) {
-		thread_process();
+	while (!t->t_done) {
+		thread_process(t);
 	}
 
 	return NULL;
@@ -598,7 +595,6 @@ usage(void)
 #ifdef HAVE_DPDK
 	"\t--dpdk:  USE DPDK transport\n"
 #endif
-	"\t--udp:  Use UDP instead of TCP\n"
 	"\t--dst-cache:  Number of precomputed connect tuples (default: 100000)\n"
 	"\t--ip-in-cksum {0|1}:  On/Off IP input checksum calculation\n"
 	"\t--ip-out-cksum {0|1}:  On/Off IP output checksum calculation\n"
@@ -622,7 +618,6 @@ usage(void)
 static struct option long_options[] = {
 	{ "help", no_argument, 0, 'h' },
 	{ "verbose", no_argument, 0, 'v' },
-	{ "udp", no_argument, 0, 0 },
 	{ "dst-cache", required_argument, 0, 0 },
 	{ "so-debug", no_argument, 0, 0 },
 #ifdef HAVE_NETMAP
@@ -682,7 +677,7 @@ validate_args(int argc, char **argv)
 	return true;
 }
 
-int
+static int
 io_parse_args(int argc, char **argv)
 {
 	int rc;
@@ -702,7 +697,7 @@ io_parse_args(int argc, char **argv)
 	}
 }
 #else // HAVE_DPDK
-int
+static int
 io_parse_args(int argc, char **argv)
 {
 	return 0;
@@ -782,9 +777,7 @@ thread_init(struct cg_task *t, struct cg_task *tmpl, int thread_idx, int argc, c
 		switch (opt) {
 		case 0:
 			optname = long_options[option_index].name;
-			if (!strcmp(optname, "udp")) {
-				g_udp = 1;
-			} else if (!strcmp(optname, "dst-cache")) {
+			if (!strcmp(optname, "dst-cache")) {
 				if (optval < 0) {
 					goto err;
 				}
@@ -972,7 +965,6 @@ err:
 		usage();
 		return -EINVAL;
 	}
-	current = t;
 	htable_init(&t->t_in_htable, 4096, ip_socket_hash);
 	if (t->t_Lflag) {
 		t->t_http = http_reply;
@@ -1075,7 +1067,7 @@ main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
-	set_transport(g_transport, g_udp);
+	set_transport(g_transport);
 	io_init();
 
 	for (i = 0; i < g_cg_n_tasks; ++i) {

@@ -112,8 +112,9 @@ struct icmp {
 	(type) == ICMP_IREQ || (type) == ICMP_IREQREPLY || \
 	(type) == ICMP_MASKREQ || (type) == ICMP_MASKREPLY)
 
-void	icmp_error(struct ip *, int, int, be32_t);
-void	icmp_input(struct ip *, int);
-void	icmp_reflect(struct ip *);
+void	icmp_send(struct cg_task *t, struct packet *pkt, struct ip *ip);
+void	icmp_error(struct cg_task *, struct ip *, int, int, be32_t);
+void	icmp_input(struct cg_task *, struct ip *, int);
+void	icmp_reflect(struct cg_task *, struct ip *);
 
 #endif /* BSD44_IP_ICMP_H */

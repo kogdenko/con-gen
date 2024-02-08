@@ -1,5 +1,7 @@
 #include "subr.h"
 #include "netstat.h"
+#include "bsd44/socket.h"
+
 
 #include <sys/resource.h>
 
@@ -48,7 +50,6 @@ extern struct transport_ops pcap_io_ops;
 extern struct transport_ops dpdk_ops;
 #endif
 
-void bsd_eth_in(void *, int);
 
 void
 dbg5(const char *filename, u_int linenum, const char *func, int suppressed,
@@ -77,13 +78,6 @@ dbg5(const char *filename, u_int linenum, const char *func, int suppressed,
 		fprintf(file, "%s\n", buf);
 		fflush(file);
 	}
-}
-
-static void
-udp_in(void *data, int len)
-{
-	counter64_inc(&if_ipackets);
-	counter64_add(&if_ibytes, len);
 }
 
 void
@@ -260,32 +254,32 @@ panic3(const char *file, int line, int errnum, const char *format, ...)
 }
 
 void
-add_pending_packet(struct packet *pkt)
+add_pending_packet(struct cg_task *t, struct packet *pkt)
 {
 	struct packet *cp;
 
-	if (dlist_is_empty(&current->t_available_head)) {
-		if (current->t_n_pending < CG_TX_PENDING_MAX) {
+	if (dlist_is_empty(&t->t_available_head)) {
+		if (t->t_n_pending < CG_TX_PENDING_MAX) {
 			cp = xmalloc(sizeof(*pkt));
 			memset(cp, 0, sizeof(*cp));
 		} else {
-			cp = DLIST_FIRST(&current->t_pending_head, struct packet, pkt.list);
-			current->t_n_pending--;
+			cp = DLIST_FIRST(&t->t_pending_head, struct packet, pkt.list);
+			t->t_n_pending--;
 		}
 	} else {
-		cp = DLIST_FIRST(&current->t_available_head, struct packet, pkt.list);
+		cp = DLIST_FIRST(&t->t_available_head, struct packet, pkt.list);
 		DLIST_REMOVE(cp, pkt.list);
 	}
 
 	memcpy(cp->pkt_body, pkt->pkt.buf, pkt->pkt.len);
 	cp->pkt.len = pkt->pkt.len;
 	cp->pkt.buf = cp->pkt_body;
-	DLIST_INSERT_TAIL(&current->t_pending_head, cp, pkt.list);
-	current->t_n_pending++;
+	DLIST_INSERT_TAIL(&t->t_pending_head, cp, pkt.list);
+	t->t_n_pending++;
 }
 
 void
-set_transport(int transport, int udp)
+set_transport(int transport)
 {
 	switch (transport) {
 #ifdef HAVE_NETMAP
@@ -313,11 +307,7 @@ set_transport(int transport, int udp)
 		break;
 	}
 
-	if (udp) {
-		tr_ops->tr_io_process_op = udp_in;
-	} else {
-		tr_ops->tr_io_process_op = bsd_eth_in;
-	}
+	tr_ops->tr_io_process_op = bsd_eth_in;
 }
 
 void
@@ -327,9 +317,9 @@ io_init(void)
 }
 
 void
-io_init_tx_packet(struct packet *pkt)
+io_init_tx_packet(struct cg_task *t, struct packet *pkt)
 {
-	return (*tr_ops->tr_io_init_tx_packet_op)(pkt);
+	return (*tr_ops->tr_io_init_tx_packet_op)(t, pkt);
 }
 
 void
@@ -341,22 +331,22 @@ io_deinit_tx_packet(struct packet *pkt)
 }
 
 bool
-io_is_tx_throttled(void)
+io_is_tx_throttled(struct cg_task *t)
 {
-	return (*tr_ops->tr_io_is_tx_throttled_op)();
+	return (*tr_ops->tr_io_is_tx_throttled_op)(t);
 }
 
 int
-io_tx_packet(struct packet *pkt)
+io_tx_packet(struct cg_task *t, struct packet *pkt)
 {
 	int len;
 	bool sent;
 
 	len = pkt->pkt.len;
-	sent = (*tr_ops->tr_io_tx_packet_op)(pkt);
+	sent = (*tr_ops->tr_io_tx_packet_op)(t, pkt);
 	if (sent) {
-		counter64_add(&if_obytes, len);
-		counter64_inc(&if_opackets);
+		cg_counter64_add(t, &if_obytes, len);
+		cg_counter64_inc(t, &if_opackets);
 		return 0;
 	} else {
 		return -ENOBUFS;
@@ -364,9 +354,9 @@ io_tx_packet(struct packet *pkt)
 }
 
 int
-io_rx(int queue_id)
+io_rx(struct cg_task *t, int queue_id)
 {
-	return (*tr_ops->tr_io_rx_op)(queue_id);
+	return (*tr_ops->tr_io_rx_op)(t, queue_id);
 }
 
 void
@@ -378,9 +368,9 @@ io_tx(void)
 }
 
 void
-io_process(void *pkt, int pkt_len)
+io_process(struct cg_task *t, void *pkt, int pkt_len)
 {
-	(*tr_ops->tr_io_process_op)(pkt, pkt_len);
+	(*tr_ops->tr_io_process_op)(t, pkt, pkt_len);
 }
 
 int
@@ -572,12 +562,12 @@ spinlock_unlock(struct spinlock *sl)
 }
 
 static struct ip_socket *
-ip_socket_get(struct ip_socket *x, uint32_t h)
+ip_socket_get(struct cg_task *t, struct ip_socket *x, uint32_t h)
 {
 	struct dlist *b;
 	struct ip_socket *so;
 
-	b = htable_bucket_get(&current->t_in_htable, h);
+	b = htable_bucket_get(&t->t_in_htable, h);
 	DLIST_FOREACH(so, b, ipso_list) {
 		if (so->ipso_laddr == x->ipso_laddr && so->ipso_faddr == x->ipso_faddr &&
 				so->ipso_lport == x->ipso_lport &&
@@ -590,27 +580,27 @@ ip_socket_get(struct ip_socket *x, uint32_t h)
 }
 
 int
-ip_connect(struct ip_socket *new, uint32_t *ph)
+ip_connect(struct cg_task *t, struct ip_socket *new, uint32_t *ph)
 {
 	int i;
 	uint32_t h;
 	struct ip_socket *cache;
 
 	new->ipso_cache = NULL;
-	if (current->t_Lflag) {
+	if (t->t_Lflag) {
 		h = SO_HASH(new->ipso_faddr, new->ipso_lport, new->ipso_fport);
-		if (ip_socket_get(new, h) != NULL) {
+		if (ip_socket_get(t, new, h) != NULL) {
 			return -EADDRINUSE;
 		}
 	} else {
-		for (i = 0; i < current->t_dst_cache_size; ++i) {
-			cache = current->t_dst_cache + current->t_dst_cache_i;
-			current->t_dst_cache_i++;
-			if (current->t_dst_cache_i == current->t_dst_cache_size) {
-				current->t_dst_cache_i = 0;
+		for (i = 0; i < t->t_dst_cache_size; ++i) {
+			cache = t->t_dst_cache + t->t_dst_cache_i;
+			t->t_dst_cache_i++;
+			if (t->t_dst_cache_i == t->t_dst_cache_size) {
+				t->t_dst_cache_i = 0;
 			}
 			h = cache->ipso_hash;
-			if (ip_socket_get(cache, h) == NULL) {
+			if (ip_socket_get(t, cache, h) == NULL) {
 				new->ipso_laddr = cache->ipso_laddr;
 				new->ipso_faddr = cache->ipso_faddr;
 				new->ipso_lport = cache->ipso_lport;
@@ -622,8 +612,8 @@ ip_connect(struct ip_socket *new, uint32_t *ph)
 		return -EADDRNOTAVAIL;
 	}
 out:
-	htable_add(&current->t_in_htable, &new->ipso_list, h);
-	current->t_n_conns++;
+	htable_add(&t->t_in_htable, &new->ipso_list, h);
+	t->t_n_conns++;
 	if (ph != NULL) {
 		*ph = h;
 	}
@@ -631,13 +621,13 @@ out:
 }
 
 void
-ip_disconnect(struct ip_socket *so)
+ip_disconnect(struct cg_task *t, struct ip_socket *so)
 {
 //	if (so->ipso_cache != NULL) {
-//		DLIST_INSERT_TAIL(&current->t_dst_cache, so->ipso_cache, ipso_list);
+//		DLIST_INSERT_TAIL(&t->t_dst_cache, so->ipso_cache, ipso_list);
 //		so->ipso_cache = NULL;
 //	}
-	assert(current->t_n_conns);
-	current->t_n_conns--;
-	htable_del(&current->t_in_htable, &so->ipso_list);
+	assert(t->t_n_conns);
+	t->t_n_conns--;
+	htable_del(&t->t_in_htable, &so->ipso_list);
 }

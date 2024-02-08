@@ -39,7 +39,7 @@
 #include "../htable.h"
 
 int
-in_pcbbind(struct socket *so, be16_t lport)
+in_pcbbind(struct cg_task *t, struct socket *so, be16_t lport)
 {
 	uint16_t i;
 
@@ -50,27 +50,27 @@ in_pcbbind(struct socket *so, be16_t lport)
 		return EINVAL;
 	}
 	i = ntohs(lport);
-	if (i >= ARRAY_SIZE(current->t_in_binded)) {
+	if (i >= ARRAY_SIZE(t->t_in_binded)) {
 		return EADDRINUSE;
 	}
-	if (current->t_in_binded[i] != NULL) {
+	if (t->t_in_binded[i] != NULL) {
 		return EADDRINUSE;
 	}
-	current->t_in_binded[i] = so;
-	so->inp_laddr = htonl(current->t_ip_laddr_min);
+	t->t_in_binded[i] = so;
+	so->inp_laddr = htonl(t->t_ip_laddr_min);
 	so->inp_lport = lport;
 	return 0;
 }
 
 int
-in_pcbattach(struct socket *so, uint32_t *ph)
+in_pcbattach(struct cg_task *t, struct socket *so, uint32_t *ph)
 {
 	int rc;
 
 	if (so->so_state & SS_ISATTACHED) {
 		return -EALREADY;
 	}
-	rc = ip_connect(&so->so_base, ph);
+	rc = ip_connect(t, &so->so_base, ph);
 	if (rc == 0) {
 		so->so_state |= SS_ISATTACHED;
 	}
@@ -78,7 +78,7 @@ in_pcbattach(struct socket *so, uint32_t *ph)
 }
 
 int
-in_pcbconnect(struct socket *so, uint32_t *ph)
+in_pcbconnect(struct cg_task *t, struct socket *so, uint32_t *ph)
 {
 	int rc;
 
@@ -98,7 +98,7 @@ in_pcbconnect(struct socket *so, uint32_t *ph)
 	if (so->so_state & SS_ISATTACHED) {
 		return -EISCONN;
 	}
-	rc = ip_connect(&so->so_base, ph);
+	rc = ip_connect(t, &so->so_base, ph);
 	if (rc == 0) {
 		so->so_state |= SS_ISATTACHED;
 	}
@@ -106,20 +106,20 @@ in_pcbconnect(struct socket *so, uint32_t *ph)
 }
 
 int
-in_pcbdetach(struct socket *so)
+in_pcbdetach(struct cg_task *t, struct socket *so)
 {
 	int lport;
 
 	lport = ntohs(so->inp_lport);
 	if (lport < EPHEMERAL_MIN) {
-		if (current->t_in_binded[lport] == so) {
-			current->t_in_binded[lport] = NULL;
+		if (t->t_in_binded[lport] == so) {
+			t->t_in_binded[lport] = NULL;
 		}
 	}
 	if (so->so_state & SS_ISATTACHED) {
 		so->so_state &= ~SS_ISATTACHED;
-		ip_disconnect(&so->so_base);
-		return sofree(so);
+		ip_disconnect(t, &so->so_base);
+		return sofree(t, so);
 	} else {
 		return 0;
 	}
@@ -133,14 +133,14 @@ in_pcbdisconnect(struct socket *so)
 }
 
 void
-in_pcbnotify(int proto, be32_t laddr, be16_t lport, be32_t faddr, be16_t fport,
-	int err, void (*notify)(struct socket *, int))
+in_pcbnotify(struct cg_task *t, int proto, be32_t laddr, be16_t lport, be32_t faddr, be16_t fport,
+	int err, void (*notify)(struct cg_task *t, struct socket *, int))
 {
 	struct socket *so;
 
-	so = in_pcblookup(proto, laddr, lport, faddr, fport);
+	so = in_pcblookup(t, proto, laddr, lport, faddr, fport);
 	if (so != NULL) {
-		(*notify)(so, err);
+		(*notify)(t, so, err);
 	}
 }
 
@@ -165,7 +165,7 @@ bsd_get_so_info(void *e, struct socket_info *x)
 }
 
 struct socket *
-in_pcblookup(int proto, be32_t laddr, be16_t lport, be32_t faddr, be16_t fport)
+in_pcblookup(struct cg_task *t, int proto, be32_t laddr, be16_t lport, be32_t faddr, be16_t fport)
 {
 	int i;
 	uint32_t h;
@@ -173,7 +173,7 @@ in_pcblookup(int proto, be32_t laddr, be16_t lport, be32_t faddr, be16_t fport)
 	struct socket *so;
 
 	h = SO_HASH(faddr, lport, fport);
-	b = htable_bucket_get(&current->t_in_htable, h);
+	b = htable_bucket_get(&t->t_in_htable, h);
 	DLIST_FOREACH(so, b, inp_list) {	
 		if (so->so_proto == proto &&
 		    so->inp_laddr == laddr &&
@@ -185,7 +185,7 @@ in_pcblookup(int proto, be32_t laddr, be16_t lport, be32_t faddr, be16_t fport)
 	}
 	i = ntohs(lport);
 	if (i < EPHEMERAL_MIN) {
-		return current->t_in_binded[i];
+		return t->t_in_binded[i];
 	} else {
 		return NULL;
 	}

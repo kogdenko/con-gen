@@ -101,7 +101,7 @@ struct ether_arp {
 #define	arp_pln	ea_hdr.ar_pln
 #define	arp_op	ea_hdr.ar_op
 
-void arp_input(struct arphdr *, int);
+void arp_input(struct cg_task *, struct arphdr *, int);
 char *ether_sprintf(u_char *ap);
 int ether_scanf(u_char *ap, const char *s);
 

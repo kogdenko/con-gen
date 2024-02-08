@@ -31,7 +31,7 @@
  * SUCH DAMAGE.
  */
 #include "netstat.h"
-
+#include "bsd44/socket.h"
 static const char *icmpnames[ICMP_MAXTYPE + 1] = {
 	[ICMP_ECHOREPLY] = "echo reply",
 	[ICMP_UNREACH] = "destination unreachable",
@@ -48,7 +48,7 @@ static const char *icmpnames[ICMP_MAXTYPE + 1] = {
 	[ICMP_MASKREPLY] = "address mask reply",
 };
 
-void
+static void
 print_tcpstat(FILE *file, int verbose)
 {
 	uint64_t sndtotal;
@@ -305,7 +305,7 @@ print_tcpstat(FILE *file, int verbose)
 	}
 }
 
-void
+static void
 print_udpstat(FILE *file, int verbose)
 {
 	uint64_t ipackets;
@@ -575,14 +575,12 @@ print_stats(FILE *file, int verbose)
 	print_icmpstat(file, verbose);
 }
 
-void bsd_get_so_info(void *, struct socket_info *);
-
 struct print_socket_udata {
 	struct cg_task *prsud_thread;
 	FILE *prsud_file;
 };
 
-void
+static void
 print_socket(void *udata, void *e)
 {
 	struct in_addr tmp;
