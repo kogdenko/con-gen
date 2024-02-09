@@ -538,13 +538,13 @@ counter64_init(counter64_t *c)
 uint64_t
 counter64_get(counter64_t *c)
 {
-	int i;
 	uint64_t accum;
+	struct cg_task *t;
 
 	accum = 0;
-	for (i = 0; i < g_cg_n_tasks; ++i) {
+	CG_TASK_FOREACH(t) {
 		assert(*c != 0);
-		accum += g_cg_tasks[i].t_counters[*c];
+		accum += t->t_counters[*c];
 	}
 	return accum;
 }

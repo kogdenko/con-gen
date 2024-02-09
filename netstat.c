@@ -616,14 +616,13 @@ print_socket(void *udata, void *e)
 void
 print_sockets(FILE *file)
 {
-	int i;
 	struct cg_task *t;
 	struct print_socket_udata udata;
 
 	fprintf(file, "%-5.5s %-22.22s %-22.22s %-11.11s %-5.5s %s\n",
 		       "Proto", "Local Address", "Foreign Address", "State ", "Idle", "Debug");
-	for (i = 0; i < g_cg_n_tasks; ++i) {
-		t = g_cg_tasks + i;
+
+	CG_TASK_FOREACH(t) {
 		udata.prsud_thread = t;
 		udata.prsud_file = file;
 		spinlock_lock(&t->t_lock);

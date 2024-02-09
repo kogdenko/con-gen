@@ -414,9 +414,8 @@ send:
 	 * so that it doesn't drift into the send window on sequence
 	 * number wraparound.
 	 */
-	if (t->t_tcp_do_outcksum) {
-		th->th_sum = tcp_cksum(ip, sizeof(*th) + optlen + len);
-	}
+	th->th_sum = tcp_cksum(ip, sizeof(*th) + optlen + len);
+
 	/*
 	 * In transmit state, time the transmission and arrange for
 	 * the retransmit.  In persist state, just set snd_max.

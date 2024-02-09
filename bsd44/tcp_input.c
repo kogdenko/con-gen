@@ -75,14 +75,10 @@ tcp_input(struct cg_task *t, struct ip *ip, int iphlen, int eth_flags)
 	 */
 	th_sum = th->th_sum;
 	th->th_sum = 0;
-	if (t->t_tcp_do_incksum) {
-		th->th_sum = tcp_cksum(ip, ip->ip_len);
-		if (th_sum != th->th_sum) {
-			cg_counter64_inc(t, &tcpstat.tcps_rcvbadsum);
-			if (t->t_tcp_do_incksum > 1) {
-				goto drop;
-			}
-		}
+	th->th_sum = tcp_cksum(ip, ip->ip_len);
+	if (th_sum != th->th_sum) {
+		cg_counter64_inc(t, &tcpstat.tcps_rcvbadsum);
+		goto drop;
 	}
 
 	/*

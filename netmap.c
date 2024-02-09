@@ -61,10 +61,10 @@ netmap_init_task(struct cg_task *t)
 static void
 netmap_init(void)
 {
-	int i;
+	struct cg_task *t;
 
-	for (i = 0; i < g_cg_n_tasks; ++i) {
-		netmap_init_task(g_cg_tasks + i);
+	CG_TASK_FOREACH(t) {
+		netmap_init_task(t);
 	}
 }
 

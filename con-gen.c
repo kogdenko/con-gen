@@ -19,10 +19,6 @@ static int m_done;
 static int Nflag = 1;
 static struct timeval report_tv;
 static int report_bytes_flag;
-static char http_request[1500];
-static char http_reply[1500];
-static int http_request_len;
-static int http_reply_len;
 static struct report_data report01;
 static int n_reports;
 static int n_reports_max;
@@ -40,8 +36,7 @@ static uint64_t tsc_mhz;
 
 int n_counters = 1;
 
-struct cg_task g_cg_tasks[CG_N_TASKS_MAX];
-int g_cg_n_tasks;
+struct dlist g_cg_task_head;
 
 static int g_transport = TRANSPORT_DEFAULT;
 
@@ -204,10 +199,10 @@ print_report_diffs(struct report_data *new, struct report_data *old)
 static void
 print_report(void)
 {
-	int i;
 	static int n;
 	struct report_data new;
 	int conns;
+	struct cg_task *t;
 
 	if (!g_fprint_report) {
 		return;
@@ -230,8 +225,8 @@ print_report(void)
 	}
 
 	conns = 0;
-	for (i = 0; i < g_cg_n_tasks; ++i) {
-		conns += g_cg_tasks[i].t_n_conns;
+	CG_TASK_FOREACH(t) {
+		conns += t->t_n_conns;
 	}
 
 	gettimeofday(&new.rd_tv, NULL);
@@ -254,11 +249,11 @@ print_report(void)
 static void
 quit(void)
 {
-	int i;
+	struct cg_task *t;
 
 	m_done = 1;
-	for (i = 0; i < g_cg_n_tasks; ++i) {
-		g_cg_tasks[i].t_done = 1;
+	CG_TASK_FOREACH(t) {
+		t->t_done = 1;
 	}
 }
 
@@ -531,7 +526,6 @@ thread_process(struct cg_task *t)
 static void *
 thread_routine(void *udata)
 {
-	int proto;
 	struct cg_task *t;
 
 	t = udata;
@@ -547,13 +541,7 @@ thread_routine(void *udata)
 
 	cg_init_timers(t);
 
-	proto = IPPROTO_TCP;
-
-	if (t->t_Lflag) {
-		bsd_server_listen(t, proto);
-	} else {
-		bsd_client_connect(t, proto);
-	}
+	bsd_start(t);
 
 	while (!t->t_done) {
 		thread_process(t);
@@ -704,16 +692,22 @@ io_parse_args(int argc, char **argv)
 }
 #endif // HAVE_DPDK
 
-static int
-thread_init(struct cg_task *t, struct cg_task *tmpl, int thread_idx, int argc, char **argv)
+static struct cg_task *
+thread_init(struct cg_task *tmpl, int task_index, int argc, char **argv)
 {
 	int rc, opt, option_index;
+	size_t task_sizeof;
 	char *endptr;
 	const char *optname;
 	long long optval;
+	struct cg_task *t;
+
+	task_sizeof = bsd_task_sizeof();
+	t = xmalloc(task_sizeof);
+	memset(t, 0, task_sizeof);
 
 	spinlock_init(&t->t_lock);
-	t->t_id = t - g_cg_tasks;
+	//t->t_id = t - g_cg_tasks;
 	t->t_tcp_rttdflt = TCPTV_SRTTDFLT / PR_SLOWHZ;
 	t->t_ifname[0] = '\0';
 	dlist_init(&t->t_available_head);
@@ -724,10 +718,6 @@ thread_init(struct cg_task *t, struct cg_task *tmpl, int thread_idx, int argc, c
 	t->t_rss_queue_id = RSS_QUEUE_ID_MAX;
 	if (tmpl == NULL) {
 		t->t_dst_cache_size = 100000;
-		t->t_ip_do_incksum = 2;
-		t->t_ip_do_outcksum = 2;
-		t->t_tcp_do_incksum = 2;
-		t->t_tcp_do_outcksum = 2;
 		t->t_tcp_do_wscale = 1;
 		t->t_tcp_do_timestamps = 1;
 		t->t_tcp_fintimo = 60 * NANOSECONDS_SECOND;
@@ -743,10 +733,6 @@ thread_init(struct cg_task *t, struct cg_task *tmpl, int thread_idx, int argc, c
 		strzcpy(t->t_ifname, tmpl->t_ifname, sizeof(t->t_ifname));
 		t->t_dst_cache_size = tmpl->t_dst_cache_size;
 		t->t_so_debug = tmpl->t_so_debug;
-		t->t_ip_do_incksum = tmpl->t_ip_do_incksum;
-		t->t_ip_do_outcksum = tmpl->t_ip_do_outcksum;
-		t->t_tcp_do_incksum = tmpl->t_tcp_do_incksum;
-		t->t_tcp_do_outcksum = tmpl->t_tcp_do_outcksum;
 		t->t_tcp_do_wscale = tmpl->t_tcp_do_wscale;
 		t->t_tcp_do_timestamps = tmpl->t_tcp_do_wscale;
 		t->t_tcp_twtimo = tmpl->t_tcp_twtimo;
@@ -774,6 +760,7 @@ thread_init(struct cg_task *t, struct cg_task *tmpl, int thread_idx, int argc, c
 				optval = -1;
 			}
 		}
+
 		switch (opt) {
 		case 0:
 			optname = long_options[option_index].name;
@@ -800,46 +787,6 @@ thread_init(struct cg_task *t, struct cg_task *tmpl, int thread_idx, int argc, c
 			} else if (!strcmp(optname, "dpdk")) {
 				g_transport = TRANSPORT_DPDK;
 #endif // HAVE_DPDK
-			} else if (!strcmp(optname, "ip-in-cksum")) {
-				if (optval < 0) {
-					goto err;
-				}
-				t->t_ip_do_incksum = optval;
-			} else if (!strcmp(optname, "ip-out-cksum")) {
-				if (optval < 0) {
-					goto err;
-				}
-				t->t_ip_do_outcksum = optval;
-			} else if (!strcmp(optname, "tcp-in-cksum")) {
-				if (optval < 0) {
-					goto err;
-				}
-				t->t_tcp_do_incksum = optval;
-			} else if (!strcmp(optname, "tcp-out-cksum")) {
-				if (optval < 0) {
-					goto err;
-				}
-				t->t_tcp_do_outcksum = optval;
-			} else if (!strcmp(optname, "in-cksum")) {
-				if (optval < 0) {
-					goto err;
-				}
-				t->t_ip_do_incksum = optval;
-				t->t_tcp_do_incksum = optval;
-			} else if (!strcmp(optname, "out-cksum")) {
-				if (optval < 0) {
-					goto err;
-				}
-				t->t_ip_do_outcksum = optval;
-				t->t_tcp_do_outcksum = optval;
-			} else if (!strcmp(optname, "cksum")) {
-				if (optval < 0) {
-					goto err;
-				}
-				t->t_ip_do_incksum = optval;
-				t->t_tcp_do_incksum = optval;
-				t->t_ip_do_outcksum = optval;
-				t->t_tcp_do_outcksum = optval;
 			} else if (!strcmp(optname, "tcp-wscale")) {
 				if (optval < 0) {
 					goto err;
@@ -884,102 +831,114 @@ thread_init(struct cg_task *t, struct cg_task *tmpl, int thread_idx, int argc, c
 				print_statistics = optval;
 			}
 			break;
+
 		case 'h':
 			usage();
 			exit(0);
+
 		case 'v':
 			verbose++;
 			break;
+
 		case 'i':
 			strzcpy(t->t_ifname, optarg, sizeof(t->t_ifname));
 			break;
+
 		case 'q':
 			if (optval < 0 || optval >= RSS_QUEUE_ID_MAX) {
 				goto err;
 			}
 			t->t_rss_queue_id = optval;
 			break;
+
 		case 's':
 			rc = scan_ip_range(&t->t_ip_laddr_min, &t->t_ip_laddr_max, optarg);
 			if (rc) {
 				goto err;
 			}
 			break;
+
 		case 'd':
 			rc = scan_ip_range(&t->t_ip_faddr_min, &t->t_ip_faddr_max, optarg);
 			if (rc) {
 				goto err;
 			}
 			break;
+
 		case 'S':
 			rc = ether_scanf(t->t_eth_laddr, optarg);
 			if (rc) {
 				goto err;
 			}
 			break;
+
 		case 'D':
 			rc = ether_scanf(t->t_eth_faddr, optarg);
 			if (rc) {
 				goto err;
 			}
 			break;
+
 		case 'a':
 			if (optval < 0) {
 				goto err;
 			}
 			t->t_affinity = optval;
 			break;
+
 		case 'n':
 			if (optval < 0) {
 				goto err;
 			}
 			t->t_nflag = optval;
 			break;
+
 		case 'c':
 			t->t_concurrency = strtoul(optarg, NULL, 10);
 			if (!t->t_concurrency) {
 				goto err;
 			}
 			break;
+
 		case 'p':
 			t->t_port = htons(strtoul(optarg, NULL, 10));
 			break;
+
 		case 'N':
 			Nflag = 0;
 			break;
+
 		case 'L':
 			t->t_Lflag = 1;
 			break;
+
 		default:
 err:
 			if (opt != 0) {
-				fprintf(stderr, "Invalid argument '-%c': %s\n", opt, optarg);
+				fprintf(stderr, "%d: Invalid argument '-%c': %s\n",
+						task_index, opt, optarg);
 			} else {
-				fprintf(stderr, "Invalid argument '--%s': %s\n", optname, optarg);
+				fprintf(stderr, "%d: Invalid argument '--%s': %s\n",
+						task_index, optname, optarg);
 			}
-			return -EINVAL;
+			free(t);
+			return NULL;
 		}
 	}
 
 	if (t->t_ifname[0] == '\0') {
-		fprintf(stderr, "Interface (-i) not specified for thread %d\n", thread_idx);
+		fprintf(stderr, "%d: Interface (-i) not specified\n", task_index);
 		usage();
-		return -EINVAL;
+		free(t);
+		return NULL;
 	}
 
 	htable_init(&t->t_in_htable, 4096, ip_socket_hash);
 
-	if (t->t_Lflag) {
-		t->t_http = http_reply;
-		t->t_http_len = http_reply_len;
-	} else {
-		t->t_http = http_request;
-		t->t_http_len = http_request_len;
-	}
-
 	t->t_counters = xmalloc(n_counters * sizeof(uint64_t));
 	memset(t->t_counters, 0, n_counters * sizeof(uint64_t));
-	return 0;
+
+	return t;
 }
 
 static void
@@ -1011,51 +970,36 @@ init_counters(counter64_t *a, int n)
 int
 main(int argc, char **argv)
 {
-	int i, rc, opt_off;
-	char hostname[64];
+	int rc, opt_off, task_index;
 	struct cg_task *t, *tmpl;
 
 	srand48(getpid() ^ time(NULL));
+
 	counter64_init(&if_ibytes);
 	counter64_init(&if_ipackets);
 	counter64_init(&if_obytes);
 	counter64_init(&if_opackets);
 	counter64_init(&if_imcasts);
+
 	INIT_STAT(udpstat);
 	INIT_STAT(tcpstat);
 	INIT_STAT(ipstat);
 	INIT_STAT(icmpstat);
+
 	sleep_compute_hz();
-	rc = gethostname(hostname, sizeof(hostname));
-	if (rc == -1) {
-		fprintf(stderr, "gethostname() failed (%s)\n", strerror(errno));
-		strcpy(hostname, "127.0.0.1");
-	} else {
-		hostname[sizeof(hostname) - 1] = '\0';
-	}
-	http_request_len = snprintf(http_request, sizeof(http_request),
-		"GET / HTTP/1.0\r\n"
-		"Host: %s\r\n"
-		"User-Agent: con-gen\r\n"
-		"\r\n",
-		hostname);	
-	http_reply_len = snprintf(http_reply, sizeof(http_reply), 
-		"HTTP/1.0 200 OK\r\n"
-		"Server: con-gen\r\n"
-		"Content-Type: text/html\r\n"
-		"Connection: close\r\n"
-		"Hi\r\n\r\n");
 
 	rc = io_parse_args(argc, argv);
 	argc -= rc;
 	argv += rc;
 
+	dlist_init(&g_cg_task_head);
+
 	tmpl = NULL;
+	task_index = 0;
 	opt_off = 0;
-	while (opt_off < argc - 1 && g_cg_n_tasks < CG_N_TASKS_MAX) {
-		t = g_cg_tasks + g_cg_n_tasks;
-		rc = thread_init(t, tmpl, g_cg_n_tasks, argc - opt_off, argv + opt_off);
-		if (rc) {
+	while (opt_off < argc - 1) {
+		t = thread_init(tmpl, task_index, argc - opt_off, argv + opt_off);
+		if (t == NULL) {
 			return EXIT_FAILURE;
 		}
 
@@ -1064,19 +1008,19 @@ main(int argc, char **argv)
 
 		tmpl = t;
 
-		g_cg_n_tasks++;
+		DLIST_INSERT_TAIL(&g_cg_task_head, t, list);
+		task_index++;
 	}
-	if (g_cg_n_tasks == 0) {
+	if (dlist_is_empty(&g_cg_task_head)) {
 		usage();
 		return EXIT_FAILURE;
 	}
 
 	set_transport(g_transport);
 	io_init();
+	bsd_init();
 
-	for (i = 0; i < g_cg_n_tasks; ++i) {
-		t = g_cg_tasks + i;
-
+	CG_TASK_FOREACH(t) {
 		if (!t->t_Lflag) {
 			if (t->t_dst_cache_size < 2 * t->t_concurrency) {
 				t->t_dst_cache_size = 2 * t->t_concurrency;
@@ -1085,9 +1029,7 @@ main(int argc, char **argv)
 		}
 	}
 
-	for (i = 0; i < g_cg_n_tasks; ++i) {
-		t = g_cg_tasks + i;
-
+	CG_TASK_FOREACH(t) {
 		rc = pthread_create(&t->t_pthread, NULL, thread_routine, t);
 		if (rc) {
 			fprintf(stderr, "pthread_create() failed (%s)\n", strerror(rc));
@@ -1097,8 +1039,7 @@ main(int argc, char **argv)
 
 	main_routine();	
 
-	for (i = 0; i < g_cg_n_tasks; ++i) {
-		t = g_cg_tasks + i;
+	CG_TASK_FOREACH(t) {
 		pthread_join(t->t_pthread, NULL);
 	}
 

@@ -48,14 +48,10 @@ ip_input(struct cg_task *t, struct ip *ip, int len, int eth_flags)
 		ip_sum = 0xffff;
 	}
 	ip->ip_sum = 0;
-	if (t->t_ip_do_incksum) {
-		ip->ip_sum = ip_cksum(ip);
-		if (ip->ip_sum != ip_sum) {
-			cg_counter64_inc(t, &ipstat.ips_badsum);
-			if (t->t_ip_do_incksum) {
-				return;
-			}
-		}
+	ip->ip_sum = ip_cksum(ip);
+	if (ip->ip_sum != ip_sum) {
+		cg_counter64_inc(t, &ipstat.ips_badsum);
+		return;
 	}
 
 	/*

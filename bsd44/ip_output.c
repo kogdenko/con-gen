@@ -60,9 +60,7 @@ ip_output(struct cg_task *t, struct packet *pkt, struct ip *ip)
 	ip->ip_len = htons((u_short)ip->ip_len);
 	ip->ip_off = htons((u_short)ip->ip_off);
 	ip->ip_sum = 0;
-	if (t->t_ip_do_outcksum) {
-		ip->ip_sum = ip_cksum(ip);
-	}
+	ip->ip_sum = ip_cksum(ip);
 	eh = ((struct ether_header *)ip) - 1;
 	eh->ether_type = htons(ETHERTYPE_IP);
  	memcpy(eh->ether_shost, t->t_eth_laddr, sizeof(eh->ether_shost));

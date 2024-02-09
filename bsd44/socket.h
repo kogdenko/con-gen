@@ -181,9 +181,18 @@ int bsd_listen(struct socket *so);
 int bsd_accept(struct socket *, struct socket **);
 int bsd_close(struct cg_task *, struct socket *);
 
+struct cg_bsd_task {
+	struct cg_task t_base;
+};
+
+#define bsd_task_sizeof() sizeof(struct cg_bsd_task)
+
 void bsd_flush(struct cg_task *);
-void bsd_server_listen(struct cg_task *, int);
-void bsd_client_connect(struct cg_task *, int proto);
+void bsd_init(void);
+void bsd_start(struct cg_task *);
+
+//void bsd_server_listen(struct cg_task *, int);
+//void bsd_client_connect(struct cg_task *, int proto);
 void bsd_eth_in(struct cg_task *, void *, int);
 void bsd_get_so_info(void *, struct socket_info *);
 int bsd_shutdown(struct cg_task *t, struct socket *so, int how);

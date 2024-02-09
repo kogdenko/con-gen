@@ -54,9 +54,6 @@ struct rte_mbuf;
 #include "list.h"
 #include "htable.h"
 
-// Define
-#define CG_N_TASKS_MAX 256
-
 #define CG_TX_PENDING_MAX 2048
 
 #define EPHEMERAL_MIN 5000
@@ -253,6 +250,10 @@ struct cg_timer_ring;
 
 struct cg_task {
 	struct spinlock t_lock;
+	
+	struct dlist list;
+	volatile int t_done;
+
 	struct dlist t_available_head;
 	struct dlist t_pending_head;
 	unsigned t_n_pending;
@@ -262,19 +263,6 @@ struct cg_task {
 	uint64_t t_timers_last_time;
 
 	u_char t_busyloop;
-	u_char t_id;
-	volatile int t_done;
-	u_char t_Lflag;
-	u_char t_so_debug;
-	u_char t_ip_do_incksum;
-	u_char t_ip_do_outcksum;
-	u_char t_tcp_do_incksum;
-	u_char t_tcp_do_outcksum;
-	int t_tcp_rttdflt;
-	u_char t_tcp_do_wscale;
-	u_char t_tcp_do_timestamps;
-	u_int t_nflag;
-	be16_t t_port;
 	u_short t_mtu;
 	u_char t_rss_queue_num;
 	u_char t_rss_queue_id;
@@ -311,18 +299,10 @@ struct cg_task {
 	struct ip_socket *t_dst_cache;
 	int t_dst_cache_size;
 	int t_dst_cache_i;
-	struct dlist t_so_pool;
-	struct dlist t_so_txq;
-	struct dlist t_sob_pool;
 	int t_n_conns;
-	int t_n_requests;
 	int t_concurrency;
 	uint64_t t_tsc;
 	uint64_t t_time;
-	uint32_t t_tcp_now; // for RFC 1323 timestamps
-	uint64_t t_tcp_nowage;
-	uint64_t t_tcp_twtimo;  // max seg lifetime (hah!)
-	uint64_t t_tcp_fintimo;
 	u_char t_eth_laddr[6];
 	u_char t_eth_faddr[6];
 	uint32_t t_ip_laddr_min;
@@ -332,14 +312,31 @@ struct cg_task {
 	uint32_t t_ip_laddr_connect;
 	uint32_t t_ip_faddr_connect;
 	uint16_t t_ip_lport_connect;
-	char *t_http;
-	int t_http_len;
 	htable_t t_in_htable;
 	void *t_in_binded[EPHEMERAL_MIN];
 	int t_affinity;
 	pthread_t t_pthread;
 	char t_ifname[IFNAMSIZ];
 	uint64_t *t_counters;
+
+	// BSD44
+	be16_t t_port;
+	u_char t_so_debug;
+	int t_tcp_rttdflt;
+	u_char t_Lflag;
+	u_char t_tcp_do_wscale;
+	u_char t_tcp_do_timestamps;
+	u_int t_nflag;
+	int t_n_requests;
+	struct dlist t_so_pool;
+	struct dlist t_so_txq;
+	struct dlist t_sob_pool;
+	uint32_t t_tcp_now; // for RFC 1323 timestamps
+	uint64_t t_tcp_nowage;
+	uint64_t t_tcp_twtimo;  // max seg lifetime (hah!)
+	uint64_t t_tcp_fintimo;
+	char *t_http;
+	int t_http_len;
 };
 
 struct transport_ops {
@@ -413,8 +410,6 @@ void ifaddr_free_ephemeral_port(struct if_addr *, uint16_t);
 int alloc_ephemeral_port(uint32_t *, uint16_t *);
 void free_ephemeral_port(uint32_t, uint16_t);
 
-uint32_t select_faddr(void);
-
 extern int verbose;
 extern int n_counters;
 
@@ -424,8 +419,10 @@ extern counter64_t if_obytes;
 extern counter64_t if_opackets;
 extern counter64_t if_imcasts;
 
-extern int g_cg_n_tasks;
-extern struct cg_task g_cg_tasks[CG_N_TASKS_MAX];
+extern struct dlist g_cg_task_head;
+
+#define CG_TASK_FOREACH(t) \
+	DLIST_FOREACH(t, &g_cg_task_head, list)
 
 
 #endif // CON_GEN__SUBR_H
