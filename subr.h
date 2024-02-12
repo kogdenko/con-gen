@@ -17,6 +17,7 @@
 #include <inttypes.h>
 #include <signal.h>
 #include <unistd.h>
+#include <getopt.h>
 #include <poll.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -347,6 +348,8 @@ int ffs64(uint64_t x);
 
 
 void *xmalloc(size_t);
+char *xstrdup(const char *);
+void *xmemdup(const void *, size_t);
 
 void panic3(const char *, int, int, const char *, ...)
 	__attribute__((format(printf, 4, 5)));

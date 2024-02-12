@@ -244,6 +244,28 @@ xmalloc(size_t size)
 	return ptr;
 }
 
+char *
+xstrdup(const char *s)
+{
+	size_t len;
+	char *cp;
+
+	len = strlen(s);
+	cp = xmemdup(s, len);
+	return cp;
+}
+
+void *
+xmemdup(const void *p, size_t len)
+{
+	void *cp;
+
+	cp = xmalloc(len);
+	memcpy(cp, p, len);
+	return cp;
+}
+
+
 void
 panic3(const char *file, int line, int errnum, const char *format, ...)
 {

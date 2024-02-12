@@ -3,7 +3,6 @@
 #include "./bsd44/ip.h"
 #include "timer.h"
 #include "netstat.h"
-#include <getopt.h>
 
 struct report_data {
 	uint64_t rd_ipackets;
@@ -39,6 +38,8 @@ int n_counters = 1;
 struct dlist g_cg_task_head;
 
 static int g_transport = TRANSPORT_DEFAULT;
+
+static struct bsd_plugin *g_cg_plugin;
 
 static const char *
 norm2(char *buf, double val, char *fmt, int normalize)
@@ -562,7 +563,6 @@ usage(void)
 	"\t-D {hwaddr}:  Destination ethernet address\n"
 	"\t-c {num}:  Number of parallel connections\n"
 	"\t-a {cpu-id}:  Set CPU affinity\n"
-	"\t-n {num}:  Number of connections of con-gen (0 meaning infinite)\n"
 	"\t-N:  Do not normalize units (i.e., use bps, pps instead of Mbps, Kpps, etc.).\n"
 	"\t-L:  Operate in server mode\n"
 	"\t--so-debug:  Enable SO_DEBUG option on all sockets\n"
@@ -579,19 +579,17 @@ usage(void)
 	"\t--dpdk:  USE DPDK transport\n"
 #endif
 	"\t--dst-cache:  Number of precomputed connect tuples (default: 100000)\n"
-	"\t--tcp-wscale {0|1}:  On/Off wscale TCP option\n"
-	"\t--tcp-timestamps {0|1}:  On/Off timestamp TCP option\n"
-	"\t--tcp-fin-timeout {seconds}:  Specify FIN timeout\n"
-	"\t--tcp-timewait-timeout {seconds}:  Specify TIME_WAIT timeout\n"
 	"\t--report-bytes {0|1}:  On/Off byte statistic in report\n"
 	"\t--reports {num}:  Number of reports of con-gen (0 meaning infinite)\n"
 	"\t--print-report {0|1}:  On/Off printing report\n"
 	"\t--print-banner {0|1}:  On/Off printing report banner every 20 seconds\n"
 	"\t--print-statistics {0|1}:  On/Off printing statistics at the end of execution\n"
+	"%s",
+	g_cg_plugin->plugin_help
 	);
 }
 
-static struct option long_options[] = {
+static struct option g_cg_base_long_options[] = {
 	{ "help", no_argument, 0, 'h' },
 	{ "verbose", no_argument, 0, 'v' },
 	{ "dst-cache", required_argument, 0, 0 },
@@ -608,19 +606,52 @@ static struct option long_options[] = {
 #ifdef HAVE_DPDK
 	{ "dpdk", no_argument, 0, 0 },
 #endif
-	{ "tcp-wscale", required_argument, 0, 0 },
-	{ "tcp-timestamps", required_argument, 0, 0 },
-	{ "tcp-fin-timeout", required_argument, 0, 0 },
-	{ "tcp-timewait-timeout", required_argument, 0, 0 },
 	{ "report-bytes", required_argument, 0, 0 },
 	{ "reports", required_argument, 0, 0 },
 	{ "print-report", required_argument, 0, 0 },
 	{ "print-banner", required_argument, 0, 0 },
 	{ "print-statistics", required_argument, 0, 0 },
-	{ 0, 0, 0, 0 }
+	{ NULL, 0, 0, 0 }
 };
 
-static const char *short_options = "hvi:q:s:d:S:D:a:n:c:p:NL";
+static const char *g_cg_base_short_options = "hvi:q:s:d:S:D:a:n:c:p:NL";
+
+static struct option *g_cg_long_options;
+static char *g_cg_short_options;
+
+static int
+cg_long_options_len(struct option *long_options)
+{
+	int len;
+	struct option *o;
+
+	len = 0;
+	for (o = long_options; o->name != NULL; ++o) {
+		len++;
+	}
+	return len;
+}
+
+static void
+cg_create_options(void)
+{
+	int len0, len1;
+
+	len0 = cg_long_options_len(g_cg_base_long_options);
+	len1 = cg_long_options_len(g_cg_plugin->plugin_long_options);
+
+	g_cg_long_options = xmalloc((len0 + len1 + 1) * sizeof(struct option));
+	memcpy(g_cg_long_options, g_cg_base_long_options, len0 * sizeof(struct option));
+	memcpy(g_cg_long_options + len0, g_cg_plugin->plugin_long_options,
+			(len1 + 1) *sizeof(struct option));
+
+	len0 = strlen(g_cg_base_short_options);
+	len1 = strlen(g_cg_plugin->plugin_short_options);
+
+	g_cg_short_options = xmalloc(len0 + len1 + 1);
+	memcpy(g_cg_short_options, g_cg_base_short_options, len0);
+	memcpy(g_cg_short_options + len0, g_cg_plugin->plugin_short_options, len1 + 1);
+}
 
 #ifdef HAVE_DPDK
 int dpdk_parse_args(int argc, char **argv);
@@ -715,8 +746,8 @@ thread_init(struct cg_task *tmpl, int task_index, int argc, char **argv)
 		t->t_Lflag = tmpl->t_Lflag;
 	}
 
-	while ((opt = getopt_long(argc, argv, short_options,
-			long_options, &option_index)) != -1) {
+	while ((opt = getopt_long(argc, argv, g_cg_short_options,
+			g_cg_long_options, &option_index)) != -1) {
 		optval = -1;
 		if (optarg != NULL) {
 			optval = strtoll(optarg, &endptr, 10);
@@ -727,7 +758,7 @@ thread_init(struct cg_task *tmpl, int task_index, int argc, char **argv)
 
 		switch (opt) {
 		case 0:
-			optname = long_options[option_index].name;
+			optname = g_cg_long_options[option_index].name;
 			if (!strcmp(optname, "dst-cache")) {
 				if (optval < 0) {
 					goto err;
@@ -793,6 +824,9 @@ thread_init(struct cg_task *tmpl, int task_index, int argc, char **argv)
 					goto err;
 				}
 				print_statistics = optval;
+			} else {
+				rc = bsd_set_option(t, opt, optname, optarg, optval);
+				goto err;
 			}
 			break;
 
@@ -877,16 +911,20 @@ thread_init(struct cg_task *tmpl, int task_index, int argc, char **argv)
 			break;
 
 		default:
+			rc = bsd_set_option(t, opt, NULL, optarg, optval);
+			if (rc < 0) {
 err:
-			if (opt != 0) {
-				fprintf(stderr, "%d: Invalid argument '-%c': %s\n",
-						task_index, opt, optarg);
-			} else {
-				fprintf(stderr, "%d: Invalid argument '--%s': %s\n",
-						task_index, optname, optarg);
+				if (opt != 0) {
+					fprintf(stderr, "%d: Invalid argument '-%c': %s\n",
+							task_index, opt, optarg);
+				} else {
+					fprintf(stderr, "%d: Invalid argument '--%s': %s\n",
+							task_index, optname, optarg);
+				}
+				free(t);
+				return NULL;
 			}
-			free(t);
-			return NULL;
+			break;
 		}
 	}
 
@@ -937,6 +975,10 @@ main(int argc, char **argv)
 	int rc, opt_off, task_index;
 	struct cg_task *t, *tmpl;
 
+	g_cg_plugin = cg_bsd_create_plugin();
+
+	cg_create_options();
+
 	srand48(getpid() ^ time(NULL));
 
 	counter64_init(&if_ibytes);
@@ -979,8 +1021,6 @@ main(int argc, char **argv)
 		usage();
 		return EXIT_FAILURE;
 	}
-
-	dbg("111");
 
 	set_transport(g_transport);
 	io_init();

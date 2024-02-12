@@ -208,11 +208,12 @@ struct cg_bsd_task {
 
 
 struct bsd_plugin {
-	struct option *long_options;
-	char *short_options;
-	char *help;
+	struct option *plugin_long_options;
+	char *plugin_short_options;
+	char *plugin_help;
 };
 
+struct bsd_plugin *cg_bsd_create_plugin(void);
 
 #define cg_bsd_get_task(tb) cg_container_of(tb, struct cg_bsd_task, t_base)
 
@@ -229,7 +230,7 @@ int bsd_shutdown(struct cg_task *t, struct socket *so, int how);
 int bsd_setsockopt(struct socket *, int, int, void *, int);
 int bsd_getsockopt(struct socket *, int, int, void *, int *);
 void bsd_update(struct cg_task *t);
-
+int bsd_set_option(struct cg_task *, int, const char *, char *, long long);
 
 
 

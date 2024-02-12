@@ -17,6 +17,55 @@ static char http_reply[1500];
 static int http_request_len;
 static int http_reply_len;
 
+int
+bsd_set_option(struct cg_task *tb, int opt, const char *optname,  char *optarg, long long optval)
+{
+	struct cg_bsd_task *t;
+
+	t = cg_bsd_get_task(tb);
+
+	switch (opt) {
+	case '0':
+		if (!strcmp(optname, "so-debug")) {
+			t->t_so_debug = 1;
+		} else if (!strcmp(optname, "tcp-wscale")) {
+			if (optval < 0) {
+				 return -EINVAL;
+			}
+			t->t_tcp_do_wscale = optval;
+		} else if (!strcmp(optname, "tcp-timestamps")) {
+			if (optval < 0) {
+				return -EINVAL;
+			}
+			t->t_tcp_do_timestamps = optval;
+		} else if (!strcmp(optname, "tcp-fin-timeout")) {
+			if (optval < 30) {
+				return -EINVAL;
+			}
+			t->t_tcp_fintimo = optval * NANOSECONDS_SECOND;
+		} else if (!strcmp(optname, "tcp-timewait-timeout")) {
+			if (optval < 0) {
+				return -EINVAL;
+			}
+			t->t_tcp_twtimo = optval * NANOSECONDS_SECOND;
+		} else {
+			return -ENOTSUP;
+		}
+		break;
+
+	case 'n':
+		if (optval < 0) {
+			return -EINVAL;
+		}
+		t->t_nflag = optval;
+		break;
+
+	default:
+		return -ENOTSUP;
+	}
+
+	return 0;
+}
 
 void
 bsd_init(void)
@@ -341,3 +390,32 @@ bsd_alloc_task(struct cg_task *tmplb)
 	return &t->t_base;
 }
 
+
+static const char *g_cg_plugin_help = 
+	"\t-n {num}:  Number of connections of con-gen (0 meaning infinite)\n"
+	"\t--tcp-wscale {0|1}:  On/Off wscale TCP option\n"
+	"\t--tcp-timestamps {0|1}:  On/Off timestamp TCP option\n"
+	"\t--tcp-fin-timeout {seconds}:  Specify FIN timeout\n"
+	"\t--tcp-timewait-timeout {seconds}:  Specify TIME_WAIT timeout\n";
+
+static struct option g_cg_plugin_long_options[] = {
+	{ "tcp-wscale", required_argument, 0, 0 },
+	{ "tcp-timestamps", required_argument, 0, 0 },
+	{ "tcp-fin-timeout", required_argument, 0, 0 },
+	{ "tcp-timewait-timeout", required_argument, 0, 0 },
+	{ NULL, 0, 0, 0 },
+};
+
+struct bsd_plugin *
+cg_bsd_create_plugin(void)
+{
+	struct bsd_plugin *plugin;
+
+	plugin = xmalloc(sizeof(*plugin));
+	plugin->plugin_short_options = xstrdup("n:");
+	plugin->plugin_long_options = xmemdup(g_cg_plugin_long_options,
+			sizeof(g_cg_plugin_long_options));
+	plugin->plugin_help = xstrdup(g_cg_plugin_help);
+
+	return plugin;
+}
