@@ -262,6 +262,7 @@ struct cg_task {
 	struct cg_timer_ring *t_timer_rings;
 	uint64_t t_timers_last_time;
 
+	u_char t_Lflag;
 	u_char t_busyloop;
 	u_short t_mtu;
 	u_char t_rss_queue_num;
@@ -305,6 +306,7 @@ struct cg_task {
 	uint64_t t_time;
 	u_char t_eth_laddr[6];
 	u_char t_eth_faddr[6];
+	be16_t t_port;
 	uint32_t t_ip_laddr_min;
 	uint32_t t_ip_laddr_max;
 	uint32_t t_ip_faddr_min;
@@ -320,23 +322,6 @@ struct cg_task {
 	uint64_t *t_counters;
 
 	// BSD44
-	be16_t t_port;
-	u_char t_so_debug;
-	int t_tcp_rttdflt;
-	u_char t_Lflag;
-	u_char t_tcp_do_wscale;
-	u_char t_tcp_do_timestamps;
-	u_int t_nflag;
-	int t_n_requests;
-	struct dlist t_so_pool;
-	struct dlist t_so_txq;
-	struct dlist t_sob_pool;
-	uint32_t t_tcp_now; // for RFC 1323 timestamps
-	uint64_t t_tcp_nowage;
-	uint64_t t_tcp_twtimo;  // max seg lifetime (hah!)
-	uint64_t t_tcp_fintimo;
-	char *t_http;
-	int t_http_len;
 };
 
 struct transport_ops {
@@ -400,7 +385,9 @@ int multiplexer_add(struct cg_task *, int);
 void multiplexer_pollout(struct cg_task *, int);
 int multiplexer_get_events(struct cg_task *, int);
 
-int ip_connect(struct cg_task *, struct ip_socket *, uint32_t *);
+int cg_so_connect(struct cg_task *, struct ip_socket *, uint32_t *);
+int cg_so_attach(struct cg_task *, struct ip_socket *, uint32_t *);
+
 void ip_disconnect(struct cg_task *, struct ip_socket *);
 
 void ifaddr_init(struct if_addr *);
@@ -420,6 +407,8 @@ extern counter64_t if_opackets;
 extern counter64_t if_imcasts;
 
 extern struct dlist g_cg_task_head;
+
+extern uint64_t g_cg_cpu_mhz;
 
 #define CG_TASK_FOREACH(t) \
 	DLIST_FOREACH(t, &g_cg_task_head, list)

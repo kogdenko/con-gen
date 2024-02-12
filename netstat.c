@@ -587,11 +587,12 @@ print_socket(void *udata, void *e)
 	FILE *file;
 	const char *state, *proto;
 	char bl[64], bf[64];
-	struct cg_task *t;
-	struct socket_info x;
+	//struct cg_task *t;
+	struct socket_info x; // TODO: tcp_info structure
 
-	t = ((struct print_socket_udata *)udata)->prsud_thread;
+//	t = ((struct print_socket_udata *)udata)->prsud_thread;
 	file = ((struct print_socket_udata *)udata)->prsud_file;
+
 	memset(&x, 0, sizeof(x));
 	bsd_get_so_info(e, &x);
 	tmp.s_addr = x.soi_laddr;
@@ -609,8 +610,12 @@ print_socket(void *udata, void *e)
 		proto = "UDP";
 		state = "";
 	}
-	fprintf(file, "%-5.5s %-22.22s %-22.22s %-11.11s %-5u %s\n",
-			proto, bl, bf, state, t->t_tcp_now - x.soi_idle, x.soi_debug);
+
+	fprintf(file, "%-5.5s %-22.22s %-22.22s %-11.11s", proto, bl, bf, state);
+
+//	fprintf(file, " %-5u %s", t->t_tcp_now - x.soi_idle, x.soi_debug);
+
+	fprintf(file, "\n");
 }
 
 void
@@ -619,8 +624,12 @@ print_sockets(FILE *file)
 	struct cg_task *t;
 	struct print_socket_udata udata;
 
-	fprintf(file, "%-5.5s %-22.22s %-22.22s %-11.11s %-5.5s %s\n",
-		       "Proto", "Local Address", "Foreign Address", "State ", "Idle", "Debug");
+	fprintf(file, "%-5.5s %-22.22s %-22.22s %-11.11s",
+		       "Proto", "Local Address", "Foreign Address", "State ");
+
+//	fprintf(" %-5.5s %s", "Idle", "Debug");
+
+	fprintf(file, "\n");
 
 	CG_TASK_FOREACH(t) {
 		udata.prsud_thread = t;

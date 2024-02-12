@@ -32,7 +32,7 @@ counter64_t if_obytes;
 counter64_t if_opackets;
 counter64_t if_imcasts;
 
-static uint64_t tsc_mhz;
+uint64_t g_cg_cpu_mhz;
 
 int n_counters = 1;
 
@@ -473,7 +473,7 @@ static void
 thread_process(struct cg_task *t)
 {
 	int i;
-	uint64_t now, age;
+	uint64_t ticks;
 	struct packet *pkt;
 	struct timespec to;
 	struct pollfd pfds[ARRAY_SIZE(t->t_pfds)];
@@ -485,16 +485,13 @@ thread_process(struct cg_task *t)
 		to.tv_nsec = 20;
 		ppoll(pfds, t->t_pfd_num, &to, NULL);
 	}
-	now = rdtsc();
-	if (now > t->t_tsc) {
-		t->t_time = 1000llu * now / tsc_mhz;
-		age = t->t_tcp_nowage + NANOSECONDS_SECOND/PR_SLOWHZ;
-		if (t->t_time >= age) {
-			t->t_tcp_now++;
-			t->t_tcp_nowage += NANOSECONDS_SECOND/PR_SLOWHZ;
-		}
+	ticks = rdtsc();
+	if (ticks > t->t_tsc) {
+		t->t_time = 1000llu * ticks / g_cg_cpu_mhz;
+		bsd_update(t);
+
 	}
-	t->t_tsc = now;
+	t->t_tsc = ticks;
 	if (t->t_busyloop) {
 		io_rx(t, INT_MAX);
 	} else {
@@ -535,9 +532,7 @@ thread_routine(void *udata)
 	}
 
 	t->t_tsc = rdtsc();
-	t->t_time = 1000 * t->t_tsc / tsc_mhz;
-	t->t_tcp_now = 1;
-	t->t_tcp_nowage = t->t_time;
+	t->t_time = 1000 * t->t_tsc / g_cg_cpu_mhz;
 
 	cg_init_timers(t);
 
@@ -584,13 +579,6 @@ usage(void)
 	"\t--dpdk:  USE DPDK transport\n"
 #endif
 	"\t--dst-cache:  Number of precomputed connect tuples (default: 100000)\n"
-	"\t--ip-in-cksum {0|1}:  On/Off IP input checksum calculation\n"
-	"\t--ip-out-cksum {0|1}:  On/Off IP output checksum calculation\n"
-	"\t--tcp-in-cksum {0|1}:  On/Off TCP input checksum calculation\n"
-	"\t--tcp-out-cksum {0|1}: On/Off TCP output checksum calculation\n"
-	"\t--in-cksum {0|1}:  On/Off input checksum calculation\n"
-	"\t--out-cksum {0|1}:  On/Off output checksum calculation\n"
-	"\t--cksum {0|1}:  On/Off checksum calculation\n"
 	"\t--tcp-wscale {0|1}:  On/Off wscale TCP option\n"
 	"\t--tcp-timestamps {0|1}:  On/Off timestamp TCP option\n"
 	"\t--tcp-fin-timeout {seconds}:  Specify FIN timeout\n"
@@ -620,13 +608,6 @@ static struct option long_options[] = {
 #ifdef HAVE_DPDK
 	{ "dpdk", no_argument, 0, 0 },
 #endif
-	{ "ip-in-cksum", required_argument, 0, 0 },
-	{ "ip-out-cksum", required_argument, 0, 0 },
-	{ "tcp-in-cksum", required_argument, 0, 0 },
-	{ "tcp-out-cksum", required_argument, 0, 0 },
-	{ "in-cksum", required_argument, 0, 0 },
-	{ "out-cksum", required_argument, 0, 0 },
-	{ "cksum", required_argument, 0, 0 },
 	{ "tcp-wscale", required_argument, 0, 0 },
 	{ "tcp-timestamps", required_argument, 0, 0 },
 	{ "tcp-fin-timeout", required_argument, 0, 0 },
@@ -696,31 +677,20 @@ static struct cg_task *
 thread_init(struct cg_task *tmpl, int task_index, int argc, char **argv)
 {
 	int rc, opt, option_index;
-	size_t task_sizeof;
 	char *endptr;
 	const char *optname;
 	long long optval;
 	struct cg_task *t;
 
-	task_sizeof = bsd_task_sizeof();
-	t = xmalloc(task_sizeof);
-	memset(t, 0, task_sizeof);
+	t = bsd_alloc_task(tmpl);
 
 	spinlock_init(&t->t_lock);
-	//t->t_id = t - g_cg_tasks;
-	t->t_tcp_rttdflt = TCPTV_SRTTDFLT / PR_SLOWHZ;
 	t->t_ifname[0] = '\0';
 	dlist_init(&t->t_available_head);
 	dlist_init(&t->t_pending_head);
-	dlist_init(&t->t_so_txq);
-	dlist_init(&t->t_so_pool);
-	dlist_init(&t->t_sob_pool);
 	t->t_rss_queue_id = RSS_QUEUE_ID_MAX;
 	if (tmpl == NULL) {
 		t->t_dst_cache_size = 100000;
-		t->t_tcp_do_wscale = 1;
-		t->t_tcp_do_timestamps = 1;
-		t->t_tcp_fintimo = 60 * NANOSECONDS_SECOND;
 		t->t_port = htons(80);
 		t->t_mtu = 522;
 		t->t_concurrency = 1;
@@ -732,12 +702,6 @@ thread_init(struct cg_task *tmpl, int task_index, int argc, char **argv)
 	} else {
 		strzcpy(t->t_ifname, tmpl->t_ifname, sizeof(t->t_ifname));
 		t->t_dst_cache_size = tmpl->t_dst_cache_size;
-		t->t_so_debug = tmpl->t_so_debug;
-		t->t_tcp_do_wscale = tmpl->t_tcp_do_wscale;
-		t->t_tcp_do_timestamps = tmpl->t_tcp_do_wscale;
-		t->t_tcp_twtimo = tmpl->t_tcp_twtimo;
-		t->t_tcp_fintimo = tmpl->t_tcp_fintimo;
-		t->t_nflag = tmpl->t_nflag;
 		t->t_port = tmpl->t_port;
 		t->t_mtu = tmpl->t_mtu;
 		t->t_concurrency = tmpl->t_concurrency;
@@ -769,8 +733,8 @@ thread_init(struct cg_task *tmpl, int task_index, int argc, char **argv)
 					goto err;
 				}
 				t->t_dst_cache_size = optval;
-			} else if (!strcmp(optname, "so-debug")) {
-				t->t_so_debug = 1;
+//			} else if (!strcmp(optname, "so-debug")) {
+//				t->t_so_debug = 1;
 #ifdef HAVE_NETMAP
 			} else if (!strcmp(optname, "netmap")) {
 				g_transport = TRANSPORT_NETMAP;
@@ -787,26 +751,26 @@ thread_init(struct cg_task *tmpl, int task_index, int argc, char **argv)
 			} else if (!strcmp(optname, "dpdk")) {
 				g_transport = TRANSPORT_DPDK;
 #endif // HAVE_DPDK
-			} else if (!strcmp(optname, "tcp-wscale")) {
-				if (optval < 0) {
-					goto err;
-				}
-				t->t_tcp_do_wscale = optval;
-			} else if (!strcmp(optname, "tcp-timestamps")) {
-				if (optval < 0) {
-					goto err;
-				}
-				t->t_tcp_do_timestamps = optval;
-			} else if (!strcmp(optname, "tcp-fin-timeout")) {
-				if (optval < 30) {
-					goto err;
-				}
-				t->t_tcp_fintimo = optval * NANOSECONDS_SECOND;
-			} else if (!strcmp(optname, "tcp-timewait-timeout")) {
-				if (optval < 0) {
-					goto err;
-				}
-				t->t_tcp_twtimo = optval * NANOSECONDS_SECOND;
+//			} else if (!strcmp(optname, "tcp-wscale")) {
+//				if (optval < 0) {
+//					goto err;
+//				}
+//				t->t_tcp_do_wscale = optval;
+//			} else if (!strcmp(optname, "tcp-timestamps")) {
+//				if (optval < 0) {
+//					goto err;
+//				}
+//				t->t_tcp_do_timestamps = optval;
+//			} else if (!strcmp(optname, "tcp-fin-timeout")) {
+//				if (optval < 30) {
+//					goto err;
+//				}
+//				t->t_tcp_fintimo = optval * NANOSECONDS_SECOND;
+//			} else if (!strcmp(optname, "tcp-timewait-timeout")) {
+//				if (optval < 0) {
+//					goto err;
+//				}
+//				t->t_tcp_twtimo = optval * NANOSECONDS_SECOND;
 			} else if (!strcmp(optname, "report-bytes")) {
 				report_bytes_flag = 1;
 			} else if (!strcmp(optname, "reports")) {
@@ -886,11 +850,11 @@ thread_init(struct cg_task *tmpl, int task_index, int argc, char **argv)
 			t->t_affinity = optval;
 			break;
 
-		case 'n':
-			if (optval < 0) {
-				goto err;
-			}
-			t->t_nflag = optval;
+//		case 'n':
+//			if (optval < 0) {
+//				goto err;
+//			}
+//			t->t_nflag = optval;
 			break;
 
 		case 'c':
@@ -950,7 +914,7 @@ sleep_compute_hz(void)
 	usleep(10000);
 	t2 = rdtsc();
 	tsc_hz = (t2 - t) * 100;
-	tsc_mhz = tsc_hz / 1000000;
+	g_cg_cpu_mhz = tsc_hz / 1000000;
 	assert(tsc_hz);
 }
 
@@ -1015,6 +979,8 @@ main(int argc, char **argv)
 		usage();
 		return EXIT_FAILURE;
 	}
+
+	dbg("111");
 
 	set_transport(g_transport);
 	io_init();

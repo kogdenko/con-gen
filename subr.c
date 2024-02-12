@@ -578,55 +578,70 @@ spinlock_unlock(struct spinlock *sl)
 }
 
 static struct ip_socket *
-ip_socket_get(struct cg_task *t, struct ip_socket *x, uint32_t h)
+cg_so_get(struct cg_task *t, struct ip_socket *x, uint32_t h)
 {
 	struct dlist *b;
 	struct ip_socket *so;
 
 	b = htable_bucket_get(&t->t_in_htable, h);
 	DLIST_FOREACH(so, b, ipso_list) {
-		if (so->ipso_laddr == x->ipso_laddr && so->ipso_faddr == x->ipso_faddr &&
-				so->ipso_lport == x->ipso_lport &&
-				so->ipso_fport == x->ipso_fport) {
+		if (so->ipso_laddr == x->ipso_laddr &&
+		    so->ipso_faddr == x->ipso_faddr &&
+		    so->ipso_lport == x->ipso_lport &&
+		    so->ipso_fport == x->ipso_fport) {
 			return so;
 		}
 		
 	}
+
 	return NULL;
 }
 
 int
-ip_connect(struct cg_task *t, struct ip_socket *new, uint32_t *ph)
+cg_so_attach(struct cg_task *t, struct ip_socket *new, uint32_t *ph)
+{
+	uint32_t h;
+
+	new->ipso_cache = NULL;
+	h = SO_HASH(new->ipso_faddr, new->ipso_lport, new->ipso_fport);
+	if (cg_so_get(t, new, h) != NULL) {
+		return -EADDRINUSE;
+	} else {
+		htable_add(&t->t_in_htable, &new->ipso_list, h);
+		t->t_n_conns++;
+		if (ph != NULL) {
+			*ph = h;
+		}
+		return 0;
+	}
+}
+
+int
+cg_so_connect(struct cg_task *t, struct ip_socket *new, uint32_t *ph)
 {
 	int i;
 	uint32_t h;
 	struct ip_socket *cache;
 
 	new->ipso_cache = NULL;
-	if (t->t_Lflag) {
-		h = SO_HASH(new->ipso_faddr, new->ipso_lport, new->ipso_fport);
-		if (ip_socket_get(t, new, h) != NULL) {
-			return -EADDRINUSE;
+	for (i = 0; i < t->t_dst_cache_size; ++i) {
+		cache = t->t_dst_cache + t->t_dst_cache_i;
+		t->t_dst_cache_i++;
+		if (t->t_dst_cache_i == t->t_dst_cache_size) {
+			t->t_dst_cache_i = 0;
 		}
-	} else {
-		for (i = 0; i < t->t_dst_cache_size; ++i) {
-			cache = t->t_dst_cache + t->t_dst_cache_i;
-			t->t_dst_cache_i++;
-			if (t->t_dst_cache_i == t->t_dst_cache_size) {
-				t->t_dst_cache_i = 0;
-			}
-			h = cache->ipso_hash;
-			if (ip_socket_get(t, cache, h) == NULL) {
-				new->ipso_laddr = cache->ipso_laddr;
-				new->ipso_faddr = cache->ipso_faddr;
-				new->ipso_lport = cache->ipso_lport;
-				new->ipso_fport = cache->ipso_fport;
-				new->ipso_cache = cache;
-				goto out;
-			}
+		h = cache->ipso_hash;
+		if (cg_so_get(t, cache, h) == NULL) {
+			new->ipso_laddr = cache->ipso_laddr;
+			new->ipso_faddr = cache->ipso_faddr;
+			new->ipso_lport = cache->ipso_lport;
+			new->ipso_fport = cache->ipso_fport;
+			new->ipso_cache = cache;
+			goto out;
 		}
-		return -EADDRNOTAVAIL;
 	}
+	return -EADDRNOTAVAIL;
+
 out:
 	htable_add(&t->t_in_htable, &new->ipso_list, h);
 	t->t_n_conns++;

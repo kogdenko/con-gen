@@ -36,9 +36,12 @@ u_char tcp_outflags[TCP_NSTATES] = {
  * Tcp output routine: figure out what should be sent and send it.
  */
 void
-tcp_output(struct cg_task *t, struct tcpcb *tp)
+tcp_output(struct cg_task *tb, struct tcpcb *tp)
 {
 	struct socket *so;
+	struct cg_bsd_task *t;
+
+	t = cg_bsd_get_task(tb);
 
 	so = tcpcbtoso(tp);
 	if (so->so_state & SS_ISTXPENDING) {
@@ -49,7 +52,7 @@ tcp_output(struct cg_task *t, struct tcpcb *tp)
 }
 
 int
-tcp_output_real(struct cg_task *t, struct tcpcb *tp)
+tcp_output_real(struct cg_task *tb, struct tcpcb *tp)
 {
 	struct socket *so;
 	int off, len, win, flags, error;
@@ -59,7 +62,9 @@ tcp_output_real(struct cg_task *t, struct tcpcb *tp)
 	struct ip *ip;
 	struct tcp_hdr *th;
 	struct packet pkt;
+	struct cg_bsd_task *t;
 
+	t = cg_bsd_get_task(tb);
 	so = tcpcbtoso(tp);
 	t_force = tp->t_force;
 	tp->t_force = 0;
@@ -113,7 +118,7 @@ tcp_output_real(struct cg_task *t, struct tcpcb *tp)
 			}
 			win = 1;
 		} else {
-			timer_cancel(t, tp->t_timer + TCPT_PERSIST);
+			timer_cancel(tb, tp->t_timer + TCPT_PERSIST);
 			tp->t_rxtshift = 0;
 		}
 	}
@@ -133,7 +138,7 @@ tcp_output_real(struct cg_task *t, struct tcpcb *tp)
 		 */
 		len = 0;
 		if (win == 0) {
-			timer_cancel(t, tp->t_timer + TCPT_REXMT);
+			timer_cancel(tb, tp->t_timer + TCPT_REXMT);
 			tp->snd_nxt = tp->snd_una;
 		}
 	}
@@ -234,7 +239,7 @@ tcp_output_real(struct cg_task *t, struct tcpcb *tp)
 	    !timer_is_running(tp->t_timer + TCPT_REXMT) &&
 	    !timer_is_running(tp->t_timer + TCPT_PERSIST)) {
 		tp->t_rxtshift = 0;
-		tcp_setpersist(t, tp);
+		tcp_setpersist(tb, tp);
 	}
 
 	/*
@@ -260,7 +265,7 @@ send:
 
 			opt[0] = TCPOPT_MAXSEG;
 			opt[1] = 4;
-			mss = htons((u_short) tcp_mss(t, tp, 0));
+			mss = htons((u_short) tcp_mss(tb, tp, 0));
 			memcpy((opt + 2), &mss, sizeof(mss));
 			optlen = 4;
 	 
@@ -320,15 +325,15 @@ send:
 	 */
 	if (len) {
 		if (t_force && len == 1)
-			cg_counter64_inc(t, &tcpstat.tcps_sndprobe);
+			cg_counter64_inc(tb, &tcpstat.tcps_sndprobe);
 		else if (SEQ_LT(tp->snd_nxt, tp->snd_max)) {
-			cg_counter64_inc(t, &tcpstat.tcps_sndrexmitpack);
-			cg_counter64_add(t, &tcpstat.tcps_sndrexmitbyte, len);
+			cg_counter64_inc(tb, &tcpstat.tcps_sndrexmitpack);
+			cg_counter64_add(tb, &tcpstat.tcps_sndrexmitbyte, len);
 		} else {
-			cg_counter64_inc(t, &tcpstat.tcps_sndpack);
-			cg_counter64_add(t, &tcpstat.tcps_sndbyte, len);
+			cg_counter64_inc(tb, &tcpstat.tcps_sndpack);
+			cg_counter64_add(tb, &tcpstat.tcps_sndbyte, len);
 		}
-		io_init_tx_packet(t, &pkt);
+		io_init_tx_packet(tb, &pkt);
 		//if (pkt == NULL) {
 		//	error = ENOBUFS;
 		//	goto err;
@@ -345,13 +350,13 @@ send:
 		}
 	} else {
 		if (tp->t_flags & TF_ACKNOW) {
-			cg_counter64_inc(t, &tcpstat.tcps_sndacks);
+			cg_counter64_inc(tb, &tcpstat.tcps_sndacks);
 		} else if (flags & (TH_SYN|BSD_TH_FIN|TH_RST)) {
-			cg_counter64_inc(t, &tcpstat.tcps_sndctrl);
+			cg_counter64_inc(tb, &tcpstat.tcps_sndctrl);
 		} else {
-			cg_counter64_inc(t, &tcpstat.tcps_sndwinup);
+			cg_counter64_inc(tb, &tcpstat.tcps_sndwinup);
 		}
-		io_init_tx_packet(t, &pkt);
+		io_init_tx_packet(tb, &pkt);
 		//if (pkt == NULL) {
 		//	error = ENOBUFS;
 		//	goto err;
@@ -445,7 +450,7 @@ send:
 			if (tp->t_rtt == 0) {
 				tp->t_rtt = t->t_tcp_now;
 				tp->t_rtseq = startseq;
-				cg_counter64_inc(t, &tcpstat.tcps_segstimed);
+				cg_counter64_inc(tb, &tcpstat.tcps_segstimed);
 			}
 		}
 		/*
@@ -457,9 +462,9 @@ send:
 		 * of retransmit time.
 		 */
 		if (!timer_is_running(tp->t_timer + TCPT_REXMT) && tp->snd_nxt != tp->snd_una) {
-			tcp_setslowtimer(t, tp, TCPT_REXMT, tp->t_rxtcur);
+			tcp_setslowtimer(tb, tp, TCPT_REXMT, tp->t_rxtcur);
 			if (timer_is_running(tp->t_timer + TCPT_PERSIST)) {
-				timer_cancel(t, tp->t_timer + TCPT_PERSIST);
+				timer_cancel(tb, tp->t_timer + TCPT_PERSIST);
 				tp->t_rxtshift = 0;
 			}
 		}
@@ -475,8 +480,8 @@ send:
 	if (so->so_options & SO_OPTION(SO_DEBUG)) {
 		tcp_trace(TA_OUTPUT, tp->t_state, tp, ip, th, 0);
 	}
-	ip_output(t, &pkt, ip);
-	cg_counter64_inc(t, &tcpstat.tcps_sndtotal);
+	ip_output(tb, &pkt, ip);
+	cg_counter64_inc(tb, &tcpstat.tcps_sndtotal);
 
 	/*
 	 * Data sent (as far as we can tell).
@@ -489,11 +494,11 @@ send:
 	}
 	tp->last_ack_sent = tp->rcv_nxt;
 	tp->t_flags &= ~(TF_ACKNOW|TF_DELACK);
-	timer_cancel(t, &tp->t_timer_delack);
+	timer_cancel(tb, &tp->t_timer_delack);
 	return sendalot;
 //err:
 	if (error == ENOBUFS) {
-		tcp_quench(t, so, 0);
+		tcp_quench(tb, so, 0);
 		return 0;
 	}
 	if ((error == EHOSTUNREACH || error == ENETDOWN) &&
@@ -505,11 +510,11 @@ send:
 }
 
 void
-tcp_setpersist(struct cg_task *task, struct tcpcb *tp)
+tcp_setpersist(struct cg_task *tb, struct tcpcb *tp)
 {
-	int t, timo;
+	int tm, timo;
 
-	t = ((tp->t_srtt >> 2) + tp->t_rttvar) >> 1;
+	tm = ((tp->t_srtt >> 2) + tp->t_rttvar) >> 1;
 
 	if (timer_is_running(tp->t_timer + TCPT_REXMT)) {
 		panic(0, "tcp_output REXMT");
@@ -518,8 +523,8 @@ tcp_setpersist(struct cg_task *task, struct tcpcb *tp)
 	/*
 	 * Start/restart persistance timer.
 	 */
-	TCPT_RANGESET(timo, t * tcp_backoff[tp->t_rxtshift], TCPTV_PERSMIN, TCPTV_PERSMAX);
+	TCPT_RANGESET(timo, tm * tcp_backoff[tp->t_rxtshift], TCPTV_PERSMIN, TCPTV_PERSMAX);
 	if (tp->t_rxtshift < TCP_MAXRXTSHIFT)
 		tp->t_rxtshift++;
-	tcp_setslowtimer(task, tp, TCPT_PERSIST, timo);
+	tcp_setslowtimer(tb, tp, TCPT_PERSIST, timo);
 }

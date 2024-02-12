@@ -183,10 +183,40 @@ int bsd_close(struct cg_task *, struct socket *);
 
 struct cg_bsd_task {
 	struct cg_task t_base;
+
+	char *t_http;
+	int t_http_len;
+
+	struct dlist t_so_pool;
+	struct dlist t_so_txq;
+	struct dlist t_sob_pool;
+
+	u_int t_nflag;
+	int t_n_requests;
+
+	u_char t_so_debug;
+
+
+	u_char t_tcp_do_wscale;
+	u_char t_tcp_do_timestamps;
+	int t_tcp_rttdflt;
+	uint32_t t_tcp_now; /* for RFC 1323 timestamps */
+	uint64_t t_tcp_nowage;
+	uint64_t t_tcp_twtimo;  /* max seg lifetime (hah!) */
+	uint64_t t_tcp_fintimo;
 };
 
-#define bsd_task_sizeof() sizeof(struct cg_bsd_task)
 
+struct bsd_plugin {
+	struct option *long_options;
+	char *short_options;
+	char *help;
+};
+
+
+#define cg_bsd_get_task(tb) cg_container_of(tb, struct cg_bsd_task, t_base)
+
+struct cg_task *bsd_alloc_task(struct cg_task *);
 void bsd_flush(struct cg_task *);
 void bsd_init(void);
 void bsd_start(struct cg_task *);
@@ -198,5 +228,9 @@ void bsd_get_so_info(void *, struct socket_info *);
 int bsd_shutdown(struct cg_task *t, struct socket *so, int how);
 int bsd_setsockopt(struct socket *, int, int, void *, int);
 int bsd_getsockopt(struct socket *, int, int, void *, int *);
+void bsd_update(struct cg_task *t);
+
+
+
 
 #endif /* BSD44_SOCKET_H_ */

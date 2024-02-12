@@ -130,10 +130,12 @@ tcp_respond(struct cg_task *t, struct tcpcb *tp, struct ip *ip_rcv, struct tcp_h
  * protocol control block.
  */
 void
-tcp_attach(struct cg_task *t, struct socket *so)
+tcp_attach(struct cg_task *tb, struct socket *so)
 {
 	struct tcpcb *tp;
+	struct cg_bsd_task *t;
 
+	t = cg_bsd_get_task(tb);
 	tp = sototcpcb(so);
 	memset(tp, 0, sizeof(*tp));
 	tp->t_maxseg = TCP_MSS;

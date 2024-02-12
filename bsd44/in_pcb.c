@@ -70,7 +70,7 @@ in_pcbattach(struct cg_task *t, struct socket *so, uint32_t *ph)
 	if (so->so_state & SS_ISATTACHED) {
 		return -EALREADY;
 	}
-	rc = ip_connect(t, &so->so_base, ph);
+	rc = cg_so_attach(t, &so->so_base, ph);
 	if (rc == 0) {
 		so->so_state |= SS_ISATTACHED;
 	}
@@ -98,7 +98,7 @@ in_pcbconnect(struct cg_task *t, struct socket *so, uint32_t *ph)
 	if (so->so_state & SS_ISATTACHED) {
 		return -EISCONN;
 	}
-	rc = ip_connect(t, &so->so_base, ph);
+	rc = cg_so_connect(t, &so->so_base, ph);
 	if (rc == 0) {
 		so->so_state |= SS_ISATTACHED;
 	}

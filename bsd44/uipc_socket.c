@@ -37,10 +37,12 @@
 #include "../list.h"
 
 static struct socket *
-somalloc(struct cg_task *t)
+somalloc(struct cg_task *tb)
 {
 	struct socket *so;
+	struct cg_bsd_task *t;
 
+	t = cg_bsd_get_task(tb);
 	if (dlist_is_empty(&t->t_so_pool)) {
 		so = malloc(sizeof(*so));
 		//dbg("newso %p", so);
@@ -68,8 +70,11 @@ somalloc(struct cg_task *t)
 }
 
 static void
-somfree(struct cg_task *t, struct socket *so)
+somfree(struct cg_task *tb, struct socket *so)
 {
+	struct cg_bsd_task *t;
+
+	t = cg_bsd_get_task(tb);
 	assert(!(so->so_state & SS_ISATTACHED));
 	DLIST_INSERT_HEAD(&t->t_so_pool, so, inp_list);
 }
@@ -82,11 +87,11 @@ somfree(struct cg_task *t, struct socket *so)
  * switching out to the protocol specific routines.
  */
 int
-bsd_socket(struct cg_task *t, int proto, struct socket **aso)
+bsd_socket(struct cg_task *tb, int proto, struct socket **aso)
 {
 	struct socket *so;
 
-	so = somalloc(t);
+	so = somalloc(tb);
 	if (so == NULL) {
 		return -ENOMEM;
 	}
@@ -95,18 +100,18 @@ bsd_socket(struct cg_task *t, int proto, struct socket **aso)
 	so->so_linger = 0;
 	so->so_state = 0;
 	if (so->so_proto == IPPROTO_TCP) {
-		tcp_attach(t, so);
+		tcp_attach(tb, so);
 	}
 	*aso = so;
 	return 0;
 }
 
 int
-bsd_bind(struct cg_task *t, struct socket *so, be16_t port)
+bsd_bind(struct cg_task *tb, struct socket *so, be16_t port)
 {
 	int error;
 
-	error = in_pcbbind(t, so, port);
+	error = in_pcbbind(tb, so, port);
 	return -error;
 }
 
@@ -134,7 +139,7 @@ bsd_listen(struct socket *so)
 	}
 
 int
-sofree2(struct cg_task *t, struct socket *so, const char *func)
+sofree2(struct cg_task *tb, struct socket *so, const char *func)
 {
 	/*const char *cp = "ss=";
 
@@ -165,12 +170,12 @@ sofree2(struct cg_task *t, struct socket *so, const char *func)
 	if (so->so_head) {
 		soqremque(so);
 	}
-	sbrelease(t, &so->so_snd);
-	sorflush(t, so);
-	sowakeup3(t, so, POLLNVAL);
+	sbrelease(tb, &so->so_snd);
+	sorflush(tb, so);
+	sowakeup3(tb, so, POLLNVAL);
 	so->so_userfn = NULL;
 	//tcp_canceltimers( &so->inp_ppcb  ); // ?????
-	somfree(t, so);
+	somfree(tb, so);
 	return 1;
 }
 
@@ -479,6 +484,7 @@ void
 soisconnected(struct cg_task *t, struct socket *so)
 {
 	struct socket *head;
+
 	so->so_state &= ~(SS_ISCONNECTING|SS_ISDISCONNECTING);
 	so->so_state |= SS_ISCONNECTED;
 	head = so->so_head;
@@ -654,16 +660,21 @@ struct sockbuf_chunk {
 	(SBCHUNK_DATASIZE - ((ch)->sbc_len + (ch)->sbc_off))
 
 static void
-sbchfree(struct cg_task *t, struct sockbuf_chunk *ch)
+sbchfree(struct cg_task *tb, struct sockbuf_chunk *ch)
 {
+	struct cg_bsd_task *t;
+
+	t = cg_bsd_get_task(tb);
 	DLIST_INSERT_HEAD(&t->t_sob_pool, ch, sbc_list);
 }
 
 static struct sockbuf_chunk *
-sbchalloc(struct cg_task *t, struct sockbuf *sb)
+sbchalloc(struct cg_task *tb, struct sockbuf *sb)
 {
 	struct sockbuf_chunk *ch;
+	struct cg_bsd_task *t;
 
+	t = cg_bsd_get_task(tb);
 	if (dlist_is_empty(&t->t_sob_pool)) {
 		ch = malloc(SBCHUNK_SIZE);
 		if (ch == NULL) {

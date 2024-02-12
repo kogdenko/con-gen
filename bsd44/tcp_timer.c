@@ -179,14 +179,16 @@ tcp_rexmit_timo(struct cg_task *t, struct timer *timer)
  * or drop connection if idle for too long.
  */
 void
-tcp_keepalive_timo(struct cg_task *t, struct timer *timer)
+tcp_keepalive_timo(struct cg_task *tb, struct timer *timer)
 {
 	struct socket *so;
 	struct tcpcb *tp;
+	struct cg_bsd_task *t;
 
+	t = cg_bsd_get_task(tb);
 	tp = cg_container_of(timer, struct tcpcb, t_timer[TCPT_KEEP]);
 
-	cg_counter64_inc(t, &tcpstat.tcps_keeptimeo);
+	cg_counter64_inc(tb, &tcpstat.tcps_keeptimeo);
 	if (tp->t_state < TCPS_ESTABLISHED) {
 		goto dropit;
 	}
@@ -210,16 +212,16 @@ tcp_keepalive_timo(struct cg_task *t, struct timer *timer)
 		 * by the protocol spec, this requires the
 		 * correspondent TCP to respond.
 		 */
-		cg_counter64_inc(t, &tcpstat.tcps_keepprobe);
-		tcp_respond(t, tp, NULL, NULL, tp->rcv_nxt, tp->snd_una - 1, 0);
-		tcp_setslowtimer(t, tp, TCPT_KEEP, TCPTV_KEEPINTVL);
+		cg_counter64_inc(tb, &tcpstat.tcps_keepprobe);
+		tcp_respond(tb, tp, NULL, NULL, tp->rcv_nxt, tp->snd_una - 1, 0);
+		tcp_setslowtimer(tb, tp, TCPT_KEEP, TCPTV_KEEPINTVL);
 	} else {
-		tcp_setslowtimer(t, tp, TCPT_KEEP, TCPTV_KEEP_IDLE);
+		tcp_setslowtimer(tb, tp, TCPT_KEEP, TCPTV_KEEP_IDLE);
 	}
 	return;
 dropit:
-	cg_counter64_inc(t, &tcpstat.tcps_keepdrops);
-	tp = tcp_drop(t, tp, ETIMEDOUT);
+	cg_counter64_inc(tb, &tcpstat.tcps_keepdrops);
+	tp = tcp_drop(tb, tp, ETIMEDOUT);
 }
 
 /*
