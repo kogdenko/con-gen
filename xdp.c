@@ -2,7 +2,7 @@
 #include <linux/if_link.h>
 #include <linux/bpf.h>
 //#include <bpf/libbpf.h>
-#include <xdp/xsk.h>
+#include <bpf/xsk.h>
 #include "subr.h"
 #include "global.h"
 
@@ -114,7 +114,7 @@ xdp_init_queue(struct xdp_queue *q, const char *ifname, int queue_id)
 static void
 xdp_init_if(struct thread *t)
 {
-	int rc, i, ifindex;
+	int i, ifindex;
 
 	ifindex = if_nametoindex(t->t_ifname);
 	if (ifindex == 0) {
@@ -129,10 +129,10 @@ xdp_init_if(struct thread *t)
 	} else {
 		t->t_xdp_queue_num = t->t_rss_queue_num;
 	}
-	rc = bpf_xdp_query_id(ifindex, 0, &t->t_xdp_prog_id);
-	if (rc < 0) {
-		panic(-rc, "bpf_xdp_query_id() failed");
-	}
+//	rc = bpf_xdp_query_id(ifindex, 0, &t->t_xdp_prog_id);
+//	if (rc < 0) {
+//		panic(-rc, "bpf_xdp_query_id() failed");
+//	}
 	t->t_xdp_queues = xmalloc(t->t_xdp_queue_num * sizeof(struct xdp_queue));
 	if (t->t_rss_queue_id < RSS_QUEUE_ID_MAX) {
 		xdp_init_queue(&t->t_xdp_queues[0], t->t_ifname, t->t_rss_queue_id);

@@ -157,7 +157,6 @@ set_affinity(int cpu_id)
 	return 0;
 }
 
-
 uint32_t
 ip_socket_hash(struct dlist *p)
 {
@@ -677,45 +676,31 @@ static const char *short_options = "hvi:q:s:d:S:D:a:n:c:p:NL";
 #ifdef HAVE_DPDK
 int dpdk_parse_args(int argc, char **argv);
 
-static bool
-validate_args(int argc, char **argv)
-{
-	int save_opterr, opt, option_index;
-
-	save_opterr = opterr;
-	opterr = 0;
-	while ((opt = getopt_long(argc, argv, short_options,
-			long_options, &option_index)) != -1) {
-		if (opt != 0 && strchr(short_options, opt) == NULL) {
-			optind = 1;
-			opterr = save_opterr;
-			return false;
-		}
-	}
-
-	optind = 1;
-	opterr = save_opterr;
-	return true;
-}
-
 int
 io_parse_args(int argc, char **argv)
 {
-	int rc;
+	int i, rc, use_dpdk;
 	char *fake_argv[1];
 
-	if (validate_args(argc, argv)) {
-		fake_argv[0] = "con-gen";
-		dpdk_parse_args(ARRAY_SIZE(fake_argv), fake_argv);
-		return 0;
-	} else {
-		rc = dpdk_parse_args(argc, argv);
-		if (rc < 0) {
-			return 0;
-		} else {
-			return rc;
+	use_dpdk = 0;
+	for (i = 0; i < argc; ++i) {
+		if (!strcmp(argv[i], "--")) {
+			rc = dpdk_parse_args(argc, argv);
+			if (rc < 0) {
+				return 0;
+			} else {
+				return rc;
+			}
+		} else if (!strcmp(argv[i], "--dpdk")) {
+			use_dpdk = 1;
 		}
 	}
+
+	if (use_dpdk) {
+		fake_argv[0] = "con-gen";
+		dpdk_parse_args(ARRAY_SIZE(fake_argv), fake_argv);
+	}
+	return 0;
 }
 #else // HAVE_DPDK
 int
