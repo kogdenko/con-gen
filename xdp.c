@@ -1,8 +1,11 @@
 #include <linux/if_xdp.h>
 #include <linux/if_link.h>
 #include <linux/bpf.h>
-//#include <bpf/libbpf.h>
-#include <bpf/xsk.h>
+
+#ifdef HAVE_XDP_XDP_XSK
+#include <xdp/xsk.h>
+#endif
+
 #include "subr.h"
 #include "global.h"
 

@@ -37,10 +37,20 @@ def system(cmd, failure_tollerance=False):
 def check_xdp(conf):
     if not conf.CheckHeader('linux/if_xdp.h'):
         return False
-#    if not conf.CheckHeader('xdp/xsk.h'):
-#        return False
+
     if not conf.CheckLib('bpf'):
         return False
+
+    if not conf.CheckHeader('bpf/xsk.h'):
+        if not conf.CheckHeader('xdp/xsk.h'):
+            return False
+        if not conf.CheckLib('xdp'):
+            return False
+        g_cflags.append('-DHAVE_XDP_XDP_XSK')
+        g_libs.append('xdp')
+
+    g_libs.append('bpf')
+
     return True
 
 
@@ -163,8 +173,6 @@ if platform.system() == "Linux" and not GetOption('without_xdp'):
     if (check_xdp(conf)):
         g_cflags.append('-DHAVE_XDP')
         have_transport = True
-        g_libs.append('bpf')
-#        g_libs.append('xdp')
         g_srcs.append('xdp.c')
         print("Checking for XDP... yes")
     else:
