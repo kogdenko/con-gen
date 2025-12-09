@@ -4,6 +4,8 @@
 
 #ifdef HAVE_XDP_XDP_XSK
 #include <xdp/xsk.h>
+#else
+#include <bpf/xsk.h>
 #endif
 
 #include "subr.h"
