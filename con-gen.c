@@ -679,27 +679,32 @@ int dpdk_parse_args(int argc, char **argv);
 int
 io_parse_args(int argc, char **argv)
 {
-	int i, rc, use_dpdk;
+	int i, rc, has_dpdk;
 	char *fake_argv[1];
 
-	use_dpdk = 0;
+	has_dpdk = 0;
 	for (i = 0; i < argc; ++i) {
-		if (!strcmp(argv[i], "--")) {
-			rc = dpdk_parse_args(argc, argv);
-			if (rc < 0) {
-				return 0;
-			} else {
-				return rc;
-			}
-		} else if (!strcmp(argv[i], "--dpdk")) {
-			use_dpdk = 1;
+		if (!strcmp(argv[i], "--dpdk")) {
+			has_dpdk = 1;
+			break;
 		}
 	}
 
-	if (use_dpdk) {
-		fake_argv[0] = "con-gen";
-		dpdk_parse_args(ARRAY_SIZE(fake_argv), fake_argv);
+	if (!has_dpdk) {
+		return 0;
 	}
+
+	for (i = 0; i < argc; ++i) {
+		if (!strcmp(argv[i], "--dpdk")) {
+			fake_argv[0] = "con-gen";
+			dpdk_parse_args(ARRAY_SIZE(fake_argv), fake_argv);
+			return 0;
+		} else if (!strcmp(argv[i], "--")) {
+			rc = dpdk_parse_args(argc, argv);
+			return rc;
+		}
+	}
+
 	return 0;
 }
 #else // HAVE_DPDK
@@ -1054,6 +1059,9 @@ main(int argc, char **argv)
 		"Hi\r\n\r\n");
 
 	rc = io_parse_args(argc, argv);
+	if (rc < 0) {
+		return EXIT_FAILURE;
+	}
 	argc -= rc;
 	argv += rc;
 
