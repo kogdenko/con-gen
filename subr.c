@@ -435,7 +435,8 @@ read_rss_key(const char *ifname, u_char **rss_key)
 
 	rc = socket(AF_INET, SOCK_DGRAM, 0);
 	if (rc < 0) {
-		panic(errno, "Reading %s RSS key error: socket() failed", ifname);
+//		panic(errno, "Reading %s RSS key error: socket() failed", ifname);
+		goto err;
 	}
 	fd = rc;
 	memset(&rss, 0, sizeof(rss));
@@ -445,7 +446,9 @@ read_rss_key(const char *ifname, u_char **rss_key)
 	ifr.ifr_data = (void *)&rss;
 	rc = ioctl(fd, SIOCETHTOOL, (uintptr_t)&ifr);
 	if (rc < 0) {
-		panic(errno, "Reading %s RSS key error: ioctl(SIOCETHTOOL) failed", ifname);
+		close(fd);
+		goto err;
+//		panic(errno, "Reading %s RSS key error: ioctl(SIOCETHTOOL) failed", ifname);
 	}
 	size = (sizeof(rss) + rss.key_size +
 	       rss.indir_size * sizeof(rss.rss_config[0]));
@@ -457,7 +460,9 @@ read_rss_key(const char *ifname, u_char **rss_key)
 	ifr.ifr_data = (void *)rss2;
 	rc = ioctl(fd, SIOCETHTOOL, (uintptr_t)&ifr);
 	if (rc) {
-		panic(errno, "Reading %s RSS key error: ioctl(SIOCETHTOOL) failed", ifname);
+		close(fd);
+//		panic(errno, "Reading %s RSS key error: ioctl(SIOCETHTOOL) failed", ifname);
+		goto err;
 	}
 	off = rss2->indir_size * sizeof(rss2->rss_config[0]);
 	*rss_key = xmalloc(rss.key_size);
@@ -465,6 +470,12 @@ read_rss_key(const char *ifname, u_char **rss_key)
 	free(rss2);
 	close(fd);
 	return rss.key_size;
+
+err:
+	size = sizeof(freebsd_rss_key);
+	*rss_key = xmalloc(size);
+	memcpy(*rss_key, freebsd_rss_key, size);
+	return size;
 }
 #else // __linux__
 int
