@@ -45,7 +45,7 @@ netmap_init_if(struct thread *t)
 	}
 	t->t_rss_queue_num = t->t_nmd->req.nr_rx_rings;
 	if (t->t_rss_queue_num > 1) {
-		t->t_rss_key_size = read_rss_key(t->t_ifname, &t->t_rss_key);
+		gt_read_rss_key(t->t_ifname, &t->t_rss);
 	}
 	if ((t->t_nmd->req.nr_flags & NR_REG_MASK) == NR_REG_ONE_NIC) {
 		t->t_rss_queue_id = t->t_nmd->first_rx_ring;

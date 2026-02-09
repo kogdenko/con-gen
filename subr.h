@@ -180,6 +180,9 @@ do { \
 	((faddr) ^ ((faddr) >> 16) ^ ntohs((lport) ^ (fport)))
 
 // Type
+typedef uint8_t u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
 typedef uint16_t be16_t;
 typedef uint32_t be32_t;
 
@@ -253,6 +256,13 @@ struct packet {
 	u_char pkt_body[2048 - sizeof(struct packet_header)];
 };
 
+struct gt_rss {
+	u8 *rss_key;
+	size_t rss_key_size;
+	u32 *rss_indir_table;
+	size_t rss_indir_table_size;
+};
+
 struct thread {
 	struct spinlock t_lock;
 	struct dlist t_available_head;
@@ -275,8 +285,7 @@ struct thread {
 	u_short t_mtu;
 	u_char t_rss_queue_num;
 	u_char t_rss_queue_id;
-	u_char *t_rss_key;
-	int t_rss_key_size;
+	struct gt_rss t_rss;
 	struct pollfd t_pfds[256];
 	int t_pfd_num;
 	union {
@@ -358,17 +367,18 @@ void dbg5(const char *, u_int, const char *, int, const char *, ...)
 
 void print_hexdump_ascii(const void *, int);
 
-void *xmalloc(size_t);
-
 void panic3(const char *, int, int, const char *, ...)
 	__attribute__((format(printf, 4, 5)));
 
 char *strzcpy(char *, const char *, size_t);
+void *xmalloc(size_t size);
+void *xmemdup(void *ptr, size_t size);
 
-int read_rss_key(const char *ifname, u_char **rss_key);
+int gt_read_rss_key(const char *ifname, struct gt_rss *rss);
 
 uint32_t toeplitz_hash(const u_char *, int, const u_char *, int);
 uint32_t rss_hash4(be32_t, be32_t, be16_t, be16_t, u_char *, int);
+u32 gt_rss_get_queue(u32 h, u32 n_queues, u32 *indir, size_t indir_size);
 
 uint16_t in_cksum(void *, int);
 uint16_t udp_cksum(struct ip *, int);

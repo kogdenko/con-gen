@@ -294,7 +294,7 @@ thread_init_dst_cache(struct thread *t)
 {
 	uint64_t i, n;
 	int dst_cache_size;
-	uint32_t h;
+	uint32_t h, q;
 	uint32_t ip_laddr_connect;
 	uint32_t ip_faddr_connect;
 	uint16_t ip_lport_connect;
@@ -335,8 +335,12 @@ thread_init_dst_cache(struct thread *t)
 			}
 		}
 		if (t->t_rss_queue_id < RSS_QUEUE_ID_MAX && t->t_rss_queue_num > 1) {
-			h = rss_hash4(laddr, faddr, lport, fport, t->t_rss_key, t->t_rss_key_size);
-			if ((h % t->t_rss_queue_num) != t->t_rss_queue_id) {
+			h = rss_hash4(laddr, faddr, lport, fport, t->t_rss.rss_key,
+			              t->t_rss.rss_key_size);
+			q = gt_rss_get_queue(h, t->t_rss_queue_num,
+					     t->t_rss.rss_indir_table,
+					     t->t_rss.rss_indir_table_size);
+			if (q != t->t_rss_queue_id) {
 				continue;
 			}
 		}

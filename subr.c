@@ -222,19 +222,6 @@ udp_cksum(struct ip *ip, int len)
 	return reduced;
 }
 
-void *
-xmalloc(size_t size)
-{
-	void *ptr;
-
-	//printf("malloc(%zu)\n", size);
-	ptr = malloc(size);
-	if (ptr == NULL) {
-		panic(0, "malloc(%zu) failed", size);
-	}
-	return ptr;
-}
-
 void
 panic3(const char *file, int line, int errnum, const char *format, ...)
 {
@@ -425,61 +412,91 @@ strzcpy(char *dest, const char *src, size_t n)
 	return dest;
 }
 
+void *
+xmalloc(size_t size)
+{
+	void *ptr;
+
+	ptr = malloc(size);
+	if (ptr == NULL) {
+		panic(ENOMEM, "malloc(%zu) failed", size);
+	}
+	return ptr;
+}
+
+void *
+xmemdup(void *ptr, size_t size)
+{
+	void *new_ptr;
+
+	new_ptr = xmalloc(size);
+	memcpy(new_ptr, ptr, size);
+	return new_ptr;
+}
+
 #ifdef __linux__
 int
-read_rss_key(const char *ifname, u_char **rss_key)
+gt_read_rss_key(const char *ifname, struct gt_rss *rss)
 {
 	int fd, rc, size, off;
 	struct ifreq ifr;
-	struct ethtool_rxfh rss, *rss2;
+	struct ethtool_rxfh rxfh, *rxfh2;
+
+	memset(rss, 0, sizeof(*rss));
 
 	rc = socket(AF_INET, SOCK_DGRAM, 0);
 	if (rc < 0) {
-//		panic(errno, "Reading %s RSS key error: socket() failed", ifname);
-		goto err;
+		return -errno;
 	}
 	fd = rc;
-	memset(&rss, 0, sizeof(rss));
+
 	memset(&ifr, 0, sizeof(ifr));
 	strzcpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
-	rss.cmd = ETHTOOL_GRSSH;
-	ifr.ifr_data = (void *)&rss;
+	memset(&rxfh, 0, sizeof(rxfh));
+	rxfh.cmd = ETHTOOL_GRSSH;
+	ifr.ifr_data = (void *)&rxfh;
 	rc = ioctl(fd, SIOCETHTOOL, (uintptr_t)&ifr);
 	if (rc < 0) {
+		rc = -errno;
 		close(fd);
 		goto err;
-//		panic(errno, "Reading %s RSS key error: ioctl(SIOCETHTOOL) failed", ifname);
 	}
-	size = (sizeof(rss) + rss.key_size +
-	       rss.indir_size * sizeof(rss.rss_config[0]));
-	rss2 = xmalloc(size);
-	memset(rss2, 0, size);
-	rss2->cmd = ETHTOOL_GRSSH;
-	rss2->indir_size = rss.indir_size;
-	rss2->key_size = rss.key_size;
-	ifr.ifr_data = (void *)rss2;
+
+	size = (sizeof(rxfh) + rxfh.key_size +
+		rxfh.indir_size * sizeof(rxfh.rss_config[0]));
+	rxfh2 = xmalloc(size);
+	memset(rxfh2, 0, size);
+
+	rxfh2->cmd = ETHTOOL_GRSSH;
+	rxfh2->indir_size = rxfh.indir_size;
+	rxfh2->key_size = rxfh.key_size;
+	ifr.ifr_data = (void *)rxfh2;
 	rc = ioctl(fd, SIOCETHTOOL, (uintptr_t)&ifr);
 	if (rc) {
+		rc = -errno;
 		close(fd);
-//		panic(errno, "Reading %s RSS key error: ioctl(SIOCETHTOOL) failed", ifname);
 		goto err;
 	}
-	off = rss2->indir_size * sizeof(rss2->rss_config[0]);
-	*rss_key = xmalloc(rss.key_size);
-	memcpy(*rss_key, (u_char *)rss2->rss_config + off, rss.key_size);
-	free(rss2);
+
+	assert(sizeof(*rss->rss_indir_table) == sizeof(rxfh2->rss_config[0]));
+	off = rxfh2->indir_size * sizeof(u32);
+	rss->rss_indir_table_size = rxfh2->indir_size;
+	rss->rss_indir_table = xmemdup((u8 *)rxfh2->rss_config, off);
+	rss->rss_key_size = rxfh2->key_size;
+	rss->rss_key = xmemdup((u8 *)rxfh2->rss_config + off, rss->rss_key_size);
+
+	free(rxfh2);
 	close(fd);
-	return rss.key_size;
+	return 0;
 
 err:
-	size = sizeof(freebsd_rss_key);
-	*rss_key = xmalloc(size);
-	memcpy(*rss_key, freebsd_rss_key, size);
-	return size;
+	rss->rss_key_size = sizeof(freebsd_rss_key);
+	rss->rss_key = xmemdup(freebsd_rss_key, rss->rss_key_size);
+	return rc;
 }
 #else // __linux__
 int
-read_rss_key(const char *ifname, u_char **rss_key)
+gt_read_rss_key(const char *ifname, struct gt_rss *rss)
 {
 	int size;
 
@@ -512,8 +529,6 @@ toeplitz_hash(const u_char *data, int cnt, const u_char *key, int key_size)
 	return h;
 }
 
-#include <rte_thash.h>
-
 uint32_t
 rss_hash4(be32_t laddr, be32_t faddr, be16_t lport, be16_t fport, u_char *key, int key_size)
 {
@@ -531,14 +546,20 @@ rss_hash4(be32_t laddr, be32_t faddr, be16_t lport, be16_t fport, u_char *key, i
 	*(be16_t *)(data + off) = lport;
 	off += 2;
 	h = toeplitz_hash(data, off, key, key_size);
-	h &= 0x0000007F;
-
-	//uint32_t h2 = rte_softrss((void *)data, sizeof(data), key);
-
-	//printf("toeplitz %x %x\n", h, h2);
 
 	return h;
 }
+
+u32
+gt_rss_get_queue(u32 h, u32 n_queues, u32 *indir, size_t indir_size)
+{
+	if (indir_size == 0) {
+		return h % n_queues;
+	} else {
+		return indir[h & (indir_size - 1)];
+	}
+}
+
 
 void
 counter64_init(counter64_t *c)
