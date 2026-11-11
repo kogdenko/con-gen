@@ -8,3 +8,4 @@ fwd
 gmon.out
 perf.data
 vgcore.*
+build/

@@ -1,39 +1,50 @@
-# con-gen: Statefull TCP packet generator
+# con-gen: Stateful TCP packet generator
 
-## Introdution
+## Introduction
 - Based on BSD4.4 TCP/IP stack.
-- Support: netmap, XDP, libpcap for packet sending
+- Supports netmap, XDP, DPDK and libpcap for packet I/O
 - Can operate with speed ~4mpps (~500kcps) on low end processor.
 
 ## Guide
-###Requirements
-con-gen requires at least one packet-processing library: Netmap, XDP, DPDK or PCAP
-### Install netmap [netmap](https://github.com/luigirizzo/netmap)
+### Requirements
+- [Meson](https://mesonbuild.com) and [Ninja](https://ninja-build.org)
+- At least one packet-processing library: netmap, XDP (libbpf/libxdp), DPDK or libpcap
+
+### Install [netmap](https://github.com/luigirizzo/netmap)
 ```bash
 git clone https://github.com/luigirizzo/netmap.git
 cd netmap
 ./configure --kernel-dir=/usr/src/linux-4.9.135 --drivers=ixgbe,veth --no-apps
 make
-make install 
+make install
 insmod netmap.ko
 rmmod ixgbe
-insmod  ./ixgbe-5.3.8/src/ixgbe.ko
+insmod ./ixgbe-5.3.8/src/ixgbe.ko
 ifconfig eth2 up
 ```
 ### Compile con-gen
 ```bash
-scons
+meson setup build
+ninja -C build
+sudo ninja -C build install   # installs to /usr/local/bin
 ```
+Transports are auto-detected; force or disable them with
+`-Dnetmap=`, `-Dxdp=`, `-Dpcap=`, `-Ddpdk=` (`enabled`/`disabled`/`auto`).
+Debug build: `meson setup build -Dbuildtype=debug`.
+Use clang: `CC=clang meson setup build`.
 
 ### Run
+The examples below run the binary from the build directory (`./build/con-gen`);
+after `ninja -C build install` it is available as `con-gen`.
+
 Example of Running con-gen with XDP Transport
 ---------------------------------------------
 ```bash
 ip l add dev vethc type veth peer veths
 ip l s dev vethc up
 ip l s dev veths up
-./con-gen --xdp -i veths -L -s 1.1.1.1 -d 2.2.2.2 -a 4
-./con-gen --xdp -i vethc -s 2.2.2.2 -d 1.1.1.1 -c 1000 -a 2
+./build/con-gen --xdp -i veths -L -s 1.1.1.1 -d 2.2.2.2 -a 4
+./build/con-gen --xdp -i vethc -s 2.2.2.2 -d 1.1.1.1 -c 1000 -a 2
 ```
 ...
 ```bash
@@ -44,14 +55,14 @@ cps         ipps        opps      pps       rxmtps      conns
 
 ```
 
-Example of Running con-gen with XDP Transport
----------------------------------------------
+Example of Running con-gen with netmap Transport
+------------------------------------------------
 ```bash
 ip l add dev vethc type veth peer veths
 ip l s dev vethc up
 ip l s dev veths up
-./con-gen --netmap -i veths -L -s 1.1.1.1 -d 2.2.2.2 -a 4
-./con-gen --netmap -i vethc -s 2.2.2.2 -d 1.1.1.1 -c 1000 -a 2
+./build/con-gen --netmap -i veths -L -s 1.1.1.1 -d 2.2.2.2 -a 4
+./build/con-gen --netmap -i vethc -s 2.2.2.2 -d 1.1.1.1 -c 1000 -a 2
 ```
 ...
 ```bash
@@ -64,8 +75,8 @@ cps         ipps        opps      pps       rxmtps      conns
 Example of Running con-gen with DPDK transport
 ----------------------------------------------
 ```bash
-./con-gen --no-pci -l 4 --proc-type=primary --file-prefix=server --vdev=net_memif0,role=server,socket=/run/net_memif0.sock,socket-abstract=no -- --dpdk -i net_memif0 -s 1.1.1.1 -d 2.2.2.2 -a 4 -L
-./con-gen --no-pci -l 2 --proc-type=primary --file-prefix=client --vdev=net_memif0,role=client,socket=/run/net_memif0.sock,socket-abstract=no -- --dpdk -i net_memif0 -s 2.2.2.2 -d 1.1.1.1 -a 2 -c 1000
+./build/con-gen --no-pci -l 4 --proc-type=primary --file-prefix=server --vdev=net_memif0,role=server,socket=/run/net_memif0.sock,socket-abstract=no -- --dpdk -i net_memif0 -s 1.1.1.1 -d 2.2.2.2 -a 4 -L
+./build/con-gen --no-pci -l 2 --proc-type=primary --file-prefix=client --vdev=net_memif0,role=client,socket=/run/net_memif0.sock,socket-abstract=no -- --dpdk -i net_memif0 -s 2.2.2.2 -d 1.1.1.1 -a 2 -c 1000
 ```
 ...
 ```bash
@@ -76,5 +87,5 @@ cps         ipps        opps      pps       rxmtps      conns
 ```
 ### Multithread/Multiqueue mode
 ```
-./con-gen -S 00:1b:21:95:69:64 -D 00:1B:21:A6:E5:3C -s 1.1.1.3 -d 1.1.1.2  -a 1 -p 80 -c 1000 -i eth2-0 -- -s 1.1.1.4  -a 1 -i eth2-1
+./build/con-gen -S 00:1b:21:95:69:64 -D 00:1B:21:A6:E5:3C -s 1.1.1.3 -d 1.1.1.2  -a 1 -p 80 -c 1000 -i eth2-0 -- -s 1.1.1.4  -a 1 -i eth2-1
 ```
