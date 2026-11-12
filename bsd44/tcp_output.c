@@ -9,6 +9,7 @@
 #include "tcp_timer.h"
 #include "tcp_var.h"
 
+#undef MAX_TCPOPTLEN // <netinet/tcp.h> on FreeBSD
 #define MAX_TCPOPTLEN	32	/* max # bytes that go in options */
 
 /*

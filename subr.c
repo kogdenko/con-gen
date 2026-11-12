@@ -498,12 +498,11 @@ err:
 int
 gt_read_rss_key(const char *ifname, struct gt_rss *rss)
 {
-	int size;
-
-	size = sizeof(freebsd_rss_key);
-	*rss_key = xmalloc(size);
-	memcpy(*rss_key, freebsd_rss_key, size);
-	return size;
+	// TODO: Read the key from the driver
+	memset(rss, 0, sizeof(*rss));
+	rss->rss_key_size = sizeof(freebsd_rss_key);
+	rss->rss_key = xmemdup(freebsd_rss_key, rss->rss_key_size);
+	return 0;
 }
 #endif // __linux__
 
