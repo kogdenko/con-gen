@@ -1,0 +1,6 @@
+option('netmap', type : 'feature', value : 'auto', description : 'Use netmap')
+option('netmap_dir', type : 'string', value : '',
+  description : 'Local netmap, headers in its include/ (e.g. ../gbtcp_priv/netmap). Default: ./netmap if present, else the system headers')
+option('xdp', type : 'feature', value : 'auto', description : 'Use XDP (Linux only)')
+option('pcap', type : 'feature', value : 'auto', description : 'Use libpcap')
+option('dpdk', type : 'feature', value : 'auto', description : 'Use DPDK')
